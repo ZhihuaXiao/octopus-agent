@@ -8,10 +8,10 @@ rather than silently somewhere else later.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Tests run and pass on a clean checkout
-- [ ] pi is pinned to an exact version rather than a range
-- [ ] A command sends a prompt and streams the assistant's reply to stdout
-- [ ] A live integration test covers session creation, prompting, event subscription and usage reporting, and skips cleanly without credentials
-- [ ] Whether `importFromJsonl()` preserves branch structure is verified and the answer recorded in the spec
+- [x] Tests run and pass on a clean checkout
+- [x] pi is pinned to an exact version rather than a range
+- [x] A command sends a prompt and streams the assistant's reply to stdout
+- [x] A live integration test covers session creation, prompting, event subscription and usage reporting, and skips cleanly without credentials
+- [x] Whether `importFromJsonl()` preserves branch structure is verified and the answer recorded in the spec

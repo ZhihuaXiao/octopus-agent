@@ -1,0 +1,8 @@
+dist/
+node_modules/
+coverage/
+package-lock.json
+
+# Specs, ADRs and the glossary are written by hand and reviewed as prose.
+# Reformatting them churns diffs and fights the authors.
+*.md

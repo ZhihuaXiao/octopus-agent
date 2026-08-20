@@ -287,8 +287,8 @@ runner is testable in CI, and it forces the format and graph to be right before 
 concerns muddy them.
 
 0. **Spike** — embed the SDK, run a prompt, stream events, read the session JSONL. Deliver
-   a pinned version and the integration test guarding the SDK surface. Verify whether
-   `importFromJsonl()` preserves branch structure.
+   a pinned version and the integration test guarding the SDK surface. Done; findings
+   below.
 1. **The document** — Markdown parse/serialise with round-trip tests; prompt, prose, and
    bash cells; a headless runner producing a run record. No graph, no UI.
 2. **The graph** — declared inputs and edges, staleness, partial runs, cycle detection,
@@ -300,6 +300,30 @@ concerns muddy them.
    docs.
 5. **Leverage** — Run View's form; import and promote-chat (one implementation, two
    features); export with results; modes as preset files.
+
+### Phase 0 findings, verified against pi 0.84.2
+
+**`importFromJsonl()` preserves branch structure completely.** It resolves the input path,
+copies the file wholesale with `copyFileSync` into the session directory, and reopens the
+copy with `SessionManager.open()`. Because the transfer is a byte-for-byte file copy rather
+than a replay of entries, every branch survives, including `branch_summary` entries for
+abandoned paths. Note it is a *runtime* method on `AgentSessionRuntime`, not a top-level
+export.
+
+Three sharp edges for ticket 21, none of them about branches: importing tears down the
+current agent session rather than opening a second one; it throws `MissingSessionCwdError`
+when the recorded cwd no longer exists and no override is passed; and the destination is
+`sessionDir/<basename>`, so importing a file whose name matches an existing session
+silently overwrites it.
+
+**A newly created session is not written to disk until an assistant message exists.**
+`SessionManager.create()` buffers entries and only flushes once the session contains a
+message with `role: "assistant"`, which avoids littering the disk with sessions that were
+opened and abandoned. A crash before the first assistant reply therefore loses the session
+entirely, so ticket 18's restart recovery must not assume a file exists for every open
+notebook session. This gate applies to newly created sessions; a session opened from an
+explicit path writes its header immediately. `isPersisted()` is no guide here — it reports
+whether the manager is in persisting mode, not whether anything has reached disk.
 
 ### Risks
 

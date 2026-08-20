@@ -1,0 +1,28 @@
+{
+  "name": "octo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A notebook environment for agents, built on pi",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "npm run format:check && npm run typecheck",
+    "test": "vitest run",
+    "spike": "npm run build && node dist/spike.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}
