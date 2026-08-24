@@ -14,7 +14,7 @@
     "format:check": "prettier --check .",
     "lint": "npm run format:check && npm run typecheck",
     "test": "vitest run",
-    "spike": "npm run build && node dist/spike.js"
+    "notebook": "npm run build && node dist/cli/run-notebook.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.2"

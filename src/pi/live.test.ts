@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ModelRuntime, SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 
+import { createPiAgent } from "../agent/pi.js";
 import { createAssistantTextStream } from "./streaming.js";
 
 /**
@@ -53,9 +54,38 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
         output: expect.any(Number),
       });
       expect(usage?.cost).toMatchObject({ total: expect.any(Number) });
+
+      // The agent boundary reports the model that actually served the turn,
+      // because providers rotate versions under a stable name.
+      expect(typeof (reply as { model?: unknown }).model).toBe("string");
     } finally {
       unsubscribe();
       session.dispose();
+    }
+  });
+
+  it("spans a turn across several messages, with tool calls in the earlier ones", async () => {
+    const agent = await createPiAgent({ cwd: process.cwd() });
+
+    try {
+      const result = await agent.prompt(
+        "Run the shell command `echo pong` using the bash tool, then reply with its output.",
+      );
+
+      // The agent boundary sums usage across the turn and collects tool calls
+      // from every assistant message in it. Reading only the final message —
+      // which is what an earlier version did — silently loses both.
+      expect(result.toolCalls.map((call) => call.name)).toContain("bash");
+      expect(result.usage.inputTokens).toBeGreaterThan(0);
+      expect(result.usage.outputTokens).toBeGreaterThan(0);
+      expect(result.model).not.toBe("");
+
+      const [call] = result.toolCalls;
+      expect(call?.input, "pi names the tool's arguments `arguments`").toMatchObject({
+        command: expect.stringContaining("echo"),
+      });
+    } finally {
+      await agent.dispose();
     }
   });
 });

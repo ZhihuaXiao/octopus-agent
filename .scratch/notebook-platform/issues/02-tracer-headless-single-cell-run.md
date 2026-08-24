@@ -8,9 +8,9 @@ for tests.
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A minimal notebook with frontmatter and one prompt cell runs to completion from the command line
-- [ ] A run record is written recording the cell's status, its text output and its token usage
-- [ ] The same notebook runs deterministically against the scripted agent
-- [ ] No test above the agent interface reaches a real model
+- [x] A minimal notebook with frontmatter and one prompt cell runs to completion from the command line
+- [x] A run record is written recording the cell's status, its text output and its token usage
+- [x] The same notebook runs deterministically against the scripted agent
+- [x] No test above the agent interface reaches a real model

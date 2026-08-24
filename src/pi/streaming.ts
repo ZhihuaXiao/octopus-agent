@@ -1,3 +1,5 @@
+import { isRecord } from "../util/guards.js";
+
 /**
  * The part of pi's assistant message we read: its text content blocks. Pi mixes
  * text, thinking and tool calls in one array, so the block type stays open.
@@ -16,10 +18,6 @@ export interface AssistantTextStream {
    * arrived. `message_end` carries the authoritative content and wins.
    */
   text(): string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function textOf(message: unknown): string {

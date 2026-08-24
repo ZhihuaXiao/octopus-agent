@@ -11,4 +11,7 @@ coverage/
 *.log
 npm-debug.log*
 
+# Run records and artifacts: history, not program (ADR-0005)
+.octo/
+
 .DS_Store
