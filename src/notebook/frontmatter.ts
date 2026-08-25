@@ -1,0 +1,218 @@
+/**
+ * The Notebook metadata carried in YAML frontmatter.
+ *
+ * Only ever reads. Serialising puts back the frontmatter text exactly as the
+ * author wrote it, comments and blank lines included, so nothing here can
+ * affect the bytes on disk — which is also why a real YAML parser is safe to
+ * use for the reading.
+ */
+
+import { isMap, isScalar, isSeq, parseDocument, type ParsedNode } from "yaml";
+
+import type { Diagnostic } from "./diagnostic.js";
+
+/** A named, typed parameter declared in frontmatter. Ticket 05 interpolates it. */
+export interface Input {
+  readonly name: string;
+  readonly type?: string;
+  readonly default?: unknown;
+  readonly description?: string;
+}
+
+export interface Metadata {
+  readonly title?: string;
+  readonly mode?: string;
+  readonly workspace?: string;
+  readonly model?: string;
+  /** Written `pi_version` in the Notebook. */
+  readonly piVersion?: string;
+  readonly tools?: readonly string[];
+  readonly skills?: readonly string[];
+  readonly packages?: readonly string[];
+  readonly inputs?: readonly Input[];
+}
+
+const STRING_FIELDS = {
+  title: "title",
+  mode: "mode",
+  workspace: "workspace",
+  model: "model",
+  pi_version: "piVersion",
+} as const;
+
+const LIST_FIELDS = { tools: "tools", skills: "skills", packages: "packages" } as const;
+
+const INPUT_FIELDS = ["name", "type", "default", "description"] as const;
+
+const FIELDS = [...Object.keys(STRING_FIELDS), ...Object.keys(LIST_FIELDS), "inputs"];
+
+function newlinesBefore(text: string, offset: number): number {
+  let count = 0;
+  for (let index = 0; index < offset && index < text.length; index += 1) {
+    if (text[index] === "\n") count += 1;
+  }
+  return count;
+}
+
+function scalarString(node: unknown): string | undefined {
+  return isScalar(node) && typeof node.value === "string" ? node.value : undefined;
+}
+
+function readInput(
+  node: ParsedNode,
+  lineOf: (offset: number) => number,
+  errors: Diagnostic[],
+): Input | undefined {
+  if (!isMap(node)) {
+    errors.push({ line: lineOf(node.range[0]), message: "Each input must be a mapping" });
+    return undefined;
+  }
+
+  let name: string | undefined;
+  let type: string | undefined;
+  let description: string | undefined;
+  let hasDefault = false;
+  let value: unknown;
+
+  for (const item of node.items) {
+    const key = scalarString(item.key);
+    const line = lineOf(item.key.range[0]);
+
+    if (key === undefined) {
+      errors.push({ line, message: "An input's field names must be strings" });
+      continue;
+    }
+    if (!(INPUT_FIELDS as readonly string[]).includes(key)) {
+      errors.push({
+        line,
+        message: `Unknown input field "${key}". Expected one of ${INPUT_FIELDS.join(", ")}`,
+      });
+      continue;
+    }
+
+    if (key === "default") {
+      hasDefault = true;
+      value = item.value === null ? null : item.value.toJSON();
+      continue;
+    }
+
+    const scalar = scalarString(item.value);
+    if (scalar === undefined) {
+      errors.push({ line, message: `An input's "${key}" must be a string` });
+      continue;
+    }
+    if (key === "name") name = scalar;
+    if (key === "type") type = scalar;
+    if (key === "description") description = scalar;
+  }
+
+  if (name === undefined) {
+    errors.push({ line: lineOf(node.range[0]), message: "An input is missing its name" });
+    return undefined;
+  }
+
+  return {
+    name,
+    ...(type !== undefined ? { type } : {}),
+    ...(hasDefault ? { default: value } : {}),
+    ...(description !== undefined ? { description } : {}),
+  };
+}
+
+/**
+ * Reads frontmatter YAML into Metadata, reporting anything the format contract
+ * does not allow against the line it appears on.
+ *
+ * @param text the frontmatter between its delimiters
+ * @param firstLine the Notebook line `text` starts on
+ */
+export function readMetadata(text: string, firstLine: number, errors: Diagnostic[]): Metadata {
+  const parsed = parseDocument(text, { prettyErrors: false });
+  const lineOf = (offset: number) => firstLine + newlinesBefore(text, offset);
+
+  for (const error of parsed.errors) {
+    errors.push({ line: lineOf(error.pos[0]), message: error.message });
+  }
+  if (parsed.errors.length > 0 || parsed.contents === null) return {};
+
+  if (!isMap(parsed.contents)) {
+    errors.push({ line: firstLine, message: "Frontmatter must be a mapping of fields" });
+    return {};
+  }
+
+  const metadata: Record<string, unknown> = {};
+
+  // Duplicate fields need no check here: YAML itself rejects a repeated key,
+  // and that is reported above against the line it occurred on.
+  for (const item of parsed.contents.items) {
+    const key = scalarString(item.key);
+    const line = lineOf(item.key.range[0]);
+
+    if (key === undefined) {
+      errors.push({ line, message: "Frontmatter field names must be strings" });
+      continue;
+    }
+
+    if (key in STRING_FIELDS) {
+      const value = scalarString(item.value);
+      if (value === undefined) {
+        errors.push({ line, message: `Frontmatter field "${key}" must be a string` });
+        continue;
+      }
+      metadata[STRING_FIELDS[key as keyof typeof STRING_FIELDS]] = value;
+      continue;
+    }
+
+    if (key in LIST_FIELDS) {
+      if (!isSeq(item.value)) {
+        errors.push({ line, message: `Frontmatter field "${key}" must be a list of strings` });
+        continue;
+      }
+      const values: string[] = [];
+      for (const element of item.value.items) {
+        const value = scalarString(element);
+        if (value === undefined) {
+          errors.push({
+            line: lineOf(element.range[0]),
+            message: `Every entry in "${key}" must be a string`,
+          });
+          continue;
+        }
+        values.push(value);
+      }
+      metadata[LIST_FIELDS[key as keyof typeof LIST_FIELDS]] = values;
+      continue;
+    }
+
+    if (key === "inputs") {
+      if (!isSeq(item.value)) {
+        errors.push({ line, message: `Frontmatter field "inputs" must be a list` });
+        continue;
+      }
+      const inputs: Input[] = [];
+      const names = new Set<string>();
+      for (const element of item.value.items) {
+        const input = readInput(element, lineOf, errors);
+        if (!input) continue;
+        if (names.has(input.name)) {
+          errors.push({
+            line: lineOf(element.range[0]),
+            message: `Duplicate input "${input.name}"`,
+          });
+          continue;
+        }
+        names.add(input.name);
+        inputs.push(input);
+      }
+      metadata.inputs = inputs;
+      continue;
+    }
+
+    errors.push({
+      line,
+      message: `Unknown frontmatter field "${key}". Expected one of ${FIELDS.join(", ")}`,
+    });
+  }
+
+  return metadata as Metadata;
+}

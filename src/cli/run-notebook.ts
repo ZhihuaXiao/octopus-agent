@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import { createPiAgent } from "../agent/pi.js";
-import { parseNotebook } from "../notebook/notebook.js";
+import { formatDiagnostics, parseNotebook } from "../notebook/notebook.js";
 import { recordPath } from "../run/store.js";
 import { runNotebook } from "../run/runner.js";
 
@@ -24,8 +24,13 @@ async function main(): Promise<void> {
   const path = resolve(notebookArg);
   // Parsed here only to resolve the Workspace, which the agent needs before the
   // run starts. Ticket 06 owns the declared environment properly.
-  const notebook = parseNotebook(await readFile(path, "utf8"));
-  const workspace = resolve(dirname(path), notebook.workspace ?? ".");
+  const parsed = parseNotebook(await readFile(path, "utf8"));
+  if (!parsed.ok) {
+    process.stderr.write(`${path} cannot be parsed:\n${formatDiagnostics(parsed.errors)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const workspace = resolve(dirname(path), parsed.notebook.metadata.workspace ?? ".");
 
   const agent = await createPiAgent({
     cwd: workspace,

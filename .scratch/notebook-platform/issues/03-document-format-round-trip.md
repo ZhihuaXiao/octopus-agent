@@ -8,10 +8,10 @@ destroys the reviewability the Markdown format exists for.
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Every frontmatter field and cell attribute in the format contract parses
-- [ ] A property test asserts that parse-then-serialise is byte-identical across generated notebooks
-- [ ] Editing one cell's body leaves every other byte of the file unchanged
-- [ ] Prose between cells survives a round trip exactly, including blank lines
-- [ ] A malformed notebook reports the line and the problem rather than throwing
+- [x] Every frontmatter field and cell attribute in the format contract parses
+- [x] A property test asserts that parse-then-serialise is byte-identical across generated notebooks
+- [x] Editing one cell's body leaves every other byte of the file unchanged
+- [x] Prose between cells survives a round trip exactly, including blank lines
+- [x] A malformed notebook reports the line and the problem rather than throwing
