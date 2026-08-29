@@ -24,4 +24,10 @@ an `id` attribute is a near miss rather than Prose, and is reported, so a mistyp
 ` ```promt id=greet ` cannot silently turn a Cell into decoration.
 
 A `bash` fence remains Prose unless it carries an `id`, so the shell snippets that appear in
-ordinary documentation are not mistaken for Cells.
+ordinary documentation are not mistaken for Cells. Ticket 04 settled the case that leaves:
+such a fence is reported as missing its id when it carries any *other* cell attribute —
+`type`, `uses`, `isolated` or `model`. Those four are our own invention and appear on no
+documentation snippet, so their presence is proof of intent rather than a guess; an info
+string carrying some other tool's attributes, like ` ```bash title="Install" `, stays Prose.
+This is as far as the silence can be narrowed: a bare ` ```bash ` fence with a forgotten id
+is indistinguishable from a snippet, and always will be.

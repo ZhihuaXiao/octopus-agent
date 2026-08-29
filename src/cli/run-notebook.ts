@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import { createPiAgent } from "../agent/pi.js";
-import { formatDiagnostics, parseNotebook } from "../notebook/notebook.js";
+import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
 import { recordPath } from "../run/store.js";
 import { runNotebook } from "../run/runner.js";
 
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const workspace = resolve(dirname(path), parsed.notebook.metadata.workspace ?? ".");
+  const workspace = workspaceOf(parsed.notebook, path);
 
   const agent = await createPiAgent({
     cwd: workspace,
@@ -44,6 +44,9 @@ async function main(): Promise<void> {
     const failed = record.cells.filter((cell) => cell.status === "error");
     for (const cell of failed) {
       process.stderr.write(`Cell "${cell.id}" failed: ${cell.error}\n`);
+      // A bash cell's output never streamed past, so the account of what went
+      // wrong is in the record and nowhere the reader has already seen.
+      if (cell.type === "bash" && cell.stderr !== "") process.stderr.write(cell.stderr);
     }
     if (failed.length > 0) process.exitCode = 1;
   } finally {

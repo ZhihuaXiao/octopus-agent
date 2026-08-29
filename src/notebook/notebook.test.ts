@@ -435,6 +435,22 @@ describe("malformed notebooks", () => {
     expect(parseNotebook(source).ok).toBe(true);
   });
 
+  it("reports a bash fence carrying cell attributes but no id", () => {
+    expect(problems("```bash uses=collect\nnpm test\n```\n")).toEqual([
+      { line: 1, message: "Cell is missing an id" },
+    ]);
+    expect(problems("```bash isolated\nnpm test\n```\n")).toEqual([
+      { line: 1, message: "Cell is missing an id" },
+    ]);
+  });
+
+  it("leaves a shell snippet carrying another tool's attributes as prose", () => {
+    const source = '```bash title="Install" copy\nnpm install\n```\n';
+
+    expect(parseNotebook(source).ok).toBe(true);
+    expect(valid(source).segments.filter(isCellSegment)).toEqual([]);
+  });
+
   it("reports every problem at once rather than only the first", () => {
     const source = `---
 title: 3

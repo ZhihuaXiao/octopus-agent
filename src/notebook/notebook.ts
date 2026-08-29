@@ -15,6 +15,8 @@
  * two views can never drift apart.
  */
 
+import { dirname, resolve } from "node:path";
+
 import type { Diagnostic } from "./diagnostic.js";
 import { type Metadata, readMetadata } from "./frontmatter.js";
 
@@ -83,6 +85,9 @@ const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const INDENTED_FENCE = /^ {1,3}(`{3,}|~{3,})(.*)$/;
 const CELL_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "model"];
+/** The attributes that are this project's own invention, so no snippet has one. */
+const CELL_ONLY_ATTRIBUTES = CELL_ATTRIBUTES.filter((key) => key !== "id");
+const MISSING_ID = "Cell is missing an id";
 
 const raw = (line: SourceLine) => line.text + line.terminator;
 
@@ -101,6 +106,18 @@ export function cellsOf(notebook: Notebook): readonly Cell[] {
  */
 export function bodyOf(cell: Cell): string {
   return cell.body.trim();
+}
+
+/**
+ * The directory the Notebook operates on: the Workspace it declares, resolved
+ * against the Notebook's own location, or that location when it declares none.
+ *
+ * Relative to the Notebook rather than to the process, so a Notebook and the
+ * code it operates on travel together and a Run does the same thing wherever
+ * it was started from. Ticket 06 owns the declared environment properly.
+ */
+export function workspaceOf(notebook: Notebook, notebookPath: string): string {
+  return resolve(dirname(notebookPath), notebook.metadata.workspace ?? ".");
 }
 
 /**
@@ -253,7 +270,7 @@ function readCell(
   }
 
   if (id === undefined) {
-    errors.push({ line, message: "Cell is missing an id" });
+    errors.push({ line, message: MISSING_ID });
     return undefined;
   }
 
@@ -287,6 +304,18 @@ function reportNearMiss(
     });
     return;
   }
+
+  // A bash fence with no id is a shell snippet in the documentation, not a
+  // Cell (ADR-0008) — unless it carries an attribute only a Cell would have,
+  // which is evidence enough of intent to report the missing id rather than
+  // leave the author's Bash Cell silently never running.
+  if (tag === "bash") {
+    if (attributes.some(([key]) => CELL_ONLY_ATTRIBUTES.includes(key))) {
+      errors.push({ line, message: MISSING_ID });
+    }
+    return;
+  }
+
   if (declaresId(attributes)) {
     errors.push({
       line,
@@ -370,7 +399,7 @@ export function parseNotebook(source: string): ParseResult {
     }
 
     if (!isCell) {
-      if (tag !== "bash") reportNearMiss(tag, attributes, index + 1, errors);
+      reportNearMiss(tag, attributes, index + 1, errors);
       // Skipped wholesale, so a Cell fence quoted inside a longer fence is
       // never mistaken for a Cell of its own.
       for (let at = index; at <= close; at += 1) {
