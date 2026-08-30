@@ -62,6 +62,16 @@ _Avoid_: profile, persona, preset, agent type, run mode
 The directory a Notebook operates on.
 _Avoid_: project, root, cwd, folder
 
+**Declared Environment**:
+What a Notebook says it needs of the machine that runs it: its Workspace, Tools, Skills,
+Packages and pi version. Checked before a Run's first Cell and never repaired.
+_Avoid_: requirements, dependencies, prerequisites
+
+**Environment**:
+What the machine actually provides, as the agent found it. The other half of the pair: a
+Declared Environment is checked against an Environment, never against the disk directly.
+_Avoid_: context, surroundings, setup, host
+
 ### Running
 
 **Notebook Session**:
@@ -76,6 +86,11 @@ _Avoid_: session (unqualified), conversation, context, thread
 **Run**:
 One execution of some or all of a Notebook's Cells.
 _Avoid_: execution, job, invocation, build
+
+**Workspace Trust**:
+Whether pi loads a Workspace's own settings, Skills and Extensions. Pi's decision, which a
+Run makes explicitly rather than letting pi skip it. Never a security boundary (ADR-0006).
+_Avoid_: permission, approval, sandbox, allowlist
 
 **Run Record**:
 The persisted result of a Run, stored outside the Notebook: per-Cell status, timings, the

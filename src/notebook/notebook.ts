@@ -117,7 +117,7 @@ export function bodyOf(cell: Cell): string {
  *
  * Relative to the Notebook rather than to the process, so a Notebook and the
  * code it operates on travel together and a Run does the same thing wherever
- * it was started from. Ticket 06 owns the declared environment properly.
+ * it was started from. Whether the directory is there is the Run's to check.
  */
 export function workspaceOf(notebook: Notebook, notebookPath: string): string {
   return resolve(dirname(notebookPath), notebook.metadata.workspace ?? ".");

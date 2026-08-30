@@ -59,7 +59,7 @@ describe("runNotebook", () => {
     const path = await notebookFile(oneCell);
     const agent = createScriptedAgent([{ text: "Hello, world" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
 
     expect(agent.prompts).toEqual(["Say hello."]);
     expect(record.cells).toEqual([
@@ -78,7 +78,7 @@ describe("runNotebook", () => {
       },
     ]);
 
-    const cell = onlyCell(await runNotebook(path, { agent }), "prompt");
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
 
     expect(cell.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
     expect(cell.model).toBe("anthropic/claude-sonnet-4");
@@ -89,7 +89,7 @@ describe("runNotebook", () => {
     const path = await notebookFile(twoCells);
     const agent = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
 
     expect(agent.prompts).toEqual(["Do the first thing.", "Do the second thing."]);
     expect(record.cells.map((cell) => cell.id)).toEqual(["first", "second"]);
@@ -99,7 +99,7 @@ describe("runNotebook", () => {
     const path = await notebookFile(oneCell);
     const agent = createScriptedAgent([{ text: "Hello, world" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
     const written = JSON.parse(await readFile(recordPath(path, record.id), "utf8"));
 
     expect(written).toEqual(record);
@@ -109,8 +109,10 @@ describe("runNotebook", () => {
   it("keeps a separate record for each run of the same notebook", async () => {
     const path = await notebookFile(oneCell);
 
-    const first = await runNotebook(path, { agent: createScriptedAgent([{ text: "one" }]) });
-    const second = await runNotebook(path, { agent: createScriptedAgent([{ text: "two" }]) });
+    const first = await runNotebook(path, { agent: createScriptedAgent([{ text: "one" }]).create });
+    const second = await runNotebook(path, {
+      agent: createScriptedAgent([{ text: "two" }]).create,
+    });
 
     expect(second.id).not.toBe(first.id);
     expect(JSON.parse(await readFile(recordPath(path, first.id), "utf8")).cells[0].text).toBe(
@@ -122,7 +124,7 @@ describe("runNotebook", () => {
     const path = await notebookFile(twoCells);
     const agent = createScriptedAgent([{ error: "provider exploded" }, { text: "never reached" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
 
     expect(record.cells).toEqual([
       expect.objectContaining({ id: "first", status: "error", error: "provider exploded" }),
@@ -136,7 +138,7 @@ describe("runNotebook", () => {
     );
     const agent = createScriptedAgent([{ text: "Hello" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
 
     expect(record.cells.map((cell) => cell.id)).toEqual(["greet"]);
   });
@@ -147,7 +149,7 @@ describe("runNotebook", () => {
     const path = await notebookFile(await readFile(example, "utf8"));
     const agent = createScriptedAgent([{ text: "pong" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
 
     expect(agent.prompts).toEqual(["Reply with exactly the word: pong"]);
     expect(record.cells).toEqual([
@@ -166,7 +168,7 @@ describe("bash cells", () => {
   it("records what the command wrote and the status it exited with", async () => {
     const path = await notebookFile(oneBashCell("echo to stdout\necho to stderr >&2"));
 
-    const record = await runNotebook(path, { agent: unusedAgent() });
+    const record = await runNotebook(path, { agent: unusedAgent().create });
 
     expect(record.cells).toEqual([
       {
@@ -185,7 +187,7 @@ describe("bash cells", () => {
     const path = await notebookFile(oneBashCell("echo cheap"));
     const agent = unusedAgent();
 
-    const cell = onlyCell(await runNotebook(path, { agent }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "bash");
 
     expect(agent.prompts).toEqual([]);
     expect(cell.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
@@ -197,7 +199,7 @@ describe("bash cells", () => {
     );
     const agent = createScriptedAgent([{ text: "never reached" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
     const cell = onlyCell(record, "bash");
 
     expect(cell.status).toBe("error");
@@ -211,7 +213,7 @@ describe("bash cells", () => {
   it("runs the command in the notebook's own directory by default", async () => {
     const path = await notebookFile(oneBashCell("pwd"));
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
 
     expect(cell.stdout.trim()).toBe(dirname(path));
   });
@@ -220,7 +222,7 @@ describe("bash cells", () => {
     const path = await notebookFile(`---\nworkspace: service\n---\n\n${oneBashCell("pwd")}`);
     await mkdir(join(dirname(path), "service"));
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
 
     expect(cell.stdout.trim()).toBe(join(dirname(path), "service"));
   });
@@ -228,7 +230,7 @@ describe("bash cells", () => {
   it("records a command killed by a signal as a failure, naming the signal", async () => {
     const path = await notebookFile(oneBashCell("kill -9 $$"));
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
 
     expect(cell.status).toBe("error");
     expect(cell.exitCode).toBeNull();
@@ -236,13 +238,21 @@ describe("bash cells", () => {
   });
 
   it("records a command it could not even start as a failure of the cell", async () => {
-    const path = await notebookFile(`---\nworkspace: absent\n---\n\n${oneBashCell("pwd")}`);
+    // A workspace that went away mid-run, which is the only way past the check
+    // that refuses a notebook whose workspace was already missing.
+    const path = await notebookFile(
+      `---\nworkspace: doomed\n---\n\n\`\`\`bash id=remove\nrmdir "$PWD"\n\`\`\`\n\n\`\`\`bash id=after\npwd\n\`\`\`\n`,
+    );
+    await mkdir(join(dirname(path), "doomed"));
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const [, cell] = (await runNotebook(path, { agent: unusedAgent().create })).cells;
 
-    expect(cell.status).toBe("error");
+    expect(cell?.status).toBe("error");
+    expect(cell?.error).toContain("could not be run");
+    if (cell?.type !== "bash") throw new Error("expected the second cell to be a bash cell");
+    // Null rather than a status it never reached, which is the hook ticket 11
+    // needs for timeouts.
     expect(cell.exitCode).toBeNull();
-    expect(cell.error).toContain("could not be run");
     // Not the command's own output, so it is not passed off as such.
     expect(cell.stderr).toBe("");
   });
@@ -252,7 +262,7 @@ describe("bash cells", () => {
       oneBashCell('greeting=hello\nprintf "%s\\n" "$greeting" > made'),
     );
 
-    await runNotebook(path, { agent: unusedAgent() });
+    await runNotebook(path, { agent: unusedAgent().create });
 
     expect(await readFile(join(dirname(path), "made"), "utf8")).toBe("hello\n");
   });
@@ -263,7 +273,7 @@ describe("bash cells", () => {
     );
     const agent = createScriptedAgent([{ text: "asked" }]);
 
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent: agent.create });
 
     expect(record.cells.map((cell) => [cell.id, cell.type, cell.status])).toEqual([
       ["ask", "prompt", "ok"],
@@ -274,7 +284,7 @@ describe("bash cells", () => {
   it("reads nothing from the terminal, so a command expecting input cannot wedge", async () => {
     const path = await notebookFile(oneBashCell("cat"));
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
 
     expect(cell.status).toBe("ok");
     expect(cell.stdout).toBe("");
@@ -292,7 +302,7 @@ describe("declared inputs", () => {
     const path = await notebookFile(withInputs(target));
     const agent = createScriptedAgent([{ text: "audited" }]);
 
-    await runNotebook(path, { agent });
+    await runNotebook(path, { agent: agent.create });
 
     expect(agent.prompts).toEqual(["Audit src."]);
   });
@@ -301,7 +311,7 @@ describe("declared inputs", () => {
     const path = await notebookFile(withInputs(target));
     const agent = createScriptedAgent([{ text: "audited" }]);
 
-    await runNotebook(path, { agent, inputs: { target: "docs" } });
+    await runNotebook(path, { agent: agent.create, inputs: { target: "docs" } });
 
     expect(agent.prompts).toEqual(["Audit docs."]);
   });
@@ -312,7 +322,7 @@ describe("declared inputs", () => {
     );
     const agent = createScriptedAgent([{ text: "audited" }]);
 
-    await runNotebook(path, { agent });
+    await runNotebook(path, { agent: agent.create });
 
     expect(agent.prompts).toEqual(["Audit src, then re-read src."]);
   });
@@ -326,7 +336,7 @@ describe("declared inputs", () => {
     );
     const agent = createScriptedAgent([{ text: "tried" }]);
 
-    await runNotebook(path, { agent });
+    await runNotebook(path, { agent: agent.create });
 
     expect(agent.prompts).toEqual(["Try 3 times, strict=false."]);
   });
@@ -336,7 +346,7 @@ describe("declared inputs", () => {
       `---\ninputs:\n  - name: greeting\n    default: hello\n---\n\n\`\`\`bash id=say\necho {{greeting}}\n\`\`\`\n`,
     );
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
 
     expect(cell.stdout).toBe("hello\n");
   });
@@ -344,7 +354,7 @@ describe("declared inputs", () => {
   it("leaves an escaped reference as the text it stands for", async () => {
     const path = await notebookFile(`\`\`\`bash id=say\necho '\\{{end}}'\n\`\`\`\n`);
 
-    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
 
     expect(cell.stdout).toBe("{{end}}\n");
   });
@@ -355,7 +365,7 @@ describe("declared inputs", () => {
     );
     const agent = createScriptedAgent([{ text: "never reached" }]);
 
-    await expect(runNotebook(path, { agent })).rejects.toThrow(
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(
       /required input "target".*The directory to audit/,
     );
     expect(agent.prompts).toEqual([]);
@@ -367,9 +377,9 @@ describe("declared inputs", () => {
     );
     const agent = createScriptedAgent([{ text: "never reached" }]);
 
-    await expect(runNotebook(path, { agent, inputs: { retries: "many" } })).rejects.toThrow(
-      /"retries" expects a number/,
-    );
+    await expect(
+      runNotebook(path, { agent: agent.create, inputs: { retries: "many" } }),
+    ).rejects.toThrow(/"retries" expects a number/);
     expect(agent.prompts).toEqual([]);
   });
 
@@ -377,9 +387,9 @@ describe("declared inputs", () => {
     const path = await notebookFile(withInputs(target));
     const agent = createScriptedAgent([{ text: "never reached" }]);
 
-    await expect(runNotebook(path, { agent, inputs: { targt: "docs" } })).rejects.toThrow(
-      /No input named "targt"/,
-    );
+    await expect(
+      runNotebook(path, { agent: agent.create, inputs: { targt: "docs" } }),
+    ).rejects.toThrow(/No input named "targt"/);
     expect(agent.prompts).toEqual([]);
   });
 
@@ -392,7 +402,7 @@ describe("declared inputs", () => {
     );
 
     await expect(
-      runNotebook(path, { agent: unusedAgent(), inputs: { retries: "many" } }),
+      runNotebook(path, { agent: unusedAgent().create, inputs: { retries: "many" } }),
     ).rejects.toThrow(/required input "target"[\s\S]*"retries" expects a number/);
   });
 
@@ -401,12 +411,162 @@ describe("declared inputs", () => {
     const path = await notebookFile(await readFile(example, "utf8"));
     const agent = createScriptedAgent([{ text: "Hello, Ada!" }]);
 
-    const record = await runNotebook(path, { agent, inputs: { name: "Ada" } });
+    const record = await runNotebook(path, { agent: agent.create, inputs: { name: "Ada" } });
 
     expect(agent.prompts).toEqual(["Say hello to Ada in one short sentence."]);
     expect(record.cells).toEqual([
       expect.objectContaining({ id: "announce", status: "ok", stdout: "Greeting Ada\n" }),
       expect.objectContaining({ id: "greet", status: "ok" }),
     ]);
+  });
+});
+
+/** One prompt cell, under frontmatter declaring whatever the test needs. */
+const declaring = (frontmatter: string) =>
+  `---\n${frontmatter}---\n\n\`\`\`prompt id=work\nDo the work.\n\`\`\`\n`;
+
+describe("declared environment", () => {
+  it("sets the agent up in the workspace the notebook declares", async () => {
+    const path = await notebookFile(declaring("workspace: service\n"));
+    await mkdir(join(dirname(path), "service"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.setup?.workspace).toBe(join(dirname(path), "service"));
+  });
+
+  it("sets the agent up in the notebook's own directory when it declares no workspace", async () => {
+    const path = await notebookFile(declaring("title: Plain\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.setup?.workspace).toBe(dirname(path));
+  });
+
+  it("gives the agent only the tools the notebook declares", async () => {
+    const path = await notebookFile(declaring("tools:\n  - read\n  - bash\n"));
+    const agent = createScriptedAgent([{ text: "done" }], { tools: ["read", "bash"] });
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.setup?.tools).toEqual(["read", "bash"]);
+  });
+
+  it("leaves the tools alone when the notebook declares none", async () => {
+    const path = await notebookFile(declaring("title: Plain\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.setup?.tools).toBeUndefined();
+  });
+
+  it("tells the agent what the run was told about trusting the workspace", async () => {
+    const path = await notebookFile(declaring("title: Plain\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create, trust: true });
+
+    expect(agent.setup?.trust).toBe(true);
+  });
+
+  it("stops before any cell runs when a declared skill is missing, naming it", async () => {
+    const path = await notebookFile(declaring("skills:\n  - review\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(/skill "review"/);
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("stops before any cell runs when a declared package is missing", async () => {
+    const path = await notebookFile(declaring("packages:\n  - npm:@acme/skills@1.0.0\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(
+      /npm:@acme\/skills@1\.0\.0/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("stops before any cell runs when a declared tool is not on offer", async () => {
+    const path = await notebookFile(declaring("tools:\n  - grep\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }], { tools: [] });
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(/tool "grep"/);
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("reports a declared pi version that is not the one running", async () => {
+    const path = await notebookFile(declaring("pi_version: 0.83.0\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }], { piVersion: "0.84.2" });
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(/0\.83\.0/);
+  });
+
+  it("stops a bash-only notebook too, since a degraded workspace is still degraded", async () => {
+    const path = await notebookFile(
+      `---\nskills:\n  - review\n---\n\n\`\`\`bash id=step\ntouch ran\n\`\`\`\n`,
+    );
+
+    await expect(runNotebook(path, { agent: unusedAgent().create })).rejects.toThrow(
+      /skill "review"/,
+    );
+    await expect(readFile(join(dirname(path), "ran"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses to run against a workspace that is not there", async () => {
+    const path = await notebookFile(declaring("workspace: absent\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(/absent/);
+    expect(agent.setup, "the agent is never set up against a workspace that is not there").toBe(
+      undefined,
+    );
+  });
+
+  it("reads a refusal to set the agent up as a refusal to run the notebook", async () => {
+    const path = await notebookFile(oneCell);
+    const undecided = () => Promise.reject(new Error("nothing has decided whether to trust it"));
+
+    await expect(runNotebook(path, { agent: undecided })).rejects.toThrow(
+      /Cannot run [\s\S]*decided whether to trust it/,
+    );
+  });
+
+  it("records the environment the cells actually ran in", async () => {
+    const path = await notebookFile(declaring("tools:\n  - read\n"));
+    const agent = createScriptedAgent([{ text: "done" }], {
+      piVersion: "0.84.2",
+      tools: ["read"],
+      trusted: false,
+    });
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(record.environment).toEqual({
+      workspace: dirname(path),
+      piVersion: "0.84.2",
+      tools: ["read"],
+      trusted: false,
+    });
+  });
+
+  it("disposes the agent when the run is over", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.disposed).toBe(true);
+  });
+
+  it("disposes the agent when the environment refuses the run", async () => {
+    const path = await notebookFile(declaring("skills:\n  - review\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow();
+    expect(agent.disposed).toBe(true);
   });
 });

@@ -40,11 +40,32 @@ export interface BashCellRecord extends CellRecordBase {
  */
 export type CellRecord = PromptCellRecord | BashCellRecord;
 
+/**
+ * The Environment a Run actually had.
+ *
+ * Recorded because a result nobody can account for is a result nobody can
+ * trust: the same Notebook run against a Workspace pi was not told to trust
+ * saw none of that Workspace's skills, and this is the only place that says
+ * so. Its own shape rather than the agent boundary's, because this one is
+ * written to disk and read back by later versions of the program.
+ */
+export interface RunEnvironment {
+  /** The Workspace the Cells ran in. */
+  workspace: string;
+  /** Whether pi loaded the Workspace's own settings, skills and extensions. */
+  trusted: boolean;
+  /** The version of pi that ran. */
+  piVersion: string;
+  /** The tools the agent was given. */
+  tools: string[];
+}
+
 export interface RunRecord {
   /** Identifies this Run among the Notebook's other Runs. */
   id: string;
   /** Path to the Notebook this Run executed. */
   notebook: string;
+  environment: RunEnvironment;
   startedAt: string;
   endedAt: string;
   cells: CellRecord[];

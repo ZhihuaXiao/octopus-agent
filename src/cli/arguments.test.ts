@@ -75,3 +75,33 @@ describe("reading command line arguments", () => {
     expect(rejected(["audit.md", "--the target=docs"])).toContain("the target");
   });
 });
+
+describe("deciding whether to trust the workspace", () => {
+  it("leaves the decision unmade when neither flag is given", () => {
+    expect(valid(["audit.md"]).trust).toBeUndefined();
+  });
+
+  it("reads a decision to trust the workspace", () => {
+    expect(valid(["audit.md", "--trust"]).trust).toBe(true);
+  });
+
+  it("reads a decision not to trust it", () => {
+    expect(valid(["audit.md", "--no-trust"]).trust).toBe(false);
+  });
+
+  it("keeps the flag out of the inputs, which is not what it is", () => {
+    expect(valid(["audit.md", "--trust", "--target", "docs"]).inputs).toEqual({ target: "docs" });
+  });
+
+  it("takes no value, so the word after it is still an argument of its own", () => {
+    expect(valid(["--trust", "audit.md"]).notebook).toBe("audit.md");
+  });
+
+  it("reports the two flags contradicting each other", () => {
+    expect(rejected(["audit.md", "--trust", "--no-trust"])).toContain("trust");
+  });
+
+  it("reports a value given to a flag that takes none", () => {
+    expect(rejected(["audit.md", "--trust=yes"])).toContain("--trust");
+  });
+});

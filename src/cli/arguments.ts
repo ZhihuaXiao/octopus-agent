@@ -1,6 +1,6 @@
 /**
- * The command line of the headless runner: a Notebook, and a value for any of
- * the Inputs it declares.
+ * The command line of the headless runner: a Notebook, a value for any of the
+ * Inputs it declares, and the Workspace's trust decision.
  *
  * An Input is written as a long option named after it, `--target docs`, so the
  * command line reads as the Notebook's own vocabulary rather than a generic
@@ -11,7 +11,10 @@
 
 import { isName } from "../notebook/name.js";
 
-const USAGE = "usage: npm run notebook -- <notebook.md> [--input value]...";
+const USAGE = "usage: npm run notebook -- <notebook.md> [--trust|--no-trust] [--input value]...";
+
+/** The flags that decide a Workspace's trust, and what deciding it means. */
+const TRUST_FLAGS: Readonly<Record<string, boolean>> = { trust: true, "no-trust": false };
 
 export type Arguments =
   | {
@@ -19,6 +22,8 @@ export type Arguments =
       readonly notebook: string;
       /** Values as written, for the Run to read against the declared types. */
       readonly inputs: Readonly<Record<string, string>>;
+      /** Absent when neither flag was given, leaving the decision to what pi has recorded. */
+      readonly trust?: boolean;
     }
   | { readonly ok: false; readonly error: string };
 
@@ -27,6 +32,7 @@ const isOption = (argument: string) => argument.startsWith("-");
 export function readArguments(argv: readonly string[]): Arguments {
   const inputs: Record<string, string> = {};
   let notebook: string | undefined;
+  let trust: boolean | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
@@ -52,6 +58,22 @@ export function readArguments(argv: readonly string[]): Arguments {
     if (!isName(name)) {
       return { ok: false, error: `Unknown option "${argument}". ${USAGE}` };
     }
+
+    // Read before the inputs, so the trust decision is never left to a name
+    // collision. The cost is that `trust` and `no-trust` are the two Input
+    // names this command line cannot pass a value for, which is one more thing
+    // ticket 13's launcher should settle when it takes this over.
+    const decision = TRUST_FLAGS[name];
+    if (decision !== undefined) {
+      if (separator !== -1) {
+        return { ok: false, error: `Option "--${name}" takes no value.` };
+      }
+      if (trust !== undefined && trust !== decision) {
+        return { ok: false, error: "Either trust the workspace or don't, not both." };
+      }
+      trust = decision;
+      continue;
+    }
     if (Object.hasOwn(inputs, name)) {
       return { ok: false, error: `Input "${name}" was given twice.` };
     }
@@ -74,5 +96,5 @@ export function readArguments(argv: readonly string[]): Arguments {
   }
 
   if (notebook === undefined) return { ok: false, error: USAGE };
-  return { ok: true, notebook, inputs };
+  return { ok: true, notebook, inputs, ...(trust !== undefined ? { trust } : {}) };
 }

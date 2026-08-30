@@ -1,8 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
-import { type Agent, emptyResult, noUsage } from "../agent/agent.js";
+import { type Agent, type AgentFactory, emptyResult, noUsage } from "../agent/agent.js";
+import { checkEnvironment } from "../agent/environment.js";
 import {
   type Cell,
+  type InputValues,
+  type Notebook,
   bodyOf,
   cellsOf,
   formatDiagnostics,
@@ -16,13 +19,24 @@ import { type ShellResult, runShellCommand } from "./shell.js";
 import { newRunId, writeRunRecord } from "./store.js";
 
 export interface RunOptions {
-  agent: Agent;
+  /**
+   * Makes the agent this Run's Prompt Cells go to. A factory rather than an
+   * agent, because how the agent is set up is the Notebook's to say and the
+   * Notebook has not been read yet when a Run is asked for.
+   */
+  agent: AgentFactory;
   /**
    * Values for the Notebook's declared Inputs, as written rather than typed:
    * they arrive from a command line or a form, so reading them is this Run's
    * job. Anything the Notebook declares and this omits falls to its default.
    */
   inputs?: Readonly<Record<string, string>>;
+  /**
+   * Whether to trust the Workspace's own settings, skills and extensions. A
+   * property of the Run rather than of the Notebook: a document cannot vouch
+   * for the directory it is pointed at, only the person running it can.
+   */
+  trust?: boolean;
 }
 
 async function runPromptCell(cell: Cell, body: string, agent: Agent): Promise<PromptCellRecord> {
@@ -65,36 +79,33 @@ async function runBashCell(cell: Cell, body: string, workspace: string): Promise
   };
 }
 
-/**
- * Executes a Notebook and returns a Run Record describing what happened.
- *
- * The primary public interface of the engine, and the seam the spec designates
- * for testing it: drive this with a scripted agent and assert on the record.
- */
-export async function runNotebook(path: string, options: RunOptions): Promise<RunRecord> {
-  const parsed = parseNotebook(await readFile(path, "utf8"));
-  if (!parsed.ok) {
-    throw new Error(`Cannot run ${path}:\n${formatDiagnostics(parsed.errors)}`);
-  }
+const isDirectory = (path: string) =>
+  stat(path).then(
+    (entry) => entry.isDirectory(),
+    () => false,
+  );
 
-  // Before the first cell rather than as each one needs its values: a Notebook
-  // that stops at its third cell for want of an input has already spent the
-  // tokens of the first two, and half-applied its changes to the Workspace.
-  const inputs = resolveInputs(parsed.notebook.metadata.inputs ?? [], options.inputs ?? {});
-  if (!inputs.ok) {
-    throw new Error(`Cannot run ${path}:\n${inputs.errors.join("\n")}`);
-  }
+/** A Notebook that has settled everything it needs, ready for its Cells to run. */
+interface Cleared {
+  readonly path: string;
+  readonly notebook: Notebook;
+  readonly workspace: string;
+  readonly values: InputValues;
+  readonly agent: Agent;
+}
 
-  const workspace = workspaceOf(parsed.notebook, path);
+/** Runs the Cells of a Notebook that has already been cleared to run. */
+async function runCells(cleared: Cleared): Promise<RunRecord> {
+  const { path, workspace, agent } = cleared;
   const startedAt = new Date().toISOString();
   const cells: CellRecord[] = [];
 
-  for (const cell of cellsOf(parsed.notebook)) {
-    const body = interpolate(bodyOf(cell), inputs.values);
+  for (const cell of cellsOf(cleared.notebook)) {
+    const body = interpolate(bodyOf(cell), cleared.values);
     const recorded =
       cell.type === "bash"
         ? await runBashCell(cell, body, workspace)
-        : await runPromptCell(cell, body, options.agent);
+        : await runPromptCell(cell, body, agent);
     cells.push(recorded);
 
     // Halt rather than carry on: a later cell built on a failed one would be
@@ -106,10 +117,74 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
   const record: RunRecord = {
     id: newRunId(),
     notebook: path,
+    environment: {
+      workspace,
+      trusted: agent.environment.trusted,
+      piVersion: agent.environment.piVersion,
+      tools: [...agent.environment.tools],
+    },
     startedAt,
     endedAt: new Date().toISOString(),
     cells,
   };
   await writeRunRecord(record);
   return record;
+}
+
+/**
+ * Executes a Notebook and returns a Run Record describing what happened.
+ *
+ * The primary public interface of the engine, and the seam the spec designates
+ * for testing it: drive this with a scripted agent and assert on the record.
+ *
+ * Everything that could stop the Run settles before the first Cell — the
+ * Inputs, the Workspace, and the declared environment — because a Notebook
+ * that stops at its third Cell has already spent the tokens of the first two
+ * and half-applied their changes to the Workspace.
+ */
+export async function runNotebook(path: string, options: RunOptions): Promise<RunRecord> {
+  const refuse = (why: string) => new Error(`Cannot run ${path}:\n${why}`);
+
+  const parsed = parseNotebook(await readFile(path, "utf8"));
+  if (!parsed.ok) throw refuse(formatDiagnostics(parsed.errors));
+
+  const { metadata } = parsed.notebook;
+  const inputs = resolveInputs(metadata.inputs ?? [], options.inputs ?? {});
+  if (!inputs.ok) throw refuse(inputs.errors.join("\n"));
+
+  const workspace = workspaceOf(parsed.notebook, path);
+  if (!(await isDirectory(workspace))) {
+    throw refuse(`Its workspace ${workspace} is not a directory.`);
+  }
+
+  // The agent is set up before the environment is checked because setting it
+  // up is what discovers the environment: pi finds the Workspace's skills and
+  // packages while loading them, not by being asked separately.
+  const agent = await options
+    .agent({
+      workspace,
+      ...(metadata.tools !== undefined ? { tools: metadata.tools } : {}),
+      ...(options.trust !== undefined ? { trust: options.trust } : {}),
+    })
+    // An agent that cannot be set up is one more reason this Notebook cannot
+    // run, so it reads as one — an undecided Workspace should not arrive
+    // looking different from a missing skill.
+    .catch((cause: unknown) => {
+      throw refuse(cause instanceof Error ? cause.message : String(cause));
+    });
+
+  try {
+    const problems = checkEnvironment(metadata, agent.environment);
+    if (problems.length > 0) throw refuse(problems.join("\n"));
+
+    return await runCells({
+      path,
+      notebook: parsed.notebook,
+      workspace,
+      values: inputs.values,
+      agent,
+    });
+  } finally {
+    await agent.dispose();
+  }
 }
