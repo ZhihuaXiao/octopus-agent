@@ -17,12 +17,16 @@
 
 import { dirname, resolve } from "node:path";
 
-import type { Diagnostic } from "./diagnostic.js";
+import { type Diagnostic, lineOffset } from "./diagnostic.js";
 import { type Metadata, readMetadata } from "./frontmatter.js";
+import { referencesIn } from "./inputs.js";
+import { NAME_RULE, isName } from "./name.js";
 
 export type { Diagnostic } from "./diagnostic.js";
-export type { Input, Metadata } from "./frontmatter.js";
+export type { Metadata } from "./frontmatter.js";
+export type { Input, InputType, InputValue, InputValues } from "./inputs.js";
 export { formatDiagnostics } from "./diagnostic.js";
+export { interpolate, resolveInputs } from "./inputs.js";
 
 export type CellType = "prompt" | "bash";
 
@@ -83,7 +87,6 @@ export type ParseResult =
 const FRONTMATTER_DELIMITER = "---";
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const INDENTED_FENCE = /^ {1,3}(`{3,}|~{3,})(.*)$/;
-const CELL_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "model"];
 /** The attributes that are this project's own invention, so no snippet has one. */
 const CELL_ONLY_ATTRIBUTES = CELL_ATTRIBUTES.filter((key) => key !== "id");
@@ -235,11 +238,8 @@ function readCell(
     }
 
     if (key === "id") {
-      if (!CELL_ID.test(value)) {
-        errors.push({
-          line,
-          message: `Cell id "${value}" must start with a letter or digit and use only letters, digits, dashes and underscores`,
-        });
+      if (!isName(value)) {
+        errors.push({ line, message: `Cell id "${value}" ${NAME_RULE}` });
         continue;
       }
       id = value;
@@ -324,6 +324,26 @@ function reportNearMiss(
   }
 }
 
+/**
+ * Reports every reference in a Cell body that names no declared Input.
+ *
+ * @param firstLine the Notebook line the body starts on
+ */
+function reportUnknownReferences(
+  body: string,
+  firstLine: number,
+  declared: ReadonlySet<string>,
+  errors: Diagnostic[],
+): void {
+  for (const { name, offset } of referencesIn(body)) {
+    if (declared.has(name)) continue;
+    errors.push({
+      line: firstLine + lineOffset(body, offset),
+      message: `Unknown input "${name}". Declare it in the frontmatter, or write \\{{${name}}} to keep it as text`,
+    });
+  }
+}
+
 export function parseNotebook(source: string): ParseResult {
   const lines = splitLines(source);
   const errors: Diagnostic[] = [];
@@ -352,6 +372,7 @@ export function parseNotebook(source: string): ParseResult {
   const segments: Segment[] = [];
   let prose: string[] = [];
   const ids = new Set<string>();
+  const inputs = new Set((metadata.inputs ?? []).map((input) => input.name));
 
   const flushProse = () => {
     if (prose.length === 0) return;
@@ -421,6 +442,7 @@ export function parseNotebook(source: string): ParseResult {
         errors.push({ line: index + 1, message: `Duplicate cell id "${cell.id}"` });
       } else {
         ids.add(cell.id);
+        reportUnknownReferences(cell.body, index + 2, inputs, errors);
         flushProse();
         segments.push({
           kind: "cell",

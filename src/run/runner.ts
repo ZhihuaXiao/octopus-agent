@@ -6,7 +6,9 @@ import {
   bodyOf,
   cellsOf,
   formatDiagnostics,
+  interpolate,
   parseNotebook,
+  resolveInputs,
   workspaceOf,
 } from "../notebook/notebook.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "./record.js";
@@ -15,11 +17,17 @@ import { newRunId, writeRunRecord } from "./store.js";
 
 export interface RunOptions {
   agent: Agent;
+  /**
+   * Values for the Notebook's declared Inputs, as written rather than typed:
+   * they arrive from a command line or a form, so reading them is this Run's
+   * job. Anything the Notebook declares and this omits falls to its default.
+   */
+  inputs?: Readonly<Record<string, string>>;
 }
 
-async function runPromptCell(cell: Cell, agent: Agent): Promise<PromptCellRecord> {
+async function runPromptCell(cell: Cell, body: string, agent: Agent): Promise<PromptCellRecord> {
   try {
-    return { id: cell.id, type: "prompt", status: "ok", ...(await agent.prompt(bodyOf(cell))) };
+    return { id: cell.id, type: "prompt", status: "ok", ...(await agent.prompt(body)) };
   } catch (cause) {
     return {
       id: cell.id,
@@ -39,8 +47,8 @@ function failureOf(result: ShellResult): string | undefined {
   return undefined;
 }
 
-async function runBashCell(cell: Cell, workspace: string): Promise<BashCellRecord> {
-  const result = await runShellCommand(bodyOf(cell), workspace);
+async function runBashCell(cell: Cell, body: string, workspace: string): Promise<BashCellRecord> {
+  const result = await runShellCommand(body, workspace);
   const error = failureOf(result);
 
   return {
@@ -69,15 +77,24 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
     throw new Error(`Cannot run ${path}:\n${formatDiagnostics(parsed.errors)}`);
   }
 
+  // Before the first cell rather than as each one needs its values: a Notebook
+  // that stops at its third cell for want of an input has already spent the
+  // tokens of the first two, and half-applied its changes to the Workspace.
+  const inputs = resolveInputs(parsed.notebook.metadata.inputs ?? [], options.inputs ?? {});
+  if (!inputs.ok) {
+    throw new Error(`Cannot run ${path}:\n${inputs.errors.join("\n")}`);
+  }
+
   const workspace = workspaceOf(parsed.notebook, path);
   const startedAt = new Date().toISOString();
   const cells: CellRecord[] = [];
 
   for (const cell of cellsOf(parsed.notebook)) {
+    const body = interpolate(bodyOf(cell), inputs.values);
     const recorded =
       cell.type === "bash"
-        ? await runBashCell(cell, workspace)
-        : await runPromptCell(cell, options.agent);
+        ? await runBashCell(cell, body, workspace)
+        : await runPromptCell(cell, body, options.agent);
     cells.push(recorded);
 
     // Halt rather than carry on: a later cell built on a failed one would be

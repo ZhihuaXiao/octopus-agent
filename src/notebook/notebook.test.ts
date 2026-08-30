@@ -201,21 +201,28 @@ inputs:
     expect(roundTrip(source)).toBe(source);
   });
 
-  it("keeps an input default of any shape the author wrote", () => {
+  it("takes an input's type from its default when it declares none", () => {
     const source = `---
 inputs:
   - name: retries
     default: 3
-  - name: paths
-    default: [src, docs]
-  - name: absent
+  - name: strict
+    default: false
+  - name: target
+    default: src
 ---
 `;
 
     expect(valid(source).metadata.inputs).toEqual([
-      { name: "retries", default: 3 },
-      { name: "paths", default: ["src", "docs"] },
-      { name: "absent" },
+      { name: "retries", type: "number", default: 3 },
+      { name: "strict", type: "boolean", default: false },
+      { name: "target", type: "string", default: "src" },
+    ]);
+  });
+
+  it("treats an input with neither type nor default as a required string", () => {
+    expect(valid("---\ninputs:\n  - name: target\n---\n").metadata.inputs).toEqual([
+      { name: "target", type: "string" },
     ]);
   });
 
@@ -339,6 +346,33 @@ describe("malformed notebooks", () => {
     expect(problems("---\ninputs:\n  - type: string\n---\n")).toEqual([
       { line: 3, message: "An input is missing its name" },
     ]);
+  });
+
+  it("reports an input name a cell body could not reference", () => {
+    const [error] = problems("---\ninputs:\n  - name: the target\n---\n");
+
+    expect(error?.line).toBe(3);
+    expect(error?.message).toContain(`Input name "the target"`);
+  });
+
+  it("reports an input type that is not one an input can hold", () => {
+    const [error] = problems("---\ninputs:\n  - name: retries\n    type: integer\n---\n");
+
+    expect(error?.line).toBe(4);
+    expect(error?.message).toContain(`Unknown input type "integer"`);
+  });
+
+  it("reports a default that disagrees with the type its input declares", () => {
+    expect(
+      problems("---\ninputs:\n  - name: retries\n    type: number\n    default: many\n---\n"),
+    ).toEqual([{ line: 5, message: `Input "retries" is a number, but its default is a string` }]);
+  });
+
+  it("reports a default of a shape no input can hold", () => {
+    const [error] = problems("---\ninputs:\n  - name: paths\n    default: [src, docs]\n---\n");
+
+    expect(error?.line).toBe(4);
+    expect(error?.message).toContain("must be a string, a number or a boolean");
   });
 
   it("reports an unknown frontmatter field, which is usually a typo", () => {
@@ -466,6 +500,41 @@ another
 `;
 
     expect(problems(source).map((error) => error.line)).toEqual([2, 5, 9]);
+  });
+});
+
+describe("input references", () => {
+  const declaring = (body: string) => `---\ninputs:\n  - name: target\n---\n\n${body}`;
+
+  it("reports a reference to an input the notebook never declared", () => {
+    const [error] = problems(declaring("```prompt id=audit\nAudit {{taget}}.\n```\n"));
+
+    expect(error?.line).toBe(7);
+    expect(error?.message).toContain(`Unknown input "taget"`);
+  });
+
+  it("reports the reference on its own line of a longer body", () => {
+    const [error] = problems(
+      declaring("```prompt id=audit\nAudit {{target}}.\n\nThen check {{tests}}.\n```\n"),
+    );
+
+    expect(error?.line).toBe(9);
+  });
+
+  it("accepts a reference to an input the notebook declares", () => {
+    expect(parseNotebook(declaring("```prompt id=audit\nAudit {{ target }}.\n```\n")).ok).toBe(
+      true,
+    );
+  });
+
+  it("leaves a braced expression that is not a bare name alone", () => {
+    const source = '```bash id=status\ndocker inspect -f "{{.State.Status}}" web\n```\n';
+
+    expect(parseNotebook(source).ok).toBe(true);
+  });
+
+  it("accepts an escaped reference, which is text rather than a reference", () => {
+    expect(parseNotebook("```bash id=status\necho \\{{end}}\n```\n").ok).toBe(true);
   });
 });
 

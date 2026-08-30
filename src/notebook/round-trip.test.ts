@@ -60,6 +60,10 @@ const BODY_LINES = [
   "npm run build -- --flag",
   "Unicode: naïve ✓",
   "A line with a --- dash run.",
+  // Braces that are not input references, which a body may hold whether or not
+  // the Notebook declares any inputs: a Go template, and an escaped reference.
+  'docker inspect -f "{{.State.Status}}" web',
+  "kubectl get pods -o go-template='{{range .items}}x\\{{end}}'",
 ];
 
 const FRONTMATTER_VARIANTS: readonly (readonly string[])[][] = [

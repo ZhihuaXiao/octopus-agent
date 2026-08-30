@@ -34,6 +34,11 @@ A named, typed parameter declared in a Notebook's frontmatter and interpolated i
 bodies.
 _Avoid_: parameter, argument, variable, field
 
+**Input Reference**:
+Where a Cell body names an Input, written `{{name}}` and replaced by that Input's value
+before the Cell runs. Always qualified, because an unqualified "reference" is a Dependency.
+_Avoid_: placeholder, template, substitution, variable
+
 **Dependency**:
 A declared edge from one Cell to another. Always written by the author, never inferred.
 _Avoid_: input, reference, link, requirement

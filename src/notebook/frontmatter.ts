@@ -9,15 +9,9 @@
 
 import { isMap, isScalar, isSeq, parseDocument, type ParsedNode } from "yaml";
 
-import type { Diagnostic } from "./diagnostic.js";
-
-/** A named, typed parameter declared in frontmatter. Ticket 05 interpolates it. */
-export interface Input {
-  readonly name: string;
-  readonly type?: string;
-  readonly default?: unknown;
-  readonly description?: string;
-}
+import { type Diagnostic, lineOffset } from "./diagnostic.js";
+import { INPUT_TYPES, type Input, type InputType, isInputType, settleDefault } from "./inputs.js";
+import { NAME_RULE, isName } from "./name.js";
 
 export interface Metadata {
   readonly title?: string;
@@ -46,14 +40,6 @@ const INPUT_FIELDS = ["name", "type", "default", "description"] as const;
 
 const FIELDS = [...Object.keys(STRING_FIELDS), ...Object.keys(LIST_FIELDS), "inputs"];
 
-function newlinesBefore(text: string, offset: number): number {
-  let count = 0;
-  for (let index = 0; index < offset && index < text.length; index += 1) {
-    if (text[index] === "\n") count += 1;
-  }
-  return count;
-}
-
 function scalarString(node: unknown): string | undefined {
   return isScalar(node) && typeof node.value === "string" ? node.value : undefined;
 }
@@ -69,9 +55,10 @@ function readInput(
   }
 
   let name: string | undefined;
-  let type: string | undefined;
+  let nameLine = lineOf(node.range[0]);
+  let type: InputType | undefined;
   let description: string | undefined;
-  let hasDefault = false;
+  let defaultLine: number | undefined;
   let value: unknown;
 
   for (const item of node.items) {
@@ -91,7 +78,7 @@ function readInput(
     }
 
     if (key === "default") {
-      hasDefault = true;
+      defaultLine = line;
       value = item.value === null ? null : item.value.toJSON();
       continue;
     }
@@ -101,20 +88,49 @@ function readInput(
       errors.push({ line, message: `An input's "${key}" must be a string` });
       continue;
     }
-    if (key === "name") name = scalar;
-    if (key === "type") type = scalar;
+    if (key === "name") {
+      name = scalar;
+      nameLine = line;
+    }
     if (key === "description") description = scalar;
+    if (key === "type") {
+      if (!isInputType(scalar)) {
+        errors.push({
+          line,
+          message: `Unknown input type "${scalar}". Expected one of ${INPUT_TYPES.join(", ")}`,
+        });
+        continue;
+      }
+      type = scalar;
+    }
   }
 
   if (name === undefined) {
     errors.push({ line: lineOf(node.range[0]), message: "An input is missing its name" });
     return undefined;
   }
+  // A name a Cell body could not spell is an Input nothing can reference, so
+  // it is reported here rather than left to look like an unknown reference.
+  if (!isName(name)) {
+    errors.push({ line: nameLine, message: `Input name "${name}" ${NAME_RULE}` });
+    return undefined;
+  }
+
+  if (defaultLine === undefined) {
+    return {
+      name,
+      type: type ?? "string",
+      ...(description !== undefined ? { description } : {}),
+    };
+  }
+
+  const settled = settleDefault(name, type, value);
+  if (!settled.ok) errors.push({ line: defaultLine, message: settled.problem });
 
   return {
     name,
-    ...(type !== undefined ? { type } : {}),
-    ...(hasDefault ? { default: value } : {}),
+    type: settled.ok ? settled.type : (type ?? "string"),
+    ...(settled.ok ? { default: settled.value } : {}),
     ...(description !== undefined ? { description } : {}),
   };
 }
@@ -128,7 +144,7 @@ function readInput(
  */
 export function readMetadata(text: string, firstLine: number, errors: Diagnostic[]): Metadata {
   const parsed = parseDocument(text, { prettyErrors: false });
-  const lineOf = (offset: number) => firstLine + newlinesBefore(text, offset);
+  const lineOf = (offset: number) => firstLine + lineOffset(text, offset);
 
   for (const error of parsed.errors) {
     errors.push({ line: lineOf(error.pos[0]), message: error.message });

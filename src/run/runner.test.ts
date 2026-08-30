@@ -280,3 +280,133 @@ describe("bash cells", () => {
     expect(cell.stdout).toBe("");
   });
 });
+
+/** One prompt cell, under frontmatter declaring whatever the test needs. */
+const withInputs = (inputs: string, body = "Audit {{target}}.") =>
+  `---\ninputs:\n${inputs}---\n\n\`\`\`prompt id=audit\n${body}\n\`\`\`\n`;
+
+const target = "  - name: target\n    default: src\n";
+
+describe("declared inputs", () => {
+  it("replaces a reference with the input's default before the cell runs", async () => {
+    const path = await notebookFile(withInputs(target));
+    const agent = createScriptedAgent([{ text: "audited" }]);
+
+    await runNotebook(path, { agent });
+
+    expect(agent.prompts).toEqual(["Audit src."]);
+  });
+
+  it("prefers a value supplied for the run over the declared default", async () => {
+    const path = await notebookFile(withInputs(target));
+    const agent = createScriptedAgent([{ text: "audited" }]);
+
+    await runNotebook(path, { agent, inputs: { target: "docs" } });
+
+    expect(agent.prompts).toEqual(["Audit docs."]);
+  });
+
+  it("replaces every reference to the same input", async () => {
+    const path = await notebookFile(
+      withInputs(target, "Audit {{target}}, then re-read {{target}}."),
+    );
+    const agent = createScriptedAgent([{ text: "audited" }]);
+
+    await runNotebook(path, { agent });
+
+    expect(agent.prompts).toEqual(["Audit src, then re-read src."]);
+  });
+
+  it("writes a number or a boolean as the text the reader would have written", async () => {
+    const path = await notebookFile(
+      withInputs(
+        "  - name: retries\n    default: 3\n  - name: strict\n    default: false\n",
+        "Try {{retries}} times, strict={{strict}}.",
+      ),
+    );
+    const agent = createScriptedAgent([{ text: "tried" }]);
+
+    await runNotebook(path, { agent });
+
+    expect(agent.prompts).toEqual(["Try 3 times, strict=false."]);
+  });
+
+  it("interpolates into a bash cell's command as well", async () => {
+    const path = await notebookFile(
+      `---\ninputs:\n  - name: greeting\n    default: hello\n---\n\n\`\`\`bash id=say\necho {{greeting}}\n\`\`\`\n`,
+    );
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+
+    expect(cell.stdout).toBe("hello\n");
+  });
+
+  it("leaves an escaped reference as the text it stands for", async () => {
+    const path = await notebookFile(`\`\`\`bash id=say\necho '\\{{end}}'\n\`\`\`\n`);
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent() }), "bash");
+
+    expect(cell.stdout).toBe("{{end}}\n");
+  });
+
+  it("stops before anything runs when a required input has no value", async () => {
+    const path = await notebookFile(
+      withInputs("  - name: target\n    description: The directory to audit\n"),
+    );
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent })).rejects.toThrow(
+      /required input "target".*The directory to audit/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("stops before anything runs when a supplied value is of the wrong type", async () => {
+    const path = await notebookFile(
+      withInputs("  - name: retries\n    default: 3\n", "Try {{retries}} times."),
+    );
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent, inputs: { retries: "many" } })).rejects.toThrow(
+      /"retries" expects a number/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("stops before anything runs when a value names no declared input", async () => {
+    const path = await notebookFile(withInputs(target));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent, inputs: { targt: "docs" } })).rejects.toThrow(
+      /No input named "targt"/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("reports everything wrong with the inputs at once", async () => {
+    const path = await notebookFile(
+      withInputs(
+        "  - name: target\n  - name: retries\n    default: 3\n",
+        "Audit {{target}} {{retries}} times.",
+      ),
+    );
+
+    await expect(
+      runNotebook(path, { agent: unusedAgent(), inputs: { retries: "many" } }),
+    ).rejects.toThrow(/required input "target"[\s\S]*"retries" expects a number/);
+  });
+
+  it("runs the example notebook the input flags are documented against", async () => {
+    const example = fileURLToPath(new URL("../../examples/greet.md", import.meta.url));
+    const path = await notebookFile(await readFile(example, "utf8"));
+    const agent = createScriptedAgent([{ text: "Hello, Ada!" }]);
+
+    const record = await runNotebook(path, { agent, inputs: { name: "Ada" } });
+
+    expect(agent.prompts).toEqual(["Say hello to Ada in one short sentence."]);
+    expect(record.cells).toEqual([
+      expect.objectContaining({ id: "announce", status: "ok", stdout: "Greeting Ada\n" }),
+      expect.objectContaining({ id: "greet", status: "ok" }),
+    ]);
+  });
+});

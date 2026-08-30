@@ -5,6 +5,7 @@ import { createPiAgent } from "../agent/pi.js";
 import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
 import { recordPath } from "../run/store.js";
 import { runNotebook } from "../run/runner.js";
+import { readArguments } from "./arguments.js";
 
 /**
  * Runs a Notebook headlessly against a real agent.
@@ -14,14 +15,14 @@ import { runNotebook } from "../run/runner.js";
  * is this behaviour behind proper argument parsing.
  */
 async function main(): Promise<void> {
-  const [notebookArg] = process.argv.slice(2);
-  if (!notebookArg) {
-    process.stderr.write("usage: npm run notebook -- <notebook.md>\n");
+  const args = readArguments(process.argv.slice(2));
+  if (!args.ok) {
+    process.stderr.write(`${args.error}\n`);
     process.exitCode = 1;
     return;
   }
 
-  const path = resolve(notebookArg);
+  const path = resolve(args.notebook);
   // Parsed here only to resolve the Workspace, which the agent needs before the
   // run starts. Ticket 06 owns the declared environment properly.
   const parsed = parseNotebook(await readFile(path, "utf8"));
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
   });
 
   try {
-    const record = await runNotebook(path, { agent });
+    const record = await runNotebook(path, { agent, inputs: args.inputs });
     process.stdout.write(`\n\nRun ${record.id} → ${recordPath(path, record.id)}\n`);
 
     const failed = record.cells.filter((cell) => cell.status === "error");
