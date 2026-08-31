@@ -241,6 +241,8 @@ inputs:
 
 describe("cell attributes", () => {
   it("parses every attribute in the format contract", () => {
+    // The cells `audit` names are declared too, because an edge naming no cell
+    // is a malformed notebook rather than an attribute parsed successfully.
     const source = `---
 title: Attributes
 ---
@@ -248,18 +250,26 @@ title: Attributes
 \`\`\`prompt id=audit uses=collect,summarise isolated model=openai/gpt-5
 Do the work.
 \`\`\`
+
+\`\`\`prompt id=collect
+Collect it.
+\`\`\`
+
+\`\`\`prompt id=summarise
+Summarise it.
+\`\`\`
 `;
 
-    expect(cellsOf(valid(source))).toEqual([
-      {
-        id: "audit",
-        type: "prompt",
-        body: "Do the work.\n",
-        uses: ["collect", "summarise"],
-        isolated: true,
-        model: "openai/gpt-5",
-      },
-    ]);
+    const [cell] = cellsOf(valid(source));
+
+    expect(cell).toEqual({
+      id: "audit",
+      type: "prompt",
+      body: "Do the work.\n",
+      uses: ["collect", "summarise"],
+      isolated: true,
+      model: "openai/gpt-5",
+    });
   });
 
   it("defaults a cell to shared context and no dependencies", () => {
@@ -288,9 +298,10 @@ Do the work.
   });
 
   it("accepts a quoted attribute value containing spaces", () => {
-    const [cell] = cellsOf(valid('```prompt id=a uses="first, second"\nx\n```\n'));
+    const source =
+      '```prompt id=a uses="first, second"\nx\n```\n\n```prompt id=first\nx\n```\n\n```prompt id=second\nx\n```\n';
 
-    expect(cell?.uses).toEqual(["first", "second"]);
+    expect(cellsOf(valid(source))[0]?.uses).toEqual(["first", "second"]);
   });
 
   it("accepts a type attribute that restates the fence tag", () => {
@@ -535,6 +546,135 @@ describe("input references", () => {
 
   it("accepts an escaped reference, which is text rather than a reference", () => {
     expect(parseNotebook("```bash id=status\necho \\{{end}}\n```\n").ok).toBe(true);
+  });
+});
+
+describe("declared edges", () => {
+  const cell = (attributes: string, body: string) =>
+    `\`\`\`prompt ${attributes}\n${body}\n\`\`\`\n`;
+
+  it("accepts an edge naming a cell written later in the file", () => {
+    // The Graph rather than the document decides what runs first, so a forward
+    // reference is ordinary rather than a mistake.
+    const source = `${cell("id=report uses=collect", "Write it up.")}\n${cell("id=collect", "Gather.")}`;
+
+    expect(parseNotebook(source).ok).toBe(true);
+  });
+
+  it("reports an edge naming a cell the notebook does not have", () => {
+    expect(problems(cell("id=report uses=colect", "Write it up."))).toEqual([
+      { line: 1, message: `Cell "report" uses "colect", which is not a cell in this notebook` },
+    ]);
+  });
+
+  it("reports the unknown edge against the line of the cell declaring it", () => {
+    const source = `${cell("id=collect", "Gather.")}\n${cell("id=report uses=nowhere", "Write.")}`;
+
+    expect(problems(source).map((error) => error.line)).toEqual([5]);
+  });
+
+  it("reports every unknown edge one cell declares, rather than only the first", () => {
+    const errors = problems(cell("id=report uses=one,two", "Write."));
+
+    expect(errors.map((error) => error.message)).toEqual([
+      `Cell "report" uses "one", which is not a cell in this notebook`,
+      `Cell "report" uses "two", which is not a cell in this notebook`,
+    ]);
+  });
+
+  it("reports a cycle as the chain of cells that closes it", () => {
+    const source = [
+      cell("id=audit uses=review", "Audit it."),
+      cell("id=review uses=fix", "Review it."),
+      cell("id=fix uses=audit", "Fix it."),
+    ].join("\n");
+
+    expect(problems(source)).toEqual([
+      {
+        line: 1,
+        message: "Dependency cycle: audit uses review, which uses fix, which uses audit",
+      },
+    ]);
+  });
+
+  it("reports two cells that depend on each other", () => {
+    const source = `${cell("id=first uses=second", "One.")}\n${cell("id=second uses=first", "Two.")}`;
+
+    expect(problems(source)).toEqual([
+      { line: 1, message: "Dependency cycle: first uses second, which uses first" },
+    ]);
+  });
+
+  it("reports a cell that declares a dependency on itself", () => {
+    expect(problems(cell("id=loop uses=loop", "Again."))).toEqual([
+      { line: 1, message: "Dependency cycle: loop uses loop" },
+    ]);
+  });
+
+  it("names only the cells in the cycle, not the ones that merely reach it", () => {
+    const source = [
+      cell("id=start uses=left", "Start."),
+      cell("id=left uses=right", "Left."),
+      cell("id=right uses=left", "Right."),
+    ].join("\n");
+
+    expect(problems(source)).toEqual([
+      { line: 5, message: "Dependency cycle: left uses right, which uses left" },
+    ]);
+  });
+
+  it("reports two independent cycles separately", () => {
+    const source = [
+      cell("id=a uses=b", "A."),
+      cell("id=b uses=a", "B."),
+      cell("id=c uses=d", "C."),
+      cell("id=d uses=c", "D."),
+    ].join("\n");
+
+    expect(problems(source).map((error) => error.message)).toEqual([
+      "Dependency cycle: a uses b, which uses a",
+      "Dependency cycle: c uses d, which uses c",
+    ]);
+  });
+
+  it("names one cycle at a time where two of them share an edge", () => {
+    // `a` closes a loop through `b`, and another straight through `c`. Breaking
+    // the reported one reveals the second, which is the cost of a report whose
+    // length is bounded rather than one guaranteed to be complete.
+    const source = [
+      cell("id=a uses=b,c", "A."),
+      cell("id=b uses=c", "B."),
+      cell("id=c uses=a", "C."),
+    ].join("\n");
+
+    expect(problems(source)).toEqual([
+      { line: 1, message: "Dependency cycle: a uses b, which uses c, which uses a" },
+    ]);
+  });
+
+  it("reports an unknown edge in its place among the other problems", () => {
+    // The graph is checked once the whole file has been scanned, so without
+    // sorting this edge on line 1 would be reported below the id on line 5.
+    const source = `${cell("id=report uses=nowhere", "Write.")}\n\`\`\`prompt\nno id\n\`\`\`\n`;
+
+    expect(problems(source).map((error) => error.line)).toEqual([1, 5]);
+  });
+
+  it("collapses a dependency named twice into the one edge it can only be", () => {
+    const source = `${cell("id=collect", "Gather.")}\n${cell("id=report uses=collect,collect", "Write.")}`;
+
+    expect(cellsOf(valid(source))[1]?.uses).toEqual(["collect"]);
+  });
+
+  it("accepts a diamond, where two cells share a dependency and a dependent", () => {
+    const source = [
+      cell("id=collect", "Gather."),
+      cell("id=left uses=collect", "Left."),
+      cell("id=right uses=collect", "Right."),
+      cell("id=report uses=left,right", "Write."),
+    ].join("\n");
+
+    expect(parseNotebook(source).ok).toBe(true);
   });
 });
 

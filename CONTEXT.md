@@ -44,8 +44,8 @@ A declared edge from one Cell to another. Always written by the author, never in
 _Avoid_: input, reference, link, requirement
 
 **Graph**:
-The directed acyclic graph formed by Cells and their Dependencies. Determines what is Stale
-and what may run at the same time.
+The directed acyclic graph formed by Cells and their Dependencies. Determines the order
+Cells run in, what is Stale, and what may run at the same time.
 _Avoid_: DAG, tree, pipeline, dependency tree
 
 **Isolated**:

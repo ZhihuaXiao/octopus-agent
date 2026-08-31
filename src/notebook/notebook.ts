@@ -19,6 +19,7 @@ import { dirname, resolve } from "node:path";
 
 import { type Diagnostic, lineOffset } from "./diagnostic.js";
 import { type Metadata, readMetadata } from "./frontmatter.js";
+import { type PlacedCell, checkGraph } from "./graph.js";
 import { referencesIn } from "./inputs.js";
 import { NAME_RULE, isName } from "./name.js";
 
@@ -26,6 +27,7 @@ export type { Diagnostic } from "./diagnostic.js";
 export type { Metadata } from "./frontmatter.js";
 export type { Input, InputType, InputValue, InputValues } from "./inputs.js";
 export { formatDiagnostics } from "./diagnostic.js";
+export { runOrder } from "./graph.js";
 export { interpolate, resolveInputs } from "./inputs.js";
 
 export type CellType = "prompt" | "bash";
@@ -35,7 +37,7 @@ export interface Cell {
   readonly type: CellType;
   /** The body exactly as written, its line terminators included. */
   readonly body: string;
-  /** The Cells this one declares a Dependency on. Ticket 07 builds the Graph. */
+  /** The Cells this one declares a Dependency on, which form the Graph. */
   readonly uses: readonly string[];
   /** Whether the Cell runs in a fresh context rather than the shared one. */
   readonly isolated: boolean;
@@ -262,7 +264,11 @@ function readCell(
         errors.push({ line, message: `"uses" has an empty entry` });
         continue;
       }
-      uses = names;
+      // A repeated name collapses, because one Cell either depends on another
+      // or does not: there is no second edge for it to have declared. The fence
+      // keeps the author's bytes either way, as it already does for the
+      // whitespace around these names.
+      uses = [...new Set(names)];
       continue;
     }
 
@@ -372,6 +378,7 @@ export function parseNotebook(source: string): ParseResult {
   const segments: Segment[] = [];
   let prose: string[] = [];
   const ids = new Set<string>();
+  const placed: PlacedCell[] = [];
   const inputs = new Set((metadata.inputs ?? []).map((input) => input.name));
 
   const flushProse = () => {
@@ -442,6 +449,7 @@ export function parseNotebook(source: string): ParseResult {
         errors.push({ line: index + 1, message: `Duplicate cell id "${cell.id}"` });
       } else {
         ids.add(cell.id);
+        placed.push({ cell, line: index + 1 });
         reportUnknownReferences(cell.body, index + 2, inputs, errors);
         flushProse();
         segments.push({
@@ -458,7 +466,14 @@ export function parseNotebook(source: string): ParseResult {
 
   flushProse();
 
-  if (errors.length > 0) return { ok: false, errors };
+  // Last, because an edge may name a Cell written further down the file: the
+  // Graph decides what runs before what, so where a Cell sits does not.
+  errors.push(...checkGraph(placed));
+
+  // Sorted because the author reads them against the file, top to bottom, and
+  // the Graph is checked after the scan rather than during it. Stable, so two
+  // problems on one line stay in the order they were found.
+  if (errors.length > 0) return { ok: false, errors: [...errors].sort((a, b) => a.line - b.line) };
   return { ok: true, notebook: { metadata, ...(frontmatter ? { frontmatter } : {}), segments } };
 }
 

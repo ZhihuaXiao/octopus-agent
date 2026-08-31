@@ -12,6 +12,7 @@ import {
   interpolate,
   parseNotebook,
   resolveInputs,
+  runOrder,
   workspaceOf,
 } from "../notebook/notebook.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "./record.js";
@@ -100,7 +101,9 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
   const startedAt = new Date().toISOString();
   const cells: CellRecord[] = [];
 
-  for (const cell of cellsOf(cleared.notebook)) {
+  // The Graph's order rather than the document's, so a Cell that another one
+  // uses runs first however the Notebook chose to lay the two of them out.
+  for (const cell of runOrder(cellsOf(cleared.notebook))) {
     const body = interpolate(bodyOf(cell), cleared.values);
     const recorded =
       cell.type === "bash"

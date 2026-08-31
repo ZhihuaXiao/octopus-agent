@@ -570,3 +570,147 @@ describe("declared environment", () => {
     expect(agent.disposed).toBe(true);
   });
 });
+
+/** A prompt cell with the given id, and the cells it uses if it declares any. */
+const promptCell = (id: string, uses?: string) =>
+  `\`\`\`prompt id=${id}${uses === undefined ? "" : ` uses=${uses}`}\nDo ${id}.\n\`\`\`\n`;
+
+const notebookOf = (...cells: readonly string[]) => notebookFile(cells.join("\n"));
+
+/** Enough scripted turns for any of these notebooks, since none of them fail. */
+const readyAgent = () => createScriptedAgent(Array.from({ length: 8 }, () => ({ text: "done" })));
+
+describe("dependency graph", () => {
+  it("runs a cell before the cell that uses it, though it is written second", async () => {
+    const path = await notebookOf(promptCell("report", "collect"), promptCell("collect"));
+    const agent = readyAgent();
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["collect", "report"]);
+  });
+
+  it("follows a chain of edges written in reverse of the order it requires", async () => {
+    const path = await notebookOf(
+      promptCell("third", "second"),
+      promptCell("second", "first"),
+      promptCell("first"),
+    );
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["first", "second", "third"]);
+  });
+
+  it("keeps document order between cells the edges leave interchangeable", async () => {
+    // `b` waits for `c`, which is the only reordering the edges ask for: `a`
+    // still runs first and `d` still runs last, because that is how they are
+    // written and nothing says otherwise.
+    const path = await notebookOf(
+      promptCell("a"),
+      promptCell("b", "c"),
+      promptCell("c"),
+      promptCell("d"),
+    );
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["a", "c", "b", "d"]);
+  });
+
+  it("orders a bash cell and a prompt cell by their edge, not their type", async () => {
+    const path = await notebookFile(
+      `\`\`\`prompt id=explain uses=collect\nExplain it.\n\`\`\`\n\n\`\`\`bash id=collect\necho collected\n\`\`\`\n`,
+    );
+    const agent = readyAgent();
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(record.cells.map((cell) => [cell.id, cell.type])).toEqual([
+      ["collect", "bash"],
+      ["explain", "prompt"],
+    ]);
+  });
+
+  it("gives the agent the reordered cells, so a later cell can build on an earlier one", async () => {
+    const path = await notebookOf(promptCell("report", "collect"), promptCell("collect"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.prompts).toEqual(["Do collect.", "Do report."]);
+  });
+
+  it("stops before anything runs when an edge names no cell in the notebook", async () => {
+    const path = await notebookOf(promptCell("report", "colect"), promptCell("collect"));
+    const agent = readyAgent();
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(
+      /uses "colect", which is not a cell in this notebook/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("stops before anything runs when the edges form a cycle, naming the cells", async () => {
+    const path = await notebookOf(promptCell("first", "second"), promptCell("second", "first"));
+    const agent = readyAgent();
+
+    await expect(runNotebook(path, { agent: agent.create })).rejects.toThrow(
+      /Dependency cycle: first uses second, which uses first/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+
+  // A bash cell leaves a mark on the workspace, so these two are the ones that
+  // can show "nothing runs" rather than only "the agent was never asked".
+  const touching = (attributes: string, file: string) =>
+    `\`\`\`bash ${attributes}\ntouch ${file}\n\`\`\`\n`;
+
+  it("leaves a cycle's cells unrun rather than stopping partway through", async () => {
+    const path = await notebookOf(
+      touching("id=one uses=two", "ran-one"),
+      touching("id=two uses=one", "ran-two"),
+    );
+
+    await expect(runNotebook(path, { agent: unusedAgent().create })).rejects.toThrow(
+      /Dependency cycle/,
+    );
+    await expect(readFile(join(dirname(path), "ran-one"), "utf8")).rejects.toThrow();
+  });
+
+  it("leaves every cell unrun when one edge names no cell, including the sound ones", async () => {
+    const path = await notebookOf(
+      touching("id=sound", "ran-sound"),
+      touching("id=broken uses=nowhere", "ran-broken"),
+    );
+
+    await expect(runNotebook(path, { agent: unusedAgent().create })).rejects.toThrow(
+      /uses "nowhere"/,
+    );
+    // `sound` has no edges and would have run first, which is what makes this
+    // a check that the graph is settled before the run rather than during it.
+    await expect(readFile(join(dirname(path), "ran-sound"), "utf8")).rejects.toThrow();
+  });
+
+  it("runs a notebook that declares no edges at all in document order", async () => {
+    const path = await notebookOf(promptCell("a"), promptCell("b"), promptCell("c"));
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("runs the example notebook whose cells are written out of order", async () => {
+    const example = fileURLToPath(new URL("../../examples/audit.md", import.meta.url));
+    const path = await notebookFile(await readFile(example, "utf8"));
+    const agent = createScriptedAgent([{ text: "Nothing alarming." }, { text: "Written up." }]);
+
+    const record = await runNotebook(path, { agent: agent.create, inputs: { target: "src" } });
+
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([
+      ["scope", "ok"],
+      ["review", "ok"],
+      ["report", "ok"],
+    ]);
+  });
+});
