@@ -19,7 +19,13 @@ interface CellRecordBase {
   error?: string;
 }
 
-/** What a Prompt Cell's turn produced. */
+/**
+ * What a Prompt Cell's turn produced, its Anchor included.
+ *
+ * Only a Prompt Cell has one. A Bash Cell never enters the Agent Session, so
+ * there is no entry in it for the Cell to point at — which is also why a Cell
+ * looking for the Anchor it should begin at has to look past one.
+ */
 export interface PromptCellRecord extends CellRecordBase, CellResult {
   type: "prompt";
 }
@@ -66,6 +72,14 @@ export interface RunRecord {
   /** Path to the Notebook this Run executed. */
   notebook: string;
   environment: RunEnvironment;
+  /**
+   * The Agent Session the Prompt Cells ran in, which is what makes the Anchors
+   * below addressable: they name entries inside this Agent Session and no other.
+   *
+   * Absent when no Cell left an Anchor in it, since there is then nothing for a
+   * later Run to carry on from.
+   */
+  agentSession?: string;
   startedAt: string;
   endedAt: string;
   cells: CellRecord[];

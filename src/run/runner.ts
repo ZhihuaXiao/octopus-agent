@@ -15,6 +15,7 @@ import {
   runOrder,
   workspaceOf,
 } from "../notebook/notebook.js";
+import { anchorBefore } from "./anchor.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "./record.js";
 import { type ShellResult, runShellCommand } from "./shell.js";
 import { newRunId, writeRunRecord } from "./store.js";
@@ -38,6 +39,25 @@ export interface RunOptions {
    * for the directory it is pointed at, only the person running it can.
    */
   trust?: boolean;
+  /**
+   * The Cells this Run executes, by id. Absent runs the whole Notebook.
+   *
+   * A subset runs in the Graph's order like any other, and the Cells left out
+   * simply do not run — nothing is inferred from their absence, and nothing
+   * they produced before is carried forward. Which Cells belong in the list is
+   * ticket 09's question, not this option's.
+   *
+   * Naming a subset is not by itself re-running it: without `continues` those
+   * Cells run in a new Agent Session, which is a Notebook run partially rather
+   * than a Notebook resumed.
+   */
+  cells?: readonly string[];
+  /**
+   * The Run this one carries on from, so the Cells it re-runs begin where they
+   * began then rather than in an empty context. Its Agent Session is reopened
+   * and forked at the Anchor its records name; see `anchor.ts`.
+   */
+  continues?: RunRecord;
 }
 
 async function runPromptCell(cell: Cell, body: string, agent: Agent): Promise<PromptCellRecord> {
@@ -89,22 +109,39 @@ const isDirectory = (path: string) =>
 /** A Notebook that has settled everything it needs, ready for its Cells to run. */
 interface Cleared {
   readonly path: string;
-  readonly notebook: Notebook;
   readonly workspace: string;
   readonly values: InputValues;
   readonly agent: Agent;
+  /**
+   * The Cells to run, already ordered and already known to exist, which is what
+   * leaves the loop below with no way to fail before it has run anything.
+   */
+  readonly order: readonly Cell[];
+  /** The Run being carried on from, when this Run carries on from one. */
+  readonly continues?: RunRecord;
 }
 
 /** Runs the Cells of a Notebook that has already been cleared to run. */
 async function runCells(cleared: Cleared): Promise<RunRecord> {
-  const { path, workspace, agent } = cleared;
+  const { path, workspace, agent, continues } = cleared;
   const startedAt = new Date().toISOString();
   const cells: CellRecord[] = [];
 
-  // The Graph's order rather than the document's, so a Cell that another one
-  // uses runs first however the Notebook chose to lay the two of them out.
-  for (const cell of runOrder(cellsOf(cleared.notebook))) {
+  let forked = false;
+
+  for (const cell of cleared.order) {
     const body = interpolate(bodyOf(cell), cleared.values);
+
+    // Once, before the first Cell that speaks to the agent, and only when this
+    // Run carries on from another — an Agent Session of its own already sits
+    // where a first Cell begins. Every Cell after it follows the one before,
+    // which is where the session now is; forking each of them back to where it
+    // began last time would throw away the turn just taken.
+    if (continues !== undefined && !forked && cell.type === "prompt") {
+      await agent.resumeFrom(anchorBefore(continues, cell.id));
+      forked = true;
+    }
+
     const recorded =
       cell.type === "bash"
         ? await runBashCell(cell, body, workspace)
@@ -117,6 +154,9 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     if (recorded.status === "error") break;
   }
 
+  const anchored = cells.some(
+    (recorded) => recorded.type === "prompt" && recorded.anchor !== undefined,
+  );
   const record: RunRecord = {
     id: newRunId(),
     notebook: path,
@@ -126,12 +166,42 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       piVersion: agent.environment.piVersion,
       tools: [...agent.environment.tools],
     },
+    // Named only when some Cell left an Anchor in it, since an Anchor is the
+    // only thing a later Run would reopen a session for. Nothing anchored a
+    // Notebook of Bash Cells, nor one whose every turn failed — and pi does not
+    // write a session file until an assistant message arrives, so naming one on
+    // the strength of having merely tried would point a later Run at nothing.
+    ...(anchored && agent.agentSession !== undefined ? { agentSession: agent.agentSession } : {}),
     startedAt,
     endedAt: new Date().toISOString(),
     cells,
   };
   await writeRunRecord(record);
   return record;
+}
+
+/**
+ * The Cells this Run executes, in the Graph's order.
+ *
+ * The Graph's order rather than the document's, so a Cell that another one uses
+ * runs first however the Notebook chose to lay the two of them out. Naming a
+ * subset filters that order rather than replacing it, which is why the ids may
+ * be given in any order at all.
+ */
+function orderToRun(notebook: Notebook, named: readonly string[] | undefined) {
+  const order = runOrder(cellsOf(notebook));
+  if (named === undefined) return { ok: true as const, order };
+
+  const wanted = new Set(named);
+  const absent = named.filter((id) => !order.some((cell) => cell.id === id));
+  if (absent.length > 0) {
+    return {
+      ok: false as const,
+      problem: absent.map((id) => `No cell named "${id}" in this notebook.`).join("\n"),
+    };
+  }
+
+  return { ok: true as const, order: order.filter((cell) => wanted.has(cell.id)) };
 }
 
 /**
@@ -155,6 +225,9 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
   const inputs = resolveInputs(metadata.inputs ?? [], options.inputs ?? {});
   if (!inputs.ok) throw refuse(inputs.errors.join("\n"));
 
+  const scheduled = orderToRun(parsed.notebook, options.cells);
+  if (!scheduled.ok) throw refuse(scheduled.problem);
+
   const workspace = workspaceOf(parsed.notebook, path);
   if (!(await isDirectory(workspace))) {
     throw refuse(`Its workspace ${workspace} is not a directory.`);
@@ -168,6 +241,12 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       workspace,
       ...(metadata.tools !== undefined ? { tools: metadata.tools } : {}),
       ...(options.trust !== undefined ? { trust: options.trust } : {}),
+      // The Agent Session the Anchors belong to, so that forking at one of them
+      // has somewhere to fork. A continued Run that anchored nothing named no
+      // session, and this one opens its own.
+      ...(options.continues?.agentSession !== undefined
+        ? { agentSession: options.continues.agentSession }
+        : {}),
     })
     // An agent that cannot be set up is one more reason this Notebook cannot
     // run, so it reads as one — an undecided Workspace should not arrive
@@ -182,10 +261,11 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
 
     return await runCells({
       path,
-      notebook: parsed.notebook,
       workspace,
       values: inputs.values,
       agent,
+      order: scheduled.order,
+      ...(options.continues !== undefined ? { continues: options.continues } : {}),
     });
   } finally {
     await agent.dispose();

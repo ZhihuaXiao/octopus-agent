@@ -99,6 +99,47 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
       await agent.dispose();
     }
   });
+
+  it("carries one agent session across turns, and forks it back at an anchor", async () => {
+    // The whole of ticket 08 in one exchange, because each of its claims is
+    // about what the *next* turn sees and only a real model can be said to have
+    // understood the one before it.
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), "octo-anchor-")));
+    const agent = await createPiAgent({ workspace, tools: [] });
+    const reply = (body: string) => agent.prompt(body);
+
+    try {
+      const first = await reply("Remember the number 41. Reply with just that number.");
+      const second = await reply(
+        "Add one to the number you were asked to remember. Reply with just the result.",
+      );
+
+      // A later turn refers to what an earlier one did and is understood, which
+      // is what one shared session buys and the reason it is the default.
+      expect(second.text).toContain("42");
+      expect(first.anchor, "a turn reports where it left the session").toEqual(expect.any(String));
+      expect(second.anchor).not.toBe(first.anchor);
+
+      await agent.resumeFrom(first.anchor);
+      const instead = await reply(
+        "Add two to the number you were asked to remember. Reply with just the result.",
+      );
+
+      // Back where the second turn began: the number is still remembered, and
+      // the turn that added one to it is not in the way of the one that adds two.
+      expect(instead.text).toContain("43");
+      expect(instead.text).not.toContain("44");
+
+      // Reopened the way `createPiAgent` reopens one: the workspace is pi's
+      // `cwdOverride`, and the session's own directory is left to be derived.
+      const forked = SessionManager.open(agent.agentSession!, undefined, workspace);
+      // The abandoned turn is still in the session, on the branch beside this
+      // one, rather than having been discarded to make room (ADR-0014).
+      expect(forked.getChildren(first.anchor!)).toHaveLength(2);
+    } finally {
+      await agent.dispose();
+    }
+  });
 });
 
 /**

@@ -108,7 +108,8 @@ Never the Notebook itself, and never embedded in it.
 _Avoid_: output, attachment, blob, asset
 
 **Anchor**:
-The pi entry id a Cell records so a re-run can fork the Agent Session at the right point.
+The pi entry id a Cell's turn ended on, recorded so a re-run can fork the Agent Session
+where that Cell began. Only ever meaningful inside the Agent Session that produced it.
 _Avoid_: checkpoint, marker, cursor, pointer
 
 ### The interfaces
@@ -130,3 +131,7 @@ _Avoid_: session, login, client session
 
 **Skill**, **Package**, **Extension**, and **Tool** are pi's own concepts and keep pi's
 meanings. A Notebook declares which of them it needs; it does not redefine them.
+
+**Entry** and **Branch** likewise. An Agent Session is an append-only tree of entries, and
+a branch is wherever two of them share a parent. An Anchor names an entry; forking at one
+adds a branch and removes nothing (ADR-0014).

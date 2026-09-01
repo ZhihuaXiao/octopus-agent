@@ -26,6 +26,14 @@ export interface CellResult {
   usage: Usage;
   /** The model that actually ran, which providers rotate under stable names. */
   model: string;
+  /**
+   * The Anchor the turn ended on: where the Agent Session now sits, so a later
+   * Run can fork it here instead of replaying every turn up to this one.
+   *
+   * Absent when the turn produced no entry to point at, which is a turn that
+   * failed before the agent said anything.
+   */
+  anchor?: string;
 }
 
 /**
@@ -42,6 +50,13 @@ export interface AgentSetup {
   readonly tools?: readonly string[];
   /** What the Run was told about trusting the Workspace, when it was told anything. */
   readonly trust?: boolean;
+  /**
+   * An existing Agent Session to reopen rather than start, named as the agent
+   * itself reports one. How a Run carries on from an earlier one: an Anchor is
+   * an entry inside a particular Agent Session, so it addresses nothing in one
+   * that never held that entry.
+   */
+  readonly agentSession?: string;
 }
 
 /**
@@ -54,8 +69,20 @@ export type AgentFactory = (setup: AgentSetup) => Promise<Agent>;
 export interface Agent {
   /** Runs one Prompt Cell body and resolves with everything the turn produced. */
   prompt(body: string): Promise<CellResult>;
+  /**
+   * Moves the Agent Session back to an Anchor, so the next turn continues from
+   * there rather than from wherever the last one left it. `undefined` moves it
+   * back before the first entry, which is where a Cell that ran first began.
+   *
+   * Forking rather than rewinding: what the session held past the Anchor stays
+   * in it as an abandoned branch, because a turn that has already changed the
+   * Workspace is not made not to have happened by discarding its record of it.
+   */
+  resumeFrom(anchor: string | undefined): Promise<void>;
   /** What the agent found around it, for the Notebook's declarations to be checked against. */
   readonly environment: Environment;
+  /** Where this Agent Session is kept, for a later Run to carry on from it. */
+  readonly agentSession: string | undefined;
   dispose(): Promise<void>;
 }
 

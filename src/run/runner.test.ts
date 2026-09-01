@@ -714,3 +714,201 @@ describe("dependency graph", () => {
     ]);
   });
 });
+
+/** The anchors a run recorded, in the order its cells ran, absent ones included. */
+const anchorsOf = (record: RunRecord) =>
+  record.cells.map((cell) => (cell.type === "prompt" ? cell.anchor : undefined));
+
+describe("shared context", () => {
+  it("sends every cell to one agent session, so a later cell can build on an earlier one", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    // One session for the whole notebook is what makes "now do the same for the
+    // others" mean anything: the second body arrives at an agent that already
+    // holds the first turn.
+    expect(agent.creations).toBe(1);
+    expect(agent.prompts).toEqual(["Do the first thing.", "Do the second thing."]);
+  });
+
+  it("records the agent session its prompt cells ran in", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(record.agentSession).toBe(agent.agentSession);
+  });
+
+  it("records no session for a notebook that never reaches the agent", async () => {
+    const path = await notebookFile(oneBashCell("echo cheap"));
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(record.agentSession).toBeUndefined();
+  });
+
+  it("records no session when every turn failed, since none of them anchored it", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ error: "provider exploded" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(record.agentSession).toBeUndefined();
+  });
+});
+
+describe("running some of a notebook's cells", () => {
+  it("runs only the cells the run names", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "second done" }]);
+
+    const record = await runNotebook(path, { agent: agent.create, cells: ["second"] });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["second"]);
+    expect(agent.prompts).toEqual(["Do the second thing."]);
+  });
+
+  it("runs the cells it names in the order the graph requires, not the order given", async () => {
+    const path = await notebookOf(promptCell("report", "collect"), promptCell("collect"));
+
+    const record = await runNotebook(path, {
+      agent: readyAgent().create,
+      cells: ["report", "collect"],
+    });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["collect", "report"]);
+  });
+
+  it("refuses a run naming a cell the notebook does not have", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(runNotebook(path, { agent: agent.create, cells: ["scond"] })).rejects.toThrow(
+      /No cell named "scond"/,
+    );
+    expect(agent.prompts).toEqual([]);
+  });
+});
+
+describe("anchoring", () => {
+  it("records the anchor each prompt cell's turn ended at", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(anchorsOf(record)).toEqual(agent.anchors);
+    expect(agent.anchors).toHaveLength(2);
+  });
+
+  it("records no anchor for a bash cell, which never enters the agent session", async () => {
+    const path = await notebookFile(oneBashCell("echo cheap"));
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(anchorsOf(record)).toEqual([undefined]);
+  });
+
+  it("records no anchor for a cell whose turn failed", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ error: "provider exploded" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(anchorsOf(record)).toEqual([undefined]);
+  });
+
+  it("reopens the agent session of the run it continues", async () => {
+    const path = await notebookFile(twoCells);
+    const first = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = createScriptedAgent([{ text: "second, again" }]);
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["second"] });
+
+    expect(again.setup?.agentSession).toBe(before.agentSession);
+  });
+
+  it("forks the session at the anchor the re-run cell's predecessor recorded", async () => {
+    const path = await notebookFile(twoCells);
+    const first = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = createScriptedAgent([{ text: "second, again" }]);
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["second"] });
+
+    // Where `second` began the last time, rather than where the run left off:
+    // the turn it is replacing is the one after this anchor.
+    expect(again.resumptions).toEqual([first.anchors[0]]);
+    expect(again.prompts).toEqual(["Do the second thing."]);
+  });
+
+  it("begins in an empty context when the cell it runs again ran first", async () => {
+    const path = await notebookFile(twoCells);
+    const first = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = createScriptedAgent([{ text: "first, again" }]);
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["first"] });
+
+    // Undefined rather than nothing at all: the reopened session's leaf sits at
+    // the end of the run being continued, so it has to be moved off it.
+    expect(again.resumptions).toEqual([undefined]);
+  });
+
+  it("passes over a predecessor that recorded no anchor", async () => {
+    const path = await notebookFile(
+      `${promptCell("ask")}\n\`\`\`bash id=count\necho 2\n\`\`\`\n\n${promptCell("explain")}`,
+    );
+    const first = readyAgent();
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = createScriptedAgent([{ text: "explained again" }]);
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["explain"] });
+
+    // The bash cell between them never entered the session, so the anchor to
+    // fork at is the prompt cell's, two places back.
+    expect(again.resumptions).toEqual([first.anchors[0]]);
+  });
+
+  it("forks once and then carries on, rather than forking before every cell", async () => {
+    const path = await notebookOf(promptCell("a"), promptCell("b"), promptCell("c"));
+    const first = readyAgent();
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = readyAgent();
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["b", "c"] });
+
+    // `c` follows the `b` that has just run, so its context is already right
+    // and forking it back to where `c` began last time would discard `b`.
+    expect(again.resumptions).toEqual([first.anchors[0]]);
+    expect(again.prompts).toEqual(["Do b.", "Do c."]);
+  });
+
+  it("leaves the run it continues holding its own anchors", async () => {
+    const path = await notebookFile(twoCells);
+    const first = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = createScriptedAgent([{ text: "second, again" }]);
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["second"] });
+
+    // Nothing is rewritten and nothing is deleted: the abandoned turn is still
+    // accounted for, in the record of the run that produced it.
+    const written: RunRecord = JSON.parse(await readFile(recordPath(path, before.id), "utf8"));
+    expect(anchorsOf(written)).toEqual(first.anchors);
+  });
+
+  it("starts a fresh session when it continues nothing", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.setup?.agentSession).toBeUndefined();
+    expect(agent.resumptions).toEqual([]);
+  });
+});

@@ -18,8 +18,14 @@ export interface ScriptedAgent extends Agent {
   readonly create: AgentFactory;
   /** How the Run set this agent up, once it has. */
   readonly setup: AgentSetup | undefined;
+  /** How many times a Run asked for an agent, since one session serves a Notebook. */
+  readonly creations: number;
   /** Every body the runner sent, in order, for asserting on what was asked. */
   readonly prompts: readonly string[];
+  /** The Anchor each turn ended on, in order, for asserting on what was recorded. */
+  readonly anchors: readonly string[];
+  /** Every Anchor a Run asked this agent to resume from, in order. */
+  readonly resumptions: readonly (string | undefined)[];
   readonly disposed: boolean;
 }
 
@@ -50,16 +56,28 @@ export function createScriptedAgent(
   provided: Partial<Environment> = {},
 ): ScriptedAgent {
   const prompts: string[] = [];
+  const anchors: string[] = [];
+  const resumptions: (string | undefined)[] = [];
   let setup: AgentSetup | undefined;
+  let creations = 0;
   let next = 0;
   let disposed = false;
 
   const agent: ScriptedAgent = {
     prompts,
+    anchors,
+    resumptions,
     environment: { ...barren, ...provided },
+    // A fixed name rather than a real path: what a Run does with it is carry it
+    // into the record and hand it back when it continues this session, and both
+    // of those work the same whether or not anything is on disk.
+    agentSession: "scripted-session",
 
     get setup() {
       return setup;
+    },
+    get creations() {
+      return creations;
     },
     get disposed() {
       return disposed;
@@ -67,6 +85,7 @@ export function createScriptedAgent(
 
     async create(asked: AgentSetup): Promise<Agent> {
       setup = asked;
+      creations += 1;
       return agent;
     },
 
@@ -82,7 +101,17 @@ export function createScriptedAgent(
 
       const toolCalls: ToolCall[] = turn.toolCalls ?? [];
       const usage: Usage = turn.usage ?? noUsage;
-      return { text: turn.text, toolCalls, usage, model: turn.model ?? "scripted" };
+      // Anchors are opaque to everything above the boundary, so a counter is as
+      // faithful a stand-in as pi's entry ids: all a Run may assume of one is
+      // that turns end on different ones.
+      const anchor = turn.anchor ?? `entry-${anchors.length + 1}`;
+      anchors.push(anchor);
+
+      return { text: turn.text, toolCalls, usage, model: turn.model ?? "scripted", anchor };
+    },
+
+    async resumeFrom(anchor: string | undefined): Promise<void> {
+      resumptions.push(anchor);
     },
 
     async dispose(): Promise<void> {

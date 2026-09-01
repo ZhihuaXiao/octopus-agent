@@ -2,6 +2,7 @@ import {
   DefaultPackageManager,
   DefaultResourceLoader,
   ProjectTrustStore,
+  SessionManager,
   SettingsManager,
   VERSION,
   createAgentSession,
@@ -71,7 +72,10 @@ function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text"> {
  *
  * One session serves the whole Notebook, which is what gives Cells the shared
  * context a later Cell relies on when it says "now do the same for the others".
- * Ticket 08 adds Anchors and isolated Cells on top of this.
+ * A Run carrying on from an earlier one reopens that session rather than
+ * starting a fresh one, because an Anchor names an entry inside a particular
+ * session file and addresses nothing anywhere else. Ticket 10 adds isolated
+ * Cells, which are the same session boundary drawn per Cell instead.
  *
  * Pi's resource loading is driven here rather than left to `createAgentSession`
  * to arrange for itself, because loading is where the Workspace's trust
@@ -106,6 +110,11 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
     // is a Notebook asking for an agent with no tools, which pi's own default
     // would otherwise quietly overrule.
     ...(options.tools !== undefined ? { tools: [...options.tools] } : {}),
+    // Left to pi unless a session is being reopened, so that where a new one is
+    // filed stays pi's decision rather than becoming ours to keep in step.
+    ...(options.agentSession !== undefined
+      ? { sessionManager: SessionManager.open(options.agentSession, undefined, workspace) }
+      : {}),
   });
 
   const packageManager = new DefaultPackageManager({ cwd: workspace, agentDir, settingsManager });
@@ -126,6 +135,13 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
   return {
     environment,
 
+    // Read on each ask rather than captured once: pi reassigns the session file
+    // when a session is replaced, and a Run Record naming the file pi has since
+    // stopped writing to would point a later Run at a stale branch.
+    get agentSession() {
+      return session.sessionFile;
+    },
+
     async prompt(body: string): Promise<CellResult> {
       const stream = createAssistantTextStream();
       const unsubscribe = session.subscribe((event) => {
@@ -140,7 +156,37 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
         unsubscribe();
       }
 
-      return { text: stream.text(), ...summariseTurn(session.messages.slice(before)) };
+      // The entry the turn left the session's leaf on, which is the Anchor: the
+      // point a later Run forks at to put a Cell back in this context.
+      const anchor = session.sessionManager.getLeafId();
+
+      return {
+        text: stream.text(),
+        ...summariseTurn(session.messages.slice(before)),
+        ...(anchor !== null ? { anchor } : {}),
+      };
+    },
+
+    async resumeFrom(anchor: string | undefined): Promise<void> {
+      // The root entry, whose parent is nothing, is where an empty context sits.
+      // Navigating to it is how pi is asked for one, since a session that has
+      // been reopened has its leaf at the end of what it already holds.
+      const root = session.sessionManager.getEntries().find((entry) => entry.parentId === null);
+      const target = anchor ?? root?.id;
+      if (target === undefined) return;
+
+      // `navigateTree` moves the leaf and rebuilds the context from it, leaving
+      // every entry in place: what the session held past the anchor stays in it
+      // as an abandoned branch. No summary is asked for, so no model is needed
+      // and nothing is spent on getting back to where a cell began.
+      const { cancelled } = await session.navigateTree(target);
+
+      // An extension may decline the move, and a Run that carried on regardless
+      // would run the cell against the wrong context while its record claimed
+      // the anchor. Failing to arrive has to be louder than arriving.
+      if (cancelled) {
+        throw new Error(`Pi declined to move the agent session back to entry ${target}.`);
+      }
     },
 
     async dispose(): Promise<void> {
