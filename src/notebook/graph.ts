@@ -9,8 +9,8 @@
  *
  * The check belongs to parsing (ADR-0012), and that is what makes the ordering
  * below total: by the time a Run asks for an order, every edge is known to name
- * a Cell and no chain of them closes. Ticket 09's staleness and ticket 10's
- * scheduler are further traversals of the same guarantee.
+ * a Cell and no chain of them closes. Staleness is a second traversal resting on
+ * the same guarantee, and ticket 10's scheduler will be a third.
  */
 
 import type { Diagnostic } from "./diagnostic.js";
@@ -156,4 +156,50 @@ export function runOrder(cells: readonly Cell[]): readonly Cell[] {
   }
 
   return order;
+}
+
+/**
+ * The Cells a Run left Stale: those whose result no longer reflects the Cells
+ * they depend on. In the order they would run, so the list can be handed
+ * straight back as the next Run's Cells.
+ *
+ * Staleness follows declared edges and nothing else (ADR-0004), so a Cell that
+ * happens to sit below a re-run one in the document is untouched by it, and an
+ * Isolated Cell with no edge to it stays valid. A Cell that ran again is not
+ * Stale for having run, whether its turn succeeded or failed: what a failure
+ * leaves behind is an errored Cell in the record and Stale dependents.
+ *
+ * A Stale Cell makes its own dependents Stale in turn, whether or not they ran
+ * (ADR-0015), which is what makes running the set this returns enough to leave
+ * nothing Stale: no Cell outside it depends on a Cell inside it.
+ */
+export function staleAfter(run: {
+  /** Every Cell of the Notebook, not only those the Run ran. */
+  readonly cells: readonly Cell[];
+  /** The Cells the Run ran, by id, whether their turn succeeded or failed. */
+  readonly ran: readonly string[];
+  /** What the Run this one carried on from had left Stale, if it carried on from one. */
+  readonly staleBefore: readonly string[];
+}): readonly string[] {
+  const executed = new Set(run.ran);
+  const inherited = new Set(run.staleBefore);
+  const stale = new Set<string>();
+  const order = runOrder(run.cells);
+
+  // Walked in the run order, so every Cell a Cell depends on has been decided
+  // before that Cell is reached. That is what lets one pass carry staleness the
+  // length of a chain, and it is the same guarantee the Run itself relies on.
+  for (const cell of order) {
+    const behind = cell.uses.some((used) => stale.has(used));
+    const displaced = cell.uses.some((used) => executed.has(used));
+
+    // A Cell that ran is as current as the Cells it was given, since the run
+    // order put them before it. One that did not is Stale if anything it
+    // depends on has moved underneath it, and stays Stale until it runs.
+    if (executed.has(cell.id) ? behind : behind || displaced || inherited.has(cell.id)) {
+      stale.add(cell.id);
+    }
+  }
+
+  return order.filter((cell) => stale.has(cell.id)).map((cell) => cell.id);
 }

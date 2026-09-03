@@ -27,7 +27,7 @@ export type { Diagnostic } from "./diagnostic.js";
 export type { Metadata } from "./frontmatter.js";
 export type { Input, InputType, InputValue, InputValues } from "./inputs.js";
 export { formatDiagnostics } from "./diagnostic.js";
-export { runOrder } from "./graph.js";
+export { runOrder, staleAfter } from "./graph.js";
 export { interpolate, resolveInputs } from "./inputs.js";
 
 export type CellType = "prompt" | "bash";

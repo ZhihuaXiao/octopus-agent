@@ -13,6 +13,7 @@ import {
   parseNotebook,
   resolveInputs,
   runOrder,
+  staleAfter,
   workspaceOf,
 } from "../notebook/notebook.js";
 import { anchorBefore } from "./anchor.js";
@@ -43,9 +44,10 @@ export interface RunOptions {
    * The Cells this Run executes, by id. Absent runs the whole Notebook.
    *
    * A subset runs in the Graph's order like any other, and the Cells left out
-   * simply do not run — nothing is inferred from their absence, and nothing
-   * they produced before is carried forward. Which Cells belong in the list is
-   * ticket 09's question, not this option's.
+   * simply do not run: nothing is inferred from their absence and no dependent
+   * is pulled in, since a Cell downstream of a re-run one is marked Stale rather
+   * than run again (ADR-0004). The record says which those are, so recovering a
+   * Notebook is this option given the last Run's `stale`.
    *
    * Naming a subset is not by itself re-running it: without `continues` those
    * Cells run in a new Agent Session, which is a Notebook run partially rather
@@ -117,6 +119,12 @@ interface Cleared {
    * leaves the loop below with no way to fail before it has run anything.
    */
   readonly order: readonly Cell[];
+  /**
+   * Every Cell of the Notebook, which is more than the Cells being run: what a
+   * Run leaves Stale is a property of the whole Graph, including the Cells this
+   * Run had nothing to say about.
+   */
+  readonly allCells: readonly Cell[];
   /** The Run being carried on from, when this Run carries on from one. */
   readonly continues?: RunRecord;
 }
@@ -157,9 +165,21 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
   const anchored = cells.some(
     (recorded) => recorded.type === "prompt" && recorded.anchor !== undefined,
   );
+  // Read off the Graph rather than accumulated as the Cells ran, because the
+  // Cells left Stale are mostly ones this Run never touched: the question is
+  // what the Notebook now stands at, and only the whole Graph answers it.
+  const stale = staleAfter({
+    cells: cleared.allCells,
+    ran: cells.map((recorded) => recorded.id),
+    staleBefore: continues?.stale ?? [],
+  });
+
   const record: RunRecord = {
     id: newRunId(),
     notebook: path,
+    // The Run whose results the untouched Cells still hold, and whose Stale set
+    // this one's was worked out from.
+    ...(continues !== undefined ? { continues: continues.id } : {}),
     environment: {
       workspace,
       trusted: agent.environment.trusted,
@@ -175,6 +195,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     startedAt,
     endedAt: new Date().toISOString(),
     cells,
+    stale: [...stale],
   };
   await writeRunRecord(record);
   return record;
@@ -265,6 +286,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       values: inputs.values,
       agent,
       order: scheduled.order,
+      allCells: cellsOf(parsed.notebook),
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
     });
   } finally {

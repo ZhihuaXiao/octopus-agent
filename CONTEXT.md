@@ -98,8 +98,8 @@ model that actually ran, token usage and cost, and Anchors.
 _Avoid_: output, log, result, history, report
 
 **Stale**:
-The state of a Cell whose Dependencies have run again since it last ran. A property of a
-Run, never of the Notebook.
+The state of a Cell whose Dependencies have run again since it last ran, or are themselves
+Stale (ADR-0015). A property of a Run, never of the Notebook.
 _Avoid_: dirty, invalid, outdated, expired
 
 **Artifact**:

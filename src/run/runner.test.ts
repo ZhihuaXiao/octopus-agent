@@ -912,3 +912,191 @@ describe("anchoring", () => {
     expect(agent.resumptions).toEqual([]);
   });
 });
+
+/** A chain: each cell uses the one written before it. */
+const chainOfThree = () => notebookOf(promptCell("a"), promptCell("b", "a"), promptCell("c", "b"));
+
+/** Two cells joined by an edge, and a third joined to neither of them. */
+const pairAndSpare = () => notebookOf(promptCell("a"), promptCell("b", "a"), promptCell("spare"));
+
+/** Runs some of a notebook's cells again, carrying on from an earlier run. */
+const rerun = (path: string, before: RunRecord, cells: readonly string[]) =>
+  runNotebook(path, { agent: readyAgent().create, continues: before, cells });
+
+describe("staleness", () => {
+  it("leaves nothing stale when the whole notebook runs", async () => {
+    const path = await chainOfThree();
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    expect(record.stale).toEqual([]);
+  });
+
+  it("marks the cell that uses a re-run cell stale", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const record = await rerun(path, before, ["b"]);
+
+    expect(record.stale).toEqual(["c"]);
+  });
+
+  it("marks a dependent's own dependents stale, the length of the chain", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const record = await rerun(path, before, ["a"]);
+
+    expect(record.stale).toEqual(["b", "c"]);
+  });
+
+  it("leaves a cell that does not use the re-run one alone", async () => {
+    const path = await pairAndSpare();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const record = await rerun(path, before, ["a"]);
+
+    expect(record.stale).toEqual(["b"]);
+  });
+
+  it("keeps the previous result of a cell the re-run left valid", async () => {
+    const path = await pairAndSpare();
+    const first = createScriptedAgent([{ text: "a done" }, { text: "b done" }, { text: "spared" }]);
+    const before = await runNotebook(path, { agent: first.create });
+
+    await rerun(path, before, ["a"]);
+
+    // Nothing is deleted and nothing is rewritten: the run that produced the
+    // spare cell's result still holds it, which is where a reader finds it.
+    const written: RunRecord = JSON.parse(await readFile(recordPath(path, before.id), "utf8"));
+    expect(written.cells).toEqual(before.cells);
+    expect(written.cells.find((cell) => cell.id === "spare")).toMatchObject({ text: "spared" });
+  });
+
+  it("lists the stale cells in the order they would run, not the order written", async () => {
+    const path = await notebookOf(
+      promptCell("third", "second"),
+      promptCell("second", "first"),
+      promptCell("first"),
+    );
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const record = await rerun(path, before, ["first"]);
+
+    expect(record.stale).toEqual(["second", "third"]);
+  });
+
+  it("runs no dependent of its own accord", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+    const again = readyAgent();
+
+    const record = await runNotebook(path, {
+      agent: again.create,
+      continues: before,
+      cells: ["a"],
+    });
+
+    expect(again.prompts).toEqual(["Do a."]);
+    expect(record.cells.map((cell) => cell.id)).toEqual(["a"]);
+  });
+
+  it("marks the dependents of a failed cell stale", async () => {
+    const path = await chainOfThree();
+    const agent = createScriptedAgent([{ text: "a done" }, { error: "provider exploded" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    // `b` errored, which its own record says; `c` is stale, having been left
+    // behind a cell that ran again and produced nothing to build on.
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([
+      ["a", "ok"],
+      ["b", "error"],
+    ]);
+    expect(record.stale).toEqual(["c"]);
+  });
+
+  it("keeps a cell stale that was stale already and did not run again", async () => {
+    const path = await notebookOf(
+      promptCell("a"),
+      promptCell("b", "a"),
+      promptCell("x"),
+      promptCell("y", "x"),
+    );
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const first = await rerun(path, before, ["a"]);
+    const second = await rerun(path, first, ["x"]);
+
+    expect(first.stale).toEqual(["b"]);
+    // `b` is no less stale for this run having been about the other chain.
+    expect(second.stale).toEqual(["b", "y"]);
+  });
+
+  it("marks a cell stale that ran over a gap, having missed the cell between", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const record = await rerun(path, before, ["a", "c"]);
+
+    // `c` has just run, and is stale all the same: it forked at `a`'s new turn
+    // and never saw `b`'s, so what it was built on is no longer what `b` says.
+    expect(record.cells.map((cell) => cell.id)).toEqual(["a", "c"]);
+    expect(record.stale).toEqual(["b", "c"]);
+  });
+
+  it("leaves a cell that has never run out of it, having no result to go out of date", async () => {
+    const path = await pairAndSpare();
+
+    const record = await runNotebook(path, { agent: readyAgent().create, cells: ["a"] });
+
+    // `spare` depends on nothing and has never run, which is not the same as
+    // being stale: there is no result of it for `a` to have got ahead of. What
+    // it is instead — never run — is read off the cells of the runs so far.
+    expect(record.stale).toEqual(["b"]);
+  });
+
+  it("names the run it carried on from, so the rest of the results can be found", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+
+    const record = await rerun(path, before, ["b"]);
+
+    expect(before.continues).toBeUndefined();
+    expect(record.continues).toBe(before.id);
+  });
+});
+
+describe("re-running the stale cells", () => {
+  it("returns the notebook to fully valid", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+    const changed = await rerun(path, before, ["a"]);
+
+    const record = await rerun(path, changed, changed.stale);
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["b", "c"]);
+    expect(record.stale).toEqual([]);
+  });
+
+  it("returns a notebook run over a gap to fully valid, in one run", async () => {
+    const path = await chainOfThree();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+    const gapped = await rerun(path, before, ["a", "c"]);
+
+    const record = await rerun(path, gapped, gapped.stale);
+
+    expect(record.stale).toEqual([]);
+  });
+
+  it("spends nothing on the cells that were left valid", async () => {
+    const path = await pairAndSpare();
+    const before = await runNotebook(path, { agent: readyAgent().create });
+    const changed = await rerun(path, before, ["a"]);
+    const again = readyAgent();
+
+    await runNotebook(path, { agent: again.create, continues: changed, cells: changed.stale });
+
+    expect(again.prompts).toEqual(["Do b."]);
+  });
+});

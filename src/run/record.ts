@@ -71,6 +71,15 @@ export interface RunRecord {
   id: string;
   /** Path to the Notebook this Run executed. */
   notebook: string;
+  /**
+   * The id of the Run this one carried on from, absent when it carried on from
+   * none.
+   *
+   * What makes a partial Run's record legible: it accounts only for the Cells it
+   * ran, so the results of the rest of the Notebook — and the Stale set this
+   * one's is relative to — are found by following this back through the chain.
+   */
+  continues?: string;
   environment: RunEnvironment;
   /**
    * The Agent Session the Prompt Cells ran in, which is what makes the Anchors
@@ -83,4 +92,19 @@ export interface RunRecord {
   startedAt: string;
   endedAt: string;
   cells: CellRecord[];
+  /**
+   * The Cells this Run left Stale, in the order they would run — every Cell of
+   * the Notebook whose last result no longer reflects the Cells it depends on,
+   * not only those this Run disturbed.
+   *
+   * What the next Run's Cells should be: running this list is what returns a
+   * Notebook to fully valid (ADR-0004), and it comes back empty when there is
+   * nothing left to recover.
+   *
+   * Empty is not the same as every Cell holding a good result, though. A Cell
+   * that errored is Errored rather than Stale, and a Cell that never ran has no
+   * result to have gone out of date, so neither is named here: both are read
+   * off the `cells` of this Run and the Runs it continues.
+   */
+  stale: string[];
 }
