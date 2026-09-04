@@ -13,19 +13,57 @@ import type { Environment } from "./environment.js";
 export type ScriptedTurn =
   ({ text: string } & Partial<Omit<CellResult, "text">>) | { error: string };
 
-export interface ScriptedAgent extends Agent {
-  /** Hands this agent to a Run, recording the setup the Run asked for. */
+/** One turn as it arrived: what was asked, where, and what was already there. */
+export interface ScriptedTurnRecord {
+  /** The Cell body the Run sent. */
+  readonly body: string;
+  /** The Agent Session it ran in. */
+  readonly session: string;
+  /**
+   * The bodies that session had already been asked when this turn began, which
+   * is the context the turn saw. Empty for a Cell that spoke into a fresh one.
+   */
+  readonly context: readonly string[];
+}
+
+/**
+ * The agent boundary, scripted: the factory a Run is given, and a log of
+ * everything the Run did with the agents it made.
+ *
+ * Not itself an Agent, because a Run makes more than one — the Notebook's
+ * shared Agent Session, and a fresh one per Isolated Cell — and the log spans
+ * all of them.
+ */
+export interface ScriptedAgent {
+  /** Hands out the agents a Run asks for, recording how it asked. */
   readonly create: AgentFactory;
-  /** How the Run set this agent up, once it has. */
+  /** How the Run set up the first agent it asked for, which is the shared one. */
   readonly setup: AgentSetup | undefined;
-  /** How many times a Run asked for an agent, since one session serves a Notebook. */
+  /** How the Run set up each agent it asked for, in the order it asked. */
+  readonly setups: readonly AgentSetup[];
+  /** How many times a Run asked for an agent. One, unless a Cell is Isolated. */
   readonly creations: number;
-  /** Every body the runner sent, in order, for asserting on what was asked. */
+  /**
+   * The name the Notebook's shared Agent Session takes, it being the first one
+   * a Run asks for. Fixed, so a test may name it before the Run has begun.
+   */
+  readonly agentSession: string;
+  /** The Agent Session each agent ran in, in the order they were made. */
+  readonly sessions: readonly string[];
+  /** Every body the Run sent, in the order the Cells started. */
   readonly prompts: readonly string[];
+  /** Every turn with the context it saw, for asserting on what a Cell was given. */
+  readonly turns: readonly ScriptedTurnRecord[];
   /** The Anchor each turn ended on, in order, for asserting on what was recorded. */
   readonly anchors: readonly string[];
-  /** Every Anchor a Run asked this agent to resume from, in order. */
+  /** Every Anchor a Run asked an agent to resume from, in order. */
   readonly resumptions: readonly (string | undefined)[];
+  /**
+   * The most turns that were ever in flight at the same time: one when every
+   * turn waited for the turn before it, which is what a shared context requires.
+   */
+  readonly overlap: number;
+  /** Whether every agent the Run made has been disposed. */
   readonly disposed: boolean;
 }
 
@@ -44,10 +82,22 @@ const barren: Environment = {
 };
 
 /**
- * An agent that yields pre-arranged turns instead of calling a model.
+ * Fixed names rather than real paths: what a Run does with one is carry it into
+ * the record and hand it back when it continues that session, and both work the
+ * same whether or not anything is on disk. Numbered from the second, so the
+ * shared session of a Notebook with no Isolated Cell is named as it always was.
+ */
+const nameSession = (made: number) =>
+  made === 0 ? "scripted-session" : `scripted-session-${made + 1}`;
+
+/**
+ * Agents that yield pre-arranged turns instead of calling a model.
  *
  * Every test above the agent boundary uses this, so the engine's behaviour is
  * deterministic and no test outside the live suite reaches a real provider.
+ *
+ * The turns are one script shared by every agent a Run makes, consumed in the
+ * order the Cells start. Which agent took which turn is in `turns`.
  *
  * @param provided what the Notebook under test may declare and be given
  */
@@ -55,69 +105,107 @@ export function createScriptedAgent(
   script: readonly ScriptedTurn[],
   provided: Partial<Environment> = {},
 ): ScriptedAgent {
+  const setups: AgentSetup[] = [];
+  const sessions: string[] = [];
   const prompts: string[] = [];
+  const turns: ScriptedTurnRecord[] = [];
   const anchors: string[] = [];
   const resumptions: (string | undefined)[] = [];
-  let setup: AgentSetup | undefined;
-  let creations = 0;
+  const environment: Environment = { ...barren, ...provided };
+
   let next = 0;
-  let disposed = false;
+  let inFlight = 0;
+  let overlap = 0;
+  let disposals = 0;
 
-  const agent: ScriptedAgent = {
-    prompts,
-    anchors,
-    resumptions,
-    environment: { ...barren, ...provided },
-    // A fixed name rather than a real path: what a Run does with it is carry it
-    // into the record and hand it back when it continues this session, and both
-    // of those work the same whether or not anything is on disk.
-    agentSession: "scripted-session",
+  const create = async (asked: AgentSetup): Promise<Agent> => {
+    // A Run reopening a session names it; one starting a session gets a name of
+    // its own, so an Isolated Cell's context is visibly not the shared one.
+    const session = asked.agentSession ?? nameSession(setups.length);
+    setups.push(asked);
+    sessions.push(session);
 
-    get setup() {
-      return setup;
-    },
-    get creations() {
-      return creations;
-    },
-    get disposed() {
-      return disposed;
-    },
+    /** What this session holds, which is the context its next turn is given. */
+    const held: { body: string; anchor: string }[] = [];
 
-    async create(asked: AgentSetup): Promise<Agent> {
-      setup = asked;
-      creations += 1;
-      return agent;
-    },
+    return {
+      environment,
+      agentSession: session,
 
-    async prompt(body: string): Promise<CellResult> {
-      prompts.push(body);
+      async prompt(body: string): Promise<CellResult> {
+        prompts.push(body);
+        turns.push({ body, session, context: held.map((turn) => turn.body) });
 
-      const turn = script[next];
-      next += 1;
-      if (turn === undefined) {
-        throw new Error(`Scripted agent ran out of turns: no turn ${next} was scripted.`);
-      }
-      if (isError(turn)) throw new Error(turn.error);
+        inFlight += 1;
+        overlap = Math.max(overlap, inFlight);
+        try {
+          // A real turn waits on a provider, and one that returned without ever
+          // yielding could not be seen to run beside another however the
+          // scheduler started them. So this one yields, once, like the real one.
+          await Promise.resolve();
 
-      const toolCalls: ToolCall[] = turn.toolCalls ?? [];
-      const usage: Usage = turn.usage ?? noUsage;
-      // Anchors are opaque to everything above the boundary, so a counter is as
-      // faithful a stand-in as pi's entry ids: all a Run may assume of one is
-      // that turns end on different ones.
-      const anchor = turn.anchor ?? `entry-${anchors.length + 1}`;
-      anchors.push(anchor);
+          const turn = script[next];
+          next += 1;
+          if (turn === undefined) {
+            throw new Error(`Scripted agent ran out of turns: no turn ${next} was scripted.`);
+          }
+          if (isError(turn)) throw new Error(turn.error);
 
-      return { text: turn.text, toolCalls, usage, model: turn.model ?? "scripted", anchor };
-    },
+          const toolCalls: ToolCall[] = turn.toolCalls ?? [];
+          const usage: Usage = turn.usage ?? noUsage;
+          // Anchors are opaque to everything above the boundary, so a counter is
+          // as faithful a stand-in as pi's entry ids: all a Run may assume of one
+          // is that turns end on different ones.
+          const anchor = turn.anchor ?? `entry-${anchors.length + 1}`;
+          anchors.push(anchor);
+          held.push({ body, anchor });
 
-    async resumeFrom(anchor: string | undefined): Promise<void> {
-      resumptions.push(anchor);
-    },
+          return { text: turn.text, toolCalls, usage, model: turn.model ?? "scripted", anchor };
+        } finally {
+          inFlight -= 1;
+        }
+      },
 
-    async dispose(): Promise<void> {
-      disposed = true;
-    },
+      async resumeFrom(anchor: string | undefined): Promise<void> {
+        resumptions.push(anchor);
+
+        // What the session holds past the Anchor stays in it as an abandoned
+        // branch, but it is no longer what the next turn is given. An Anchor
+        // this agent never wrote leaves it holding nothing, which is what a
+        // session reopened from an earlier Run holds here.
+        const found = held.findIndex((turn) => turn.anchor === anchor);
+        held.length = anchor === undefined || found === -1 ? 0 : found + 1;
+      },
+
+      async dispose(): Promise<void> {
+        disposals += 1;
+      },
+    };
   };
 
-  return agent;
+  return {
+    create,
+    setups,
+    sessions,
+    prompts,
+    turns,
+    anchors,
+    resumptions,
+
+    get setup() {
+      return setups[0];
+    },
+    get creations() {
+      return setups.length;
+    },
+    get agentSession() {
+      return sessions[0] ?? nameSession(0);
+    },
+    get overlap() {
+      return overlap;
+    },
+    get disposed() {
+      return setups.length > 0 && disposals === setups.length;
+    },
+  };
 }

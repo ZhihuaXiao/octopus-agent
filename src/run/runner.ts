@@ -1,6 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 
-import { type Agent, type AgentFactory, emptyResult, noUsage } from "../agent/agent.js";
+import {
+  type Agent,
+  type AgentFactory,
+  type AgentSetup,
+  emptyResult,
+  noUsage,
+} from "../agent/agent.js";
 import { checkEnvironment } from "../agent/environment.js";
 import {
   type Cell,
@@ -18,6 +24,7 @@ import {
 } from "../notebook/notebook.js";
 import { anchorBefore } from "./anchor.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "./record.js";
+import { runScheduled } from "./schedule.js";
 import { type ShellResult, runShellCommand } from "./shell.js";
 import { newRunId, writeRunRecord } from "./store.js";
 
@@ -62,17 +69,57 @@ export interface RunOptions {
   continues?: RunRecord;
 }
 
+/** What a Prompt Cell records when its turn produced nothing at all. */
+function promptFailure(cell: Cell, cause: unknown): PromptCellRecord {
+  return {
+    id: cell.id,
+    type: "prompt",
+    status: "error",
+    ...emptyResult,
+    error: cause instanceof Error ? cause.message : String(cause),
+  };
+}
+
 async function runPromptCell(cell: Cell, body: string, agent: Agent): Promise<PromptCellRecord> {
   try {
     return { id: cell.id, type: "prompt", status: "ok", ...(await agent.prompt(body)) };
   } catch (cause) {
-    return {
-      id: cell.id,
-      type: "prompt",
-      status: "error",
-      ...emptyResult,
-      error: cause instanceof Error ? cause.message : String(cause),
-    };
+    return promptFailure(cell, cause);
+  }
+}
+
+/**
+ * Runs an Isolated Cell in a context of its own: an Agent Session made for this
+ * Cell, used for its one turn, and disposed with it (ADR-0016).
+ *
+ * A fresh session rather than a fork of the Notebook's, because a fork would
+ * still be one message history and two Cells cannot append to one at the same
+ * time — the parallelism is what the fresh session is for as much as the
+ * reproducibility is.
+ */
+async function runIsolatedCell(
+  cell: Cell,
+  body: string,
+  isolate: () => Promise<Agent>,
+): Promise<PromptCellRecord> {
+  let agent: Agent;
+  try {
+    agent = await isolate();
+  } catch (cause) {
+    // The Cell's failure rather than the Run's refusal: the Run has already
+    // started, so the other Cells' results are worth recording and a Cell that
+    // could not be given a context is a Cell that did not run.
+    return promptFailure(cell, cause);
+  }
+
+  try {
+    // The Anchor is dropped rather than recorded. It names an entry inside the
+    // session just made, which nothing keeps: a later Run re-running this Cell
+    // makes another fresh context, which is what makes the Cell reproducible.
+    const { anchor: _ended, ...recorded } = await runPromptCell(cell, body, agent);
+    return recorded;
+  } finally {
+    await agent.dispose();
   }
 }
 
@@ -113,7 +160,10 @@ interface Cleared {
   readonly path: string;
   readonly workspace: string;
   readonly values: InputValues;
-  readonly agent: Agent;
+  /** The Notebook's shared context, which every Cell not marked Isolated speaks into. */
+  readonly shared: Agent;
+  /** Makes the fresh context an Isolated Cell runs in, one per such Cell. */
+  readonly isolate: () => Promise<Agent>;
   /**
    * The Cells to run, already ordered and already known to exist, which is what
    * leaves the loop below with no way to fail before it has run anything.
@@ -131,36 +181,46 @@ interface Cleared {
 
 /** Runs the Cells of a Notebook that has already been cleared to run. */
 async function runCells(cleared: Cleared): Promise<RunRecord> {
-  const { path, workspace, agent, continues } = cleared;
+  const { path, workspace, shared, continues } = cleared;
   const startedAt = new Date().toISOString();
-  const cells: CellRecord[] = [];
 
   let forked = false;
 
-  for (const cell of cleared.order) {
+  /**
+   * Runs one Cell. Called by the scheduler, which may have several of these in
+   * flight at once — but never two that touch the shared context, which is what
+   * lets the fork below be a plain flag and the turns be taken in order.
+   */
+  const runCell = async (cell: Cell): Promise<CellRecord> => {
     const body = interpolate(bodyOf(cell), cleared.values);
 
-    // Once, before the first Cell that speaks to the agent, and only when this
-    // Run carries on from another — an Agent Session of its own already sits
-    // where a first Cell begins. Every Cell after it follows the one before,
-    // which is where the session now is; forking each of them back to where it
-    // began last time would throw away the turn just taken.
-    if (continues !== undefined && !forked && cell.type === "prompt") {
-      await agent.resumeFrom(anchorBefore(continues, cell.id));
+    if (cell.type === "bash") return runBashCell(cell, body, workspace);
+    if (cell.isolated) return runIsolatedCell(cell, body, cleared.isolate);
+
+    // Once, before the first Cell that speaks into the shared context, and only
+    // when this Run carries on from another — an Agent Session of its own
+    // already sits where a first Cell begins. Every Cell after it follows the
+    // one before, which is where the session now is; forking each of them back
+    // to where it began last time would throw away the turn just taken. An
+    // Isolated Cell is not one of them: it never enters this session, so it is
+    // passed over here as it is passed over when an Anchor is looked for.
+    if (continues !== undefined && !forked) {
       forked = true;
+      await shared.resumeFrom(anchorBefore(continues, cell.id));
     }
 
-    const recorded =
-      cell.type === "bash"
-        ? await runBashCell(cell, body, workspace)
-        : await runPromptCell(cell, body, agent);
-    cells.push(recorded);
+    return runPromptCell(cell, body, shared);
+  };
 
-    // Halt rather than carry on: a later cell built on a failed one would be
-    // building on a partially-applied change. Ticket 11 adds retries and
-    // timeouts around this.
-    if (recorded.status === "error") break;
-  }
+  // Halt rather than carry on: a later cell built on a failed one would be
+  // building on a partially-applied change. Ticket 11 adds retries and
+  // timeouts around this.
+  const cells = [
+    ...(await runScheduled(cleared.order, {
+      run: runCell,
+      failed: (recorded) => recorded.status === "error",
+    })),
+  ];
 
   const anchored = cells.some(
     (recorded) => recorded.type === "prompt" && recorded.anchor !== undefined,
@@ -182,16 +242,17 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     ...(continues !== undefined ? { continues: continues.id } : {}),
     environment: {
       workspace,
-      trusted: agent.environment.trusted,
-      piVersion: agent.environment.piVersion,
-      tools: [...agent.environment.tools],
+      trusted: shared.environment.trusted,
+      piVersion: shared.environment.piVersion,
+      tools: [...shared.environment.tools],
     },
-    // Named only when some Cell left an Anchor in it, since an Anchor is the
-    // only thing a later Run would reopen a session for. Nothing anchored a
-    // Notebook of Bash Cells, nor one whose every turn failed — and pi does not
-    // write a session file until an assistant message arrives, so naming one on
-    // the strength of having merely tried would point a later Run at nothing.
-    ...(anchored && agent.agentSession !== undefined ? { agentSession: agent.agentSession } : {}),
+    // The shared session, and named only when some Cell left an Anchor in it,
+    // since an Anchor is the only thing a later Run would reopen a session for.
+    // Nothing anchored a Notebook of Bash Cells, nor one of Isolated Cells whose
+    // sessions are gone, nor one whose every turn failed — and pi does not write
+    // a session file until an assistant message arrives, so naming one on the
+    // strength of having merely tried would point a later Run at nothing.
+    ...(anchored && shared.agentSession !== undefined ? { agentSession: shared.agentSession } : {}),
     startedAt,
     endedAt: new Date().toISOString(),
     cells,
@@ -254,14 +315,21 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
     throw refuse(`Its workspace ${workspace} is not a directory.`);
   }
 
+  // What every agent this Run makes is set up with, the shared one and each
+  // Isolated Cell's alike: the same Workspace and the same declared environment,
+  // since isolation is about the shared context and not about running elsewhere.
+  const setup: AgentSetup = {
+    workspace,
+    ...(metadata.tools !== undefined ? { tools: metadata.tools } : {}),
+    ...(options.trust !== undefined ? { trust: options.trust } : {}),
+  };
+
   // The agent is set up before the environment is checked because setting it
   // up is what discovers the environment: pi finds the Workspace's skills and
   // packages while loading them, not by being asked separately.
-  const agent = await options
+  const shared = await options
     .agent({
-      workspace,
-      ...(metadata.tools !== undefined ? { tools: metadata.tools } : {}),
-      ...(options.trust !== undefined ? { trust: options.trust } : {}),
+      ...setup,
       // The Agent Session the Anchors belong to, so that forking at one of them
       // has somewhere to fork. A continued Run that anchored nothing named no
       // session, and this one opens its own.
@@ -277,19 +345,24 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
     });
 
   try {
-    const problems = checkEnvironment(metadata, agent.environment);
+    const problems = checkEnvironment(metadata, shared.environment);
     if (problems.length > 0) throw refuse(problems.join("\n"));
 
     return await runCells({
       path,
       workspace,
       values: inputs.values,
-      agent,
+      shared,
+      // No session named, which is what makes it fresh. The environment is not
+      // checked a second time: it was checked against this same setup, and a
+      // Workspace that changed underneath a running Notebook is ticket 11's
+      // kind of problem rather than a declaration to re-read.
+      isolate: () => options.agent(setup),
       order: scheduled.order,
       allCells: cellsOf(parsed.notebook),
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
     });
   } finally {
-    await agent.dispose();
+    await shared.dispose();
   }
 }

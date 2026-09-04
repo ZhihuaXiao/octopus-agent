@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { createScriptedAgent } from "../agent/scripted.js";
+import type { AgentFactory } from "../agent/agent.js";
+import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import type { CellRecord, RunRecord } from "./record.js";
 import { runNotebook } from "./runner.js";
 import { recordPath } from "./store.js";
@@ -571,9 +572,14 @@ describe("declared environment", () => {
   });
 });
 
+/** A prompt cell with the given id, carrying whatever else its fence declares. */
+const promptFence = (id: string, attributes: string) =>
+  `\`\`\`prompt id=${id}${attributes}\nDo ${id}.\n\`\`\`\n`;
+
+const declaringUses = (uses: string | undefined) => (uses === undefined ? "" : ` uses=${uses}`);
+
 /** A prompt cell with the given id, and the cells it uses if it declares any. */
-const promptCell = (id: string, uses?: string) =>
-  `\`\`\`prompt id=${id}${uses === undefined ? "" : ` uses=${uses}`}\nDo ${id}.\n\`\`\`\n`;
+const promptCell = (id: string, uses?: string) => promptFence(id, declaringUses(uses));
 
 const notebookOf = (...cells: readonly string[]) => notebookFile(cells.join("\n"));
 
@@ -1064,6 +1070,301 @@ describe("staleness", () => {
 
     expect(before.continues).toBeUndefined();
     expect(record.continues).toBe(before.id);
+  });
+});
+
+/** The same, marked isolated, since isolation and dependency are separate axes. */
+const isolatedCell = (id: string, uses?: string) =>
+  promptFence(id, ` isolated${declaringUses(uses)}`);
+
+/** The turn a body was sent in, for asking what context that cell saw. */
+const turnFor = (agent: ScriptedAgent, id: string) => {
+  const turn = agent.turns.find((sent) => sent.body === `Do ${id}.`);
+  if (turn === undefined) throw new Error(`"${id}" never reached the agent`);
+  return turn;
+};
+
+describe("isolated cells", () => {
+  it("gives an isolated cell a context holding nothing of the notebook's shared one", async () => {
+    const path = await notebookOf(promptCell("first"), isolatedCell("apart"), promptCell("last"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    // None of the notebook's shared context reaches it, though two cells that
+    // share that context ran either side of it.
+    expect(turnFor(agent, "apart").context).toEqual([]);
+    expect(turnFor(agent, "apart").session).not.toBe(agent.agentSession);
+  });
+
+  it("leaves the shared context as though the isolated cell had not run", async () => {
+    const path = await notebookOf(promptCell("first"), isolatedCell("apart"), promptCell("last"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    // `last` sees `first` and only `first`: isolation cuts both ways, or a cell
+    // saying "now do the same for the others" would mean something different
+    // for having had an unrelated cell run beside it.
+    expect(turnFor(agent, "last").context).toEqual(["Do first."]);
+    expect(turnFor(agent, "last").session).toBe(agent.agentSession);
+  });
+
+  it("asks for a fresh agent session rather than reopening the notebook's", async () => {
+    const path = await notebookOf(promptCell("shared"), isolatedCell("apart"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.creations).toBe(2);
+    expect(agent.setups[1]?.agentSession).toBeUndefined();
+    // The same workspace and the same declared environment: isolation is about
+    // the shared context, not about running somewhere else.
+    expect(agent.setups[1]?.workspace).toBe(agent.setups[0]?.workspace);
+  });
+
+  it("disposes the agent it made for an isolated cell", async () => {
+    const path = await notebookOf(promptCell("shared"), isolatedCell("apart"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.disposed).toBe(true);
+  });
+
+  it("records no anchor for an isolated cell, whose session is not kept", async () => {
+    const path = await notebookOf(promptCell("shared"), isolatedCell("apart"));
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    // An anchor names an entry inside one agent session. The isolated cell's is
+    // gone when the cell ends, so recording one would offer a later run a place
+    // to fork that no longer exists.
+    expect(anchorsOf(record)).toEqual([expect.any(String), undefined]);
+  });
+
+  it("records no agent session for a notebook whose every cell is isolated", async () => {
+    const path = await notebookOf(isolatedCell("a"), isolatedCell("b"));
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    expect(record.agentSession).toBeUndefined();
+    expect(record.cells.map((cell) => cell.status)).toEqual(["ok", "ok"]);
+  });
+
+  it("records what an isolated cell produced like any other cell", async () => {
+    const path = await notebookFile(isolatedCell("apart"));
+    const agent = createScriptedAgent([
+      { text: "done apart", usage: { inputTokens: 7, outputTokens: 2 } },
+    ]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(cell.text).toBe("done apart");
+    expect(cell.usage).toEqual({ inputTokens: 7, outputTokens: 2 });
+  });
+
+  it("fails only the cell whose fresh context could not be made", async () => {
+    const path = await notebookOf(isolatedCell("apart"), promptCell("after", "apart"));
+    const ready = readyAgent();
+    let made = 0;
+    // The first agent is the notebook's shared one, made before any cell runs,
+    // so the refusal here is the isolated cell's own and not the run's.
+    const flaky: AgentFactory = (setup) =>
+      (made += 1) > 1
+        ? Promise.reject(new Error("no session could be opened"))
+        : ready.create(setup);
+
+    const record = await runNotebook(path, { agent: flaky });
+
+    expect(record.cells).toEqual([
+      expect.objectContaining({
+        id: "apart",
+        status: "error",
+        error: expect.stringContaining("no session"),
+      }),
+    ]);
+  });
+});
+
+describe("an isolated cell run again", () => {
+  it("is given exactly what it was given the first time", async () => {
+    const path = await notebookOf(promptCell("shared"), isolatedCell("apart"));
+    const first = readyAgent();
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = readyAgent();
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["apart"] });
+
+    // Reproducible is this and nothing more: the same body against the same
+    // empty context, so what differs between the two runs is only the model's
+    // own non-determinism.
+    expect(turnFor(again, "apart").body).toBe(turnFor(first, "apart").body);
+    expect(turnFor(again, "apart").context).toEqual([]);
+  });
+
+  it("produces the same record it produced the first time, given the same turn", async () => {
+    const path = await notebookOf(promptCell("shared"), isolatedCell("apart"));
+    const turns = [{ text: "shared done" }, { text: "apart done", model: "openai/gpt-5" }];
+    const before = await runNotebook(path, { agent: createScriptedAgent(turns).create });
+
+    const record = await runNotebook(path, {
+      agent: createScriptedAgent([turns[1] ?? { text: "" }]).create,
+      continues: before,
+      cells: ["apart"],
+    });
+
+    // As far as a scripted agent can carry it: what the two runs recorded for
+    // the cell is the same, because what the cell was given is the same. What
+    // a real model does with the same input twice is the part no test reaches,
+    // and is why reproducible here means the context and not the text.
+    expect(onlyCell(record, "prompt")).toEqual(before.cells.find((cell) => cell.id === "apart"));
+  });
+
+  it("forks no session, having nothing to fork at", async () => {
+    const path = await notebookOf(promptCell("shared"), isolatedCell("apart"));
+    const first = readyAgent();
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = readyAgent();
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["apart"] });
+
+    // A shared-context cell would be moved back to where it began last time.
+    // An isolated one begins where it always begins.
+    expect(again.resumptions).toEqual([]);
+    expect(again.setups[1]?.agentSession).toBeUndefined();
+  });
+
+  it("leaves the shared cells to fork at their own anchors", async () => {
+    const path = await notebookOf(promptCell("first"), isolatedCell("apart"), promptCell("last"));
+    const first = readyAgent();
+    const before = await runNotebook(path, { agent: first.create });
+
+    const again = readyAgent();
+    await runNotebook(path, { agent: again.create, continues: before, cells: ["apart", "last"] });
+
+    // `last` forks where it began, which is the anchor `first` recorded. The
+    // isolated cell between them recorded none and is passed over, exactly as a
+    // bash cell is.
+    expect(again.resumptions).toEqual([first.anchors[0]]);
+  });
+});
+
+describe("parallel scheduling", () => {
+  it("runs isolated cells with no edge between them at the same time", async () => {
+    const path = await notebookOf(isolatedCell("a"), isolatedCell("b"), isolatedCell("c"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.overlap).toBe(3);
+  });
+
+  it("never runs two shared-context cells at the same time", async () => {
+    const path = await notebookOf(promptCell("a"), promptCell("b"), promptCell("c"));
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    // They would both be appending to one message history, which is the whole
+    // reason isolation is what parallelism is granted on.
+    expect(agent.overlap).toBe(1);
+  });
+
+  it("holds an isolated cell back for the cells it declares it uses", async () => {
+    const path = await notebookOf(isolatedCell("report", "collect"), isolatedCell("collect"));
+    const agent = readyAgent();
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    // Isolation and dependency are separate axes: a fresh context says nothing
+    // about when the cell may run.
+    expect(record.cells.map((cell) => cell.id)).toEqual(["collect", "report"]);
+    expect(agent.overlap).toBe(1);
+  });
+
+  it("records the cells in run order, whichever finished first", async () => {
+    const path = await notebookOf(isolatedCell("a"), isolatedCell("b"), isolatedCell("c"));
+
+    const record = await runNotebook(path, { agent: readyAgent().create });
+
+    expect(record.cells.map((cell) => cell.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("runs isolated bash cells at the same time, as the workspace can see", async () => {
+    // Each waits for the other's file, so this can only finish if the two are
+    // running at once. Serially the first would wait out its own bound, fail,
+    // and halt the run before the second started.
+    const waitsFor = (id: string, mine: string, theirs: string) =>
+      `\`\`\`bash id=${id} isolated\ntouch ${mine}\nwaited=0\nwhile [ ! -f ${theirs} ] && [ $waited -lt 100 ]; do sleep 0.05; waited=$((waited + 1)); done\n[ -f ${theirs} ]\n\`\`\`\n`;
+    const path = await notebookOf(
+      waitsFor("one", "one-here", "two-here"),
+      waitsFor("two", "two-here", "one-here"),
+    );
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([
+      ["one", "ok"],
+      ["two", "ok"],
+    ]);
+  });
+
+  it("runs a bash cell that is not isolated one at a time, as its author wrote it", async () => {
+    // The first dawdles before writing its line. Run at the same time the two
+    // would come out the other way round, which is what serial has to prevent:
+    // an author writing two bash cells means the second to follow the first.
+    const path = await notebookOf(
+      "```bash id=one\nsleep 0.2\nprintf 'one\\n' >> log\n```\n",
+      "```bash id=two\nprintf 'two\\n' >> log\n```\n",
+    );
+
+    await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(await readFile(join(dirname(path), "log"), "utf8")).toBe("one\ntwo\n");
+  });
+
+  it("runs the example notebook the isolated cells are documented against", async () => {
+    const example = fileURLToPath(new URL("../../examples/survey.md", import.meta.url));
+    const path = await notebookFile(await readFile(example, "utf8"));
+    const agent = readyAgent();
+
+    const record = await runNotebook(path, { agent: agent.create, inputs: { target: "src" } });
+
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([
+      ["scope", "ok"],
+      ["naming", "ok"],
+      ["tests", "ok"],
+      ["comments", "ok"],
+      ["summary", "ok"],
+    ]);
+    // The three readings overlap and the summary does not, having said it waits
+    // for them. It is the only cell to speak into the notebook's own session,
+    // and finds nothing in it: the three readings left no trace there, which is
+    // why the example has them hand their work on through the workspace.
+    expect(agent.overlap).toBe(3);
+    expect(agent.turns.at(-1)).toMatchObject({ session: agent.agentSession, context: [] });
+  });
+
+  it("starts nothing further once a cell has failed", async () => {
+    // `c` is a bash cell so that the one scripted turn can only be `a`'s,
+    // whichever of the two the scheduler happens to reach first.
+    const path = await notebookOf(
+      isolatedCell("a"),
+      isolatedCell("b", "a"),
+      "```bash id=c isolated\necho c\n```\n",
+    );
+    const agent = createScriptedAgent([{ error: "provider exploded" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    // `c` had already started beside `a` and is recorded; `b` was waiting on the
+    // cell that failed and never starts.
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([
+      ["a", "error"],
+      ["c", "ok"],
+    ]);
+    expect(record.stale).toEqual(["b"]);
   });
 });
 

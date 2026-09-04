@@ -10,7 +10,8 @@
  * The check belongs to parsing (ADR-0012), and that is what makes the ordering
  * below total: by the time a Run asks for an order, every edge is known to name
  * a Cell and no chain of them closes. Staleness is a second traversal resting on
- * the same guarantee, and ticket 10's scheduler will be a third.
+ * the same guarantee, and the scheduler in `run/schedule.ts` is a third — it
+ * takes the order below and decides which of those Cells may run at once.
  */
 
 import type { Diagnostic } from "./diagnostic.js";

@@ -74,8 +74,10 @@ function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text"> {
  * context a later Cell relies on when it says "now do the same for the others".
  * A Run carrying on from an earlier one reopens that session rather than
  * starting a fresh one, because an Anchor names an entry inside a particular
- * session file and addresses nothing anywhere else. Ticket 10 adds isolated
- * Cells, which are the same session boundary drawn per Cell instead.
+ * session file and addresses nothing anywhere else. An Isolated Cell is this
+ * same function called again for that Cell alone (ADR-0016): nothing here knows
+ * which it is making, because a session made for one Cell is set up no
+ * differently from a session made for a Notebook.
  *
  * Pi's resource loading is driven here rather than left to `createAgentSession`
  * to arrange for itself, because loading is where the Workspace's trust
