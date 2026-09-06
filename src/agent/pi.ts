@@ -17,7 +17,9 @@ import {
   type Agent,
   type AgentSetup,
   type CellResult,
+  type Retry,
   type ToolCall,
+  TurnFailure,
   type Usage,
 } from "./agent.js";
 import type { Environment } from "./environment.js";
@@ -36,7 +38,7 @@ export interface PiAgentOptions extends AgentSetup {
  * here rather than typed against pi's own union, matching `pi/streaming.ts`;
  * the live suite is what proves these names still hold.
  */
-function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text"> {
+function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text" | "retries"> {
   const assistantMessages = turn.filter(isRecord).filter((message) => message.role === "assistant");
 
   const usage: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -65,6 +67,28 @@ function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text"> {
   const responseModel = last?.responseModel ?? last?.model;
 
   return { toolCalls, usage, model: typeof responseModel === "string" ? responseModel : "" };
+}
+
+/**
+ * Why the turn failed, or undefined when it did not.
+ *
+ * Pi does not throw when a provider fails: `prompt` resolves and the turn's
+ * last assistant message says `stopReason: "error"`, after pi's own retries
+ * are spent. Left unread, a Cell whose provider was down would be recorded as
+ * having succeeded with nothing to say.
+ */
+function failureOf(turn: readonly unknown[]): string | undefined {
+  const ended = turn
+    .filter(isRecord)
+    .filter((message) => message.role === "assistant")
+    .at(-1);
+  if (ended === undefined) return "The turn produced no reply";
+
+  if (ended.stopReason === "aborted") return "The turn was aborted";
+  if (ended.stopReason !== "error") return undefined;
+  return typeof ended.errorMessage === "string" && ended.errorMessage !== ""
+    ? ended.errorMessage
+    : "The provider returned an error";
 }
 
 /**
@@ -144,9 +168,23 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
       return session.sessionFile;
     },
 
-    async prompt(body: string): Promise<CellResult> {
+    async prompt(body: string, signal?: AbortSignal): Promise<CellResult> {
       const stream = createAssistantTextStream();
+      // Pi's own retries, as pi announces each one. Pi decides what is transient
+      // and how long to wait; what is kept here is only that it happened, and
+      // what the attempt it gave up on had failed with.
+      const retries: Retry[] = [];
+
+      // `abort` stops the run pi has in hand and waits for the agent to come to
+      // rest, after which `prompt` below resolves. It is a no-op when no run is
+      // active — pi checks credentials before starting one — so a signal that
+      // fires in that gap is acted on again the moment the run does start.
+      const stop = () => void session.abort().catch(() => undefined);
+      signal?.addEventListener("abort", stop, { once: true });
+
       const unsubscribe = session.subscribe((event) => {
+        if (event.type === "agent_start" && signal?.aborted) stop();
+        if (event.type === "auto_retry_start") retries.push({ error: event.errorMessage });
         const revealed = stream.accept(event);
         if (revealed) options.onText?.(revealed);
       });
@@ -156,7 +194,16 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
         await session.prompt(body);
       } finally {
         unsubscribe();
+        signal?.removeEventListener("abort", stop);
       }
+
+      // Read off the signal rather than off the messages, because a turn stopped
+      // while pi was waiting to retry leaves no message saying so.
+      if (signal?.aborted) throw new TurnFailure("The turn was aborted", retries);
+
+      const turn = session.messages.slice(before);
+      const ended = failureOf(turn);
+      if (ended !== undefined) throw new TurnFailure(ended, retries);
 
       // The entry the turn left the session's leaf on, which is the Anchor: the
       // point a later Run forks at to put a Cell back in this context.
@@ -164,7 +211,8 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
 
       return {
         text: stream.text(),
-        ...summariseTurn(session.messages.slice(before)),
+        ...summariseTurn(turn),
+        retries,
         ...(anchor !== null ? { anchor } : {}),
       };
     },

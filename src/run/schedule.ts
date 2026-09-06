@@ -66,7 +66,8 @@ export async function runScheduled<T extends object>(
    *
    * Succeeded rather than merely finished, so that nothing can be built on a
    * Cell that failed even if some later reason to carry on past a failure
-   * arrives — as ticket 11's retries may well be.
+   * arrives. Retries turned out not to be one: they happen inside the agent's
+   * turn (ADR-0018), so a Cell that reaches here has already had them.
    */
   const ready = (cell: Cell) =>
     cell.uses.every((used) => !inThisRun.has(used) || succeeded.has(used));

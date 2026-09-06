@@ -3,15 +3,25 @@ import {
   type AgentFactory,
   type AgentSetup,
   type CellResult,
+  type Retry,
   type ToolCall,
+  TurnFailure,
   type Usage,
   noUsage,
 } from "./agent.js";
 import type { Environment } from "./environment.js";
 
-/** One scripted turn: what the agent yields, or what it fails with. */
+/**
+ * One scripted turn: what the agent yields, what it fails with, what the
+ * provider transiently failed with — after which the agent tries again, as pi
+ * does, and the next scripted turn is what that attempt gets — or a turn that
+ * never comes back until the Run tells it to stop.
+ */
 export type ScriptedTurn =
-  ({ text: string } & Partial<Omit<CellResult, "text">>) | { error: string };
+  | ({ text: string } & Partial<Omit<CellResult, "text" | "retries">>)
+  | { error: string }
+  | { transient: string }
+  | { hangs: true };
 
 /** One turn as it arrived: what was asked, where, and what was already there. */
 export interface ScriptedTurnRecord {
@@ -58,6 +68,8 @@ export interface ScriptedAgent {
   readonly anchors: readonly string[];
   /** Every Anchor a Run asked an agent to resume from, in order. */
   readonly resumptions: readonly (string | undefined)[];
+  /** The bodies of the turns a Run told an agent to stop, in order. */
+  readonly aborted: readonly string[];
   /**
    * The most turns that were ever in flight at the same time: one when every
    * turn waited for the turn before it, which is what a shared context requires.
@@ -68,6 +80,14 @@ export interface ScriptedAgent {
 }
 
 const isError = (turn: ScriptedTurn): turn is { error: string } => "error" in turn;
+const isTransient = (turn: ScriptedTurn): turn is { transient: string } => "transient" in turn;
+const hangs = (turn: ScriptedTurn): turn is { hangs: true } => "hangs" in turn;
+
+/** Rejects when the signal fires, and never otherwise: a provider that has gone quiet. */
+const untilAborted = (signal: AbortSignal | undefined, cause: () => Error) =>
+  new Promise<never>((_, reject) => {
+    signal?.addEventListener("abort", () => reject(cause()), { once: true });
+  });
 
 /**
  * An environment providing nothing, so a Notebook declaring anything at all
@@ -111,12 +131,23 @@ export function createScriptedAgent(
   const turns: ScriptedTurnRecord[] = [];
   const anchors: string[] = [];
   const resumptions: (string | undefined)[] = [];
+  const aborted: string[] = [];
   const environment: Environment = { ...barren, ...provided };
 
   let next = 0;
   let inFlight = 0;
   let overlap = 0;
   let disposals = 0;
+
+  /** The next scripted turn, consumed; a script that has run out is the test's mistake. */
+  const takeTurn = (): ScriptedTurn => {
+    const turn = script[next];
+    next += 1;
+    if (turn === undefined) {
+      throw new Error(`Scripted agent ran out of turns: no turn ${next} was scripted.`);
+    }
+    return turn;
+  };
 
   const create = async (asked: AgentSetup): Promise<Agent> => {
     // A Run reopening a session names it; one starting a session gets a name of
@@ -132,7 +163,7 @@ export function createScriptedAgent(
       environment,
       agentSession: session,
 
-      async prompt(body: string): Promise<CellResult> {
+      async prompt(body: string, signal?: AbortSignal): Promise<CellResult> {
         prompts.push(body);
         turns.push({ body, session, context: held.map((turn) => turn.body) });
 
@@ -144,12 +175,25 @@ export function createScriptedAgent(
           // scheduler started them. So this one yields, once, like the real one.
           await Promise.resolve();
 
-          const turn = script[next];
-          next += 1;
-          if (turn === undefined) {
-            throw new Error(`Scripted agent ran out of turns: no turn ${next} was scripted.`);
+          // A transient failure is retried by taking the next scripted turn,
+          // which is what pi does with the next attempt at the provider. The
+          // script says how many times, so no retry budget is modelled here.
+          const retries: Retry[] = [];
+          let turn = takeTurn();
+          while (isTransient(turn)) {
+            retries.push({ error: turn.transient });
+            turn = takeTurn();
           }
-          if (isError(turn)) throw new Error(turn.error);
+          if (isError(turn)) throw new TurnFailure(turn.error, retries);
+
+          // Nothing comes back until the Run gives up waiting, as pi's turn
+          // resolves only once `abort` has brought the agent to rest.
+          if (hangs(turn)) {
+            return await untilAborted(signal, () => {
+              aborted.push(body);
+              return new TurnFailure("The turn was aborted", retries);
+            });
+          }
 
           const toolCalls: ToolCall[] = turn.toolCalls ?? [];
           const usage: Usage = turn.usage ?? noUsage;
@@ -160,7 +204,14 @@ export function createScriptedAgent(
           anchors.push(anchor);
           held.push({ body, anchor });
 
-          return { text: turn.text, toolCalls, usage, model: turn.model ?? "scripted", anchor };
+          return {
+            text: turn.text,
+            toolCalls,
+            usage,
+            model: turn.model ?? "scripted",
+            retries,
+            anchor,
+          };
         } finally {
           inFlight -= 1;
         }
@@ -191,6 +242,7 @@ export function createScriptedAgent(
     turns,
     anchors,
     resumptions,
+    aborted,
 
     get setup() {
       return setups[0];

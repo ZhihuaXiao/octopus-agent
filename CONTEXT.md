@@ -102,6 +102,18 @@ The state of a Cell whose Dependencies have run again since it last ran, or are 
 Stale (ADR-0015). A property of a Run, never of the Notebook.
 _Avoid_: dirty, invalid, outdated, expired
 
+**Timeout**:
+How long a Cell may run before the Run stops it, declared in the Notebook as a duration on
+the Cell or on the whole Notebook (ADR-0017). A Cell that outruns it is Timed Out, which is a
+status of its own beside Errored, and halts the Run like an error.
+_Avoid_: deadline, time limit, budget, hang detection
+
+**Retry**:
+One attempt at a Prompt Cell's turn that pi gave up on after a transient provider or
+transport error and made again (ADR-0018). Made by pi, recorded by the Run, never made by
+the Run itself.
+_Avoid_: re-run, redo, backoff, auto-retry
+
 **Artifact**:
 A file or image produced by a Run, written beside the Run Record and referenced by path.
 Never the Notebook itself, and never embedded in it.

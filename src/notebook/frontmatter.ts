@@ -10,6 +10,7 @@
 import { isMap, isScalar, isSeq, parseDocument, type ParsedNode } from "yaml";
 
 import { type Diagnostic, lineOffset } from "./diagnostic.js";
+import { DURATION_RULE, parseDuration } from "./duration.js";
 import { INPUT_TYPES, type Input, type InputType, isInputType, settleDefault } from "./inputs.js";
 import { NAME_RULE, isName } from "./name.js";
 
@@ -24,6 +25,11 @@ export interface Metadata {
   readonly skills?: readonly string[];
   readonly packages?: readonly string[];
   readonly inputs?: readonly Input[];
+  /**
+   * How long any Cell may run before the Run aborts it, in milliseconds, for
+   * the Cells that do not say otherwise themselves. Written as a duration.
+   */
+  readonly timeout?: number;
 }
 
 const STRING_FIELDS = {
@@ -38,7 +44,7 @@ const LIST_FIELDS = { tools: "tools", skills: "skills", packages: "packages" } a
 
 const INPUT_FIELDS = ["name", "type", "default", "description"] as const;
 
-const FIELDS = [...Object.keys(STRING_FIELDS), ...Object.keys(LIST_FIELDS), "inputs"];
+const FIELDS = [...Object.keys(STRING_FIELDS), ...Object.keys(LIST_FIELDS), "inputs", "timeout"];
 
 function scalarString(node: unknown): string | undefined {
   return isScalar(node) && typeof node.value === "string" ? node.value : undefined;
@@ -221,6 +227,19 @@ export function readMetadata(text: string, firstLine: number, errors: Diagnostic
         inputs.push(input);
       }
       metadata.inputs = inputs;
+      continue;
+    }
+
+    if (key === "timeout") {
+      // A string, and only a string: YAML reads `30` as a number and `30s` as a
+      // string, and the unit is what the duration rule is there to insist on.
+      const value = scalarString(item.value);
+      const timeout = value === undefined ? undefined : parseDuration(value);
+      if (timeout === undefined) {
+        errors.push({ line, message: `Frontmatter field "timeout" ${DURATION_RULE}` });
+        continue;
+      }
+      metadata.timeout = timeout;
       continue;
     }
 

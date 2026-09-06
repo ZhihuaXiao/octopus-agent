@@ -32,9 +32,16 @@ async function main(): Promise<void> {
     });
     process.stdout.write(`\n\nRun ${record.id} → ${recordPath(path, record.id)}\n`);
 
-    const failed = record.cells.filter((cell) => cell.status === "error");
+    // Anything short of ok, since a timed-out cell is no more to be built on
+    // than an errored one; the two are named apart because their remedies are.
+    const failed = record.cells.filter((cell) => cell.status !== "ok");
     for (const cell of failed) {
-      process.stderr.write(`Cell "${cell.id}" failed: ${cell.error}\n`);
+      const what = cell.status === "timeout" ? "timed out" : "failed";
+      process.stderr.write(`Cell "${cell.id}" ${what}: ${cell.error}\n`);
+      if (cell.type === "prompt" && cell.retries.length > 0) {
+        const times = cell.retries.length === 1 ? "once" : `${cell.retries.length} times`;
+        process.stderr.write(`  (retried ${times} before that)\n`);
+      }
       // A bash cell's output never streamed past, so the account of what went
       // wrong is in the record and nowhere the reader has already seen.
       if (cell.type === "bash" && cell.stderr !== "") process.stderr.write(cell.stderr);

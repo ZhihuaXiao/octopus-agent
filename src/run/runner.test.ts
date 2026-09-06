@@ -251,8 +251,8 @@ describe("bash cells", () => {
     expect(cell?.status).toBe("error");
     expect(cell?.error).toContain("could not be run");
     if (cell?.type !== "bash") throw new Error("expected the second cell to be a bash cell");
-    // Null rather than a status it never reached, which is the hook ticket 11
-    // needs for timeouts.
+    // Null rather than a status it never reached, as a command stopped by its
+    // timeout reports too.
     expect(cell.exitCode).toBeNull();
     // Not the command's own output, so it is not passed off as such.
     expect(cell.stderr).toBe("");
@@ -1365,6 +1365,205 @@ describe("parallel scheduling", () => {
       ["c", "ok"],
     ]);
     expect(record.stale).toEqual(["b"]);
+  });
+});
+
+describe("retries", () => {
+  it("records the transient failures a turn was retried past, and the turn's result", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([
+      { transient: "503 Service Unavailable" },
+      { transient: "connection reset before headers" },
+      { text: "Hello, at last" },
+    ]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    // The retries are the agent's to make — pi already retries a transient
+    // provider or transport error — and the run's to account for: a cell that
+    // took three attempts to answer should not read like one that took one.
+    expect(cell.status).toBe("ok");
+    expect(cell.text).toBe("Hello, at last");
+    expect(cell.retries).toEqual([
+      { error: "503 Service Unavailable" },
+      { error: "connection reset before headers" },
+    ]);
+  });
+
+  it("records the retries of a turn that failed all the same, and halts on it", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([
+      { transient: "503 Service Unavailable" },
+      { error: "401 Unauthorized" },
+      { text: "never reached" },
+    ]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    // Retried once and then failed for a reason no retry gets past. The record
+    // says both: what was tried, and what the cell finally failed with.
+    expect(record.cells).toEqual([
+      expect.objectContaining({
+        id: "first",
+        status: "error",
+        error: "401 Unauthorized",
+        retries: [{ error: "503 Service Unavailable" }],
+      }),
+    ]);
+    expect(agent.prompts).toEqual(["Do the first thing."]);
+  });
+
+  it("records no retries for a turn that answered first time", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello" }]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(cell.retries).toEqual([]);
+  });
+
+  it("records no retries for a bash cell, which is never retried", async () => {
+    const path = await notebookFile(oneBashCell("exit 1"));
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    // A command that failed did what it was told and reported it; running it
+    // again is a decision for whoever reads the record, not for the run.
+    expect(cell.status).toBe("error");
+    expect("retries" in cell).toBe(false);
+  });
+});
+
+describe("timeouts", () => {
+  it("aborts a prompt cell that outruns its timeout and reports a timeout, not a failure", async () => {
+    const path = await notebookFile(
+      `\`\`\`prompt id=slow timeout=50ms\nThink about it.\n\`\`\`\n\n\`\`\`prompt id=after\nCarry on.\n\`\`\`\n`,
+    );
+    const agent = createScriptedAgent([{ hangs: true }, { text: "never reached" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    // A status of its own rather than an error, because what to do next differs:
+    // a timed-out cell may want a longer timeout, and an errored one a fix.
+    expect(record.cells).toEqual([
+      expect.objectContaining({
+        id: "slow",
+        status: "timeout",
+        error: expect.stringContaining("50ms"),
+      }),
+    ]);
+    // Told to stop, rather than left running with the run gone on without it.
+    expect(agent.aborted).toEqual(["Think about it."]);
+    expect(agent.prompts).toEqual(["Think about it."]);
+  });
+
+  it("kills a bash cell that outruns its timeout, keeping what it had written", async () => {
+    // Two commands, so bash forks a child for the sleep rather than becoming
+    // it: killing bash alone would leave the sleep holding the cell's output
+    // open, and the run waiting the full five seconds for it to let go.
+    const path = await notebookFile(
+      "```bash id=slow timeout=100ms\necho started\nsleep 5\necho finished\n```\n",
+    );
+    const began = Date.now();
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell.status).toBe("timeout");
+    expect(cell.error).toBe("Timed out after 100ms");
+    expect(cell.stdout).toBe("started\n");
+    expect(cell.exitCode).toBeNull();
+    expect(Date.now() - began).toBeLessThan(3000);
+  });
+
+  it("leaves a cell that finishes within its timeout alone", async () => {
+    const path = await notebookFile("```bash id=quick timeout=5s\necho quick\n```\n");
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell).toMatchObject({ status: "ok", stdout: "quick\n" });
+    expect(cell.error).toBeUndefined();
+  });
+
+  it("bounds every cell by the notebook's own timeout when the cell declares none", async () => {
+    const path = await notebookFile(`---\ntimeout: 50ms\n---\n\n${oneCell}`);
+    const agent = createScriptedAgent([{ hangs: true }]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(cell.status).toBe("timeout");
+    expect(cell.error).toBe("Timed out after 50ms");
+  });
+
+  it("lets a cell's own timeout override the notebook's", async () => {
+    // The notebook allows almost nothing; the cell allows plenty and takes a
+    // little, so it is the cell's word that has to be the one that counts.
+    const path = await notebookFile(
+      "---\ntimeout: 10ms\n---\n\n```bash id=own timeout=5s\nsleep 0.1\necho done\n```\n",
+    );
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell).toMatchObject({ status: "ok", stdout: "done\n" });
+  });
+
+  it("runs a cell as long as it takes when nothing declares a timeout", async () => {
+    const path = await notebookFile(oneBashCell("sleep 0.2\necho patient"));
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell).toMatchObject({ status: "ok", stdout: "patient\n" });
+  });
+
+  it("halts the run at a timed-out cell and leaves its dependents stale", async () => {
+    const path = await notebookOf(
+      "```prompt id=a timeout=50ms\nDo a.\n```\n",
+      promptCell("b", "a"),
+      promptCell("c", "b"),
+    );
+    const agent = createScriptedAgent([{ hangs: true }, { text: "never reached" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    // A cell that timed out may have half-applied a change just as a failed
+    // one may have, so nothing downstream is built on it.
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([["a", "timeout"]]);
+    expect(record.stale).toEqual(["b", "c"]);
+    expect(agent.prompts).toEqual(["Do a."]);
+  });
+
+  it("records no anchor and no session for a turn that timed out", async () => {
+    const path = await notebookFile("```prompt id=slow timeout=50ms\nThink.\n```\n");
+    const agent = createScriptedAgent([{ hangs: true }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(anchorsOf(record)).toEqual([undefined]);
+    expect(record.agentSession).toBeUndefined();
+  });
+
+  it("times an isolated cell out like any other, and disposes its context", async () => {
+    const path = await notebookFile("```prompt id=apart isolated timeout=50ms\nThink.\n```\n");
+    const agent = createScriptedAgent([{ hangs: true }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(onlyCell(record, "prompt").status).toBe("timeout");
+    expect(agent.aborted).toEqual(["Think."]);
+    expect(agent.disposed).toBe(true);
+  });
+
+  it("times a cell from when it starts, not from when the run did", async () => {
+    // The first cell takes longer than the second's whole allowance. Measured
+    // from the start of the run the second would be out of time before it
+    // began; measured from its own start it has all the time it needs.
+    const path = await notebookOf(
+      "```bash id=first\nsleep 0.2\n```\n",
+      "```bash id=second timeout=150ms\necho in time\n```\n",
+    );
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(record.cells.map((cell) => cell.status)).toEqual(["ok", "ok"]);
   });
 });
 

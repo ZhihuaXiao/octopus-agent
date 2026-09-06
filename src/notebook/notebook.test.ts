@@ -181,6 +181,7 @@ inputs:
   - name: strict
     type: boolean
     default: false
+timeout: 10m
 ---
 `;
 
@@ -197,6 +198,7 @@ inputs:
         { name: "target", type: "string", default: "src", description: "The directory to audit" },
         { name: "strict", type: "boolean", default: false },
       ],
+      timeout: 600_000,
     });
     expect(roundTrip(source)).toBe(source);
   });
@@ -247,7 +249,7 @@ describe("cell attributes", () => {
 title: Attributes
 ---
 
-\`\`\`prompt id=audit uses=collect,summarise isolated model=openai/gpt-5
+\`\`\`prompt id=audit uses=collect,summarise isolated model=openai/gpt-5 timeout=5m
 Do the work.
 \`\`\`
 
@@ -269,15 +271,27 @@ Summarise it.
       uses: ["collect", "summarise"],
       isolated: true,
       model: "openai/gpt-5",
+      timeout: 300_000,
     });
   });
 
-  it("defaults a cell to shared context and no dependencies", () => {
+  it("defaults a cell to shared context, no dependencies and no timeout", () => {
     const [cell] = cellsOf(valid("```prompt id=only\nDo it.\n```\n"));
 
     expect(cell?.isolated).toBe(false);
     expect(cell?.uses).toEqual([]);
     expect(cell?.model).toBeUndefined();
+    expect(cell?.timeout).toBeUndefined();
+  });
+
+  it("reads a timeout in any of the units a notebook may write it in", () => {
+    const timeoutOf = (written: string) =>
+      cellsOf(valid(`\`\`\`bash id=a timeout=${written}\nx\n\`\`\`\n`))[0]?.timeout;
+
+    expect(timeoutOf("250ms")).toBe(250);
+    expect(timeoutOf("30s")).toBe(30_000);
+    expect(timeoutOf("1.5m")).toBe(90_000);
+    expect(timeoutOf("1h")).toBe(3_600_000);
   });
 
   it("parses a bash cell as a cell of its own type", () => {
@@ -434,6 +448,22 @@ describe("malformed notebooks", () => {
   it("reports an isolated attribute that is not a boolean", () => {
     expect(problems("```prompt id=a isolated=maybe\nx\n```\n")).toEqual([
       { line: 1, message: `"isolated" must be true or false` },
+    ]);
+  });
+
+  it("reports a timeout that is not a duration, a bare number included", () => {
+    // A bare `30` reads as seconds to one author and milliseconds to another,
+    // which is the wrong thing to be off by a thousand on.
+    for (const written of ["30", "soon", "5sec", "0s"]) {
+      expect(problems(`\`\`\`prompt id=a timeout=${written}\nx\n\`\`\`\n`)).toEqual([
+        { line: 1, message: `"timeout" must be a duration such as 30s, 5m or 1h` },
+      ]);
+    }
+  });
+
+  it("reports a frontmatter timeout that is not a duration", () => {
+    expect(problems("---\ntimeout: 30\n---\n")).toEqual([
+      { line: 2, message: `Frontmatter field "timeout" must be a duration such as 30s, 5m or 1h` },
     ]);
   });
 

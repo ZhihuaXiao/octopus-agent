@@ -18,6 +18,7 @@
 import { dirname, resolve } from "node:path";
 
 import { type Diagnostic, lineOffset } from "./diagnostic.js";
+import { DURATION_RULE, parseDuration } from "./duration.js";
 import { type Metadata, readMetadata } from "./frontmatter.js";
 import { type PlacedCell, checkGraph } from "./graph.js";
 import { referencesIn } from "./inputs.js";
@@ -27,6 +28,7 @@ export type { Diagnostic } from "./diagnostic.js";
 export type { Metadata } from "./frontmatter.js";
 export type { Input, InputType, InputValue, InputValues } from "./inputs.js";
 export { formatDiagnostics } from "./diagnostic.js";
+export { formatDuration } from "./duration.js";
 export { runOrder, staleAfter } from "./graph.js";
 export { interpolate, resolveInputs } from "./inputs.js";
 
@@ -43,6 +45,11 @@ export interface Cell {
   readonly isolated: boolean;
   /** Overrides the Notebook's model for this Cell alone. */
   readonly model?: string;
+  /**
+   * How long this Cell may run before the Run aborts it, in milliseconds.
+   * Overrides the Notebook's own `timeout` for this Cell alone.
+   */
+  readonly timeout?: number;
 }
 
 /** One line of the source with its own terminator, so replaying it is exact. */
@@ -89,7 +96,7 @@ export type ParseResult =
 const FRONTMATTER_DELIMITER = "---";
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const INDENTED_FENCE = /^ {1,3}(`{3,}|~{3,})(.*)$/;
-const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "model"];
+const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "model", "timeout"];
 /** The attributes that are this project's own invention, so no snippet has one. */
 const CELL_ONLY_ATTRIBUTES = CELL_ATTRIBUTES.filter((key) => key !== "id");
 const MISSING_ID = "Cell is missing an id";
@@ -123,6 +130,15 @@ export function bodyOf(cell: Cell): string {
  */
 export function workspaceOf(notebook: Notebook, notebookPath: string): string {
   return resolve(dirname(notebookPath), notebook.metadata.workspace ?? ".");
+}
+
+/**
+ * How long a Cell may run, in milliseconds: its own `timeout`, else the
+ * Notebook's, else nothing at all — a Notebook that says nothing runs as long
+ * as it takes, as it always did.
+ */
+export function timeoutOf(notebook: Notebook, cell: Cell): number | undefined {
+  return cell.timeout ?? notebook.metadata.timeout;
 }
 
 /**
@@ -207,6 +223,7 @@ function readCell(
   let uses: readonly string[] = [];
   let isolated = false;
   let model: string | undefined;
+  let timeout: number | undefined;
   const seen = new Set<string>();
 
   for (const [key, value] of attributes) {
@@ -273,6 +290,11 @@ function readCell(
     }
 
     if (key === "model") model = value;
+
+    if (key === "timeout") {
+      timeout = parseDuration(value);
+      if (timeout === undefined) errors.push({ line, message: `"timeout" ${DURATION_RULE}` });
+    }
   }
 
   if (id === undefined) {
@@ -280,7 +302,15 @@ function readCell(
     return undefined;
   }
 
-  return { id, type: tag, body, uses, isolated, ...(model !== undefined ? { model } : {}) };
+  return {
+    id,
+    type: tag,
+    body,
+    uses,
+    isolated,
+    ...(model !== undefined ? { model } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+  };
 }
 
 function isClosingFence(text: string, marker: string): boolean {

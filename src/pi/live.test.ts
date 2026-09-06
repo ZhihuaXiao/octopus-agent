@@ -12,6 +12,7 @@ import {
   hasTrustRequiringProjectResources,
 } from "@earendil-works/pi-coding-agent";
 
+import { TurnFailure } from "../agent/agent.js";
 import { createPiAgent } from "../agent/pi.js";
 import { createAssistantTextStream } from "./streaming.js";
 import { PI_PACKAGE } from "./version-pin.js";
@@ -136,6 +137,25 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
       // The abandoned turn is still in the session, on the branch beside this
       // one, rather than having been discarded to make room (ADR-0014).
       expect(forked.getChildren(first.anchor!)).toHaveLength(2);
+    } finally {
+      await agent.dispose();
+    }
+  });
+
+  it("reports a turn it was told to stop as a failure, not as a reply", async () => {
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), "octo-abort-")));
+    const agent = await createPiAgent({ workspace, tools: [] });
+
+    try {
+      // Fired once the request is under way rather than at once, so what is
+      // exercised is pi stopping a stream and not the signal beating it to the
+      // start. A Cell's timeout rests on `abort` bringing `prompt` to rest.
+      const stop = new AbortController();
+      const turn = agent.prompt("Count from 1 to 300, one number per line.", stop.signal);
+      setTimeout(() => stop.abort(), 1500);
+
+      await expect(turn).rejects.toThrow(TurnFailure);
+      await expect(turn).rejects.toThrow(/aborted/);
     } finally {
       await agent.dispose();
     }

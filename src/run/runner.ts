@@ -4,6 +4,7 @@ import {
   type Agent,
   type AgentFactory,
   type AgentSetup,
+  TurnFailure,
   emptyResult,
   noUsage,
 } from "../agent/agent.js";
@@ -15,11 +16,13 @@ import {
   bodyOf,
   cellsOf,
   formatDiagnostics,
+  formatDuration,
   interpolate,
   parseNotebook,
   resolveInputs,
   runOrder,
   staleAfter,
+  timeoutOf,
   workspaceOf,
 } from "../notebook/notebook.js";
 import { anchorBefore } from "./anchor.js";
@@ -76,14 +79,46 @@ function promptFailure(cell: Cell, cause: unknown): PromptCellRecord {
     type: "prompt",
     status: "error",
     ...emptyResult,
+    // The attempts before the one that failed, when the agent got as far as
+    // making any: a turn that failed after three tries should not read like
+    // one that failed at once.
+    ...(cause instanceof TurnFailure ? { retries: [...cause.retries] } : {}),
     error: cause instanceof Error ? cause.message : String(cause),
   };
 }
 
-async function runPromptCell(cell: Cell, body: string, agent: Agent): Promise<PromptCellRecord> {
+/** What a Cell records when the Run stopped waiting for it. */
+const timedOut = (bound: Bound) => ({
+  status: "timeout" as const,
+  error: `Timed out after ${formatDuration(bound.timeout)}`,
+});
+
+/**
+ * How long a Cell may take, and the signal that fires when it has taken longer.
+ * Absent when the Notebook set no timeout: the Cell then runs as long as it
+ * takes, which is what every Notebook did before timeouts could be declared.
+ */
+interface Bound {
+  readonly timeout: number;
+  readonly signal: AbortSignal;
+}
+
+const boundOf = (timeout: number | undefined): Bound | undefined =>
+  timeout === undefined ? undefined : { timeout, signal: AbortSignal.timeout(timeout) };
+
+async function runPromptCell(
+  cell: Cell,
+  body: string,
+  agent: Agent,
+  bound: Bound | undefined,
+): Promise<PromptCellRecord> {
   try {
-    return { id: cell.id, type: "prompt", status: "ok", ...(await agent.prompt(body)) };
+    const result = await agent.prompt(body, bound?.signal);
+    return { id: cell.id, type: "prompt", status: "ok", ...result };
   } catch (cause) {
+    // Stopped by the Run rather than failed on its own: the agent rejects when
+    // told to stop, and the signal is what says the Run was the one telling it.
+    if (bound?.signal.aborted) return { ...promptFailure(cell, cause), ...timedOut(bound) };
     return promptFailure(cell, cause);
   }
 }
@@ -101,6 +136,7 @@ async function runIsolatedCell(
   cell: Cell,
   body: string,
   isolate: () => Promise<Agent>,
+  bound: Bound | undefined,
 ): Promise<PromptCellRecord> {
   let agent: Agent;
   try {
@@ -116,7 +152,7 @@ async function runIsolatedCell(
     // The Anchor is dropped rather than recorded. It names an entry inside the
     // session just made, which nothing keeps: a later Run re-running this Cell
     // makes another fresh context, which is what makes the Cell reproducible.
-    const { anchor: _ended, ...recorded } = await runPromptCell(cell, body, agent);
+    const { anchor: _ended, ...recorded } = await runPromptCell(cell, body, agent, bound);
     return recorded;
   } finally {
     await agent.dispose();
@@ -131,8 +167,13 @@ function failureOf(result: ShellResult): string | undefined {
   return undefined;
 }
 
-async function runBashCell(cell: Cell, body: string, workspace: string): Promise<BashCellRecord> {
-  const result = await runShellCommand(body, workspace);
+async function runBashCell(
+  cell: Cell,
+  body: string,
+  workspace: string,
+  bound: Bound | undefined,
+): Promise<BashCellRecord> {
+  const result = await runShellCommand(body, workspace, bound?.signal);
   const error = failureOf(result);
 
   return {
@@ -142,10 +183,15 @@ async function runBashCell(cell: Cell, body: string, workspace: string): Promise
     // No model ran, which is the whole reason to write a Bash Cell rather than
     // ask the agent to do the same deterministic thing.
     usage: noUsage,
+    // What the command had written when it was stopped is kept: it is the only
+    // account there is of how far the command got.
     stdout: result.stdout,
     stderr: result.stderr,
     exitCode: result.exitCode,
     ...(error !== undefined ? { error } : {}),
+    // Killed by the Run rather than by anything else, which the signal that
+    // did it says more plainly than the signal the command died of.
+    ...(bound?.signal.aborted ? timedOut(bound) : {}),
   };
 }
 
@@ -175,6 +221,8 @@ interface Cleared {
    * Run had nothing to say about.
    */
   readonly allCells: readonly Cell[];
+  /** How long a Cell may run, when the Notebook bounds it. */
+  readonly timeoutOf: (cell: Cell) => number | undefined;
   /** The Run being carried on from, when this Run carries on from one. */
   readonly continues?: RunRecord;
 }
@@ -193,9 +241,13 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
    */
   const runCell = async (cell: Cell): Promise<CellRecord> => {
     const body = interpolate(bodyOf(cell), cleared.values);
+    // Started here, as the Cell starts, rather than when the Run did: a Cell's
+    // timeout is on the Cell's own running, not on however long it waited for
+    // the shared context or for the Cells it uses.
+    const bound = boundOf(cleared.timeoutOf(cell));
 
-    if (cell.type === "bash") return runBashCell(cell, body, workspace);
-    if (cell.isolated) return runIsolatedCell(cell, body, cleared.isolate);
+    if (cell.type === "bash") return runBashCell(cell, body, workspace, bound);
+    if (cell.isolated) return runIsolatedCell(cell, body, cleared.isolate, bound);
 
     // Once, before the first Cell that speaks into the shared context, and only
     // when this Run carries on from another — an Agent Session of its own
@@ -209,16 +261,16 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       await shared.resumeFrom(anchorBefore(continues, cell.id));
     }
 
-    return runPromptCell(cell, body, shared);
+    return runPromptCell(cell, body, shared, bound);
   };
 
   // Halt rather than carry on: a later cell built on a failed one would be
-  // building on a partially-applied change. Ticket 11 adds retries and
-  // timeouts around this.
+  // building on a partially-applied change — and a cell that timed out may
+  // have half-applied one just the same.
   const cells = [
     ...(await runScheduled(cleared.order, {
       run: runCell,
-      failed: (recorded) => recorded.status === "error",
+      failed: (recorded) => recorded.status !== "ok",
     })),
   ];
 
@@ -355,11 +407,12 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       shared,
       // No session named, which is what makes it fresh. The environment is not
       // checked a second time: it was checked against this same setup, and a
-      // Workspace that changed underneath a running Notebook is ticket 11's
-      // kind of problem rather than a declaration to re-read.
+      // Workspace that changed underneath a running Notebook is a failure for
+      // the Cell that meets it rather than a declaration to re-read.
       isolate: () => options.agent(setup),
       order: scheduled.order,
       allCells: cellsOf(parsed.notebook),
+      timeoutOf: (cell) => timeoutOf(parsed.notebook, cell),
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
     });
   } finally {

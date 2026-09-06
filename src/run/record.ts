@@ -7,7 +7,13 @@
 
 import type { CellResult, Usage } from "../agent/agent.js";
 
-export type CellStatus = "ok" | "error";
+/**
+ * A Cell that timed out is told apart from one that errored, because what to
+ * do about them differs: a timed-out Cell may want a longer timeout, an
+ * errored one wants whatever went wrong put right. Neither is `ok`, and either
+ * halts the Run.
+ */
+export type CellStatus = "ok" | "error" | "timeout";
 
 /** What every Cell records, whichever kind of Cell it is. */
 interface CellRecordBase {
@@ -15,7 +21,7 @@ interface CellRecordBase {
   status: CellStatus;
   /** Tokens the Cell spent. Always zero for a Bash Cell, which runs no model. */
   usage: Usage;
-  /** Why the cell failed, present only when the status is `error`. */
+  /** Why the cell did not succeed, present only when the status is not `ok`. */
   error?: string;
 }
 
