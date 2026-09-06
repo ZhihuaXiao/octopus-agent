@@ -45,10 +45,18 @@ timeout, an errored one wants whatever went wrong put right. Both halt the Run, 
 and both leave their dependents Stale, since a Cell stopped halfway may have half-applied a
 change just as a failed one may have.
 
+A Cell's clock starts when its own work does — after an Isolated Cell's context has been
+made, after a continued Run has forked the Agent Session — and not when the Cell was
+scheduled, so the Run's own arrangements are not charged to the Cell. And a signal that fires
+as the Cell is finishing stops nothing: whether a Cell was stopped is what the agent or the
+shell says happened, never what the clock says should have, so a turn that completed in the
+last millisecond keeps its result.
+
 Stopping a Prompt Cell asks pi to abort the turn and waits for the agent to come to rest,
 which is how a turn that was already changing the Workspace is brought to a known stop rather
-than abandoned mid-write. The tokens spent are recorded against the Cell as far as pi reports
-them, but what the agent had said so far is not: half a reply is not what the Cell asked for.
+than abandoned mid-write. What the agent had said so far is not recorded, since half a reply
+is not what the Cell asked for; nor, yet, are the tokens it spent, which is ticket 12's
+accounting to add along with the rest of a Cell's cost.
 
 Stopping a Bash Cell kills the whole process group the command was started in, not only the
 shell, because `bash -c` forks a child per command of a multi-line body and a child left
@@ -56,7 +64,9 @@ running would hold the Cell's output open — the Run would then wait for the ch
 which is the hang the timeout exists to end. What the command had written when it was stopped
 is kept, as the only account there is of how far it got. The group is killed outright rather
 than asked to stop first: a command that has already outrun its time is not owed a chance to
-ignore the request.
+ignore the request. A group of its own is also out of reach of the terminal's Ctrl-C and
+outlives a runner that dies, so only a Bash Cell with a timeout is given one; a Bash Cell
+nothing will stop early runs in the Run's own group, exactly as it did.
 
 A Notebook that declares no timeout anywhere is not protected from hanging. That is a
 deliberate absence rather than an oversight, and the place to change it is a default written

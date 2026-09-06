@@ -453,17 +453,24 @@ describe("malformed notebooks", () => {
 
   it("reports a timeout that is not a duration, a bare number included", () => {
     // A bare `30` reads as seconds to one author and milliseconds to another,
-    // which is the wrong thing to be off by a thousand on.
-    for (const written of ["30", "soon", "5sec", "0s"]) {
+    // which is the wrong thing to be off by a thousand on. A fraction of a
+    // millisecond and a month are no use to a timer either.
+    for (const written of ["30", "soon", "5sec", "0s", "0.5ms", "1000h"]) {
       expect(problems(`\`\`\`prompt id=a timeout=${written}\nx\n\`\`\`\n`)).toEqual([
-        { line: 1, message: `"timeout" must be a duration such as 30s, 5m or 1h` },
+        {
+          line: 1,
+          message: `"timeout" must be a duration such as 30s, 5m or 1h, and under 25 days`,
+        },
       ]);
     }
   });
 
   it("reports a frontmatter timeout that is not a duration", () => {
     expect(problems("---\ntimeout: 30\n---\n")).toEqual([
-      { line: 2, message: `Frontmatter field "timeout" must be a duration such as 30s, 5m or 1h` },
+      {
+        line: 2,
+        message: `Frontmatter field "timeout" must be a duration such as 30s, 5m or 1h, and under 25 days`,
+      },
     ]);
   });
 

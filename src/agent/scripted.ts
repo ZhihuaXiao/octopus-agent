@@ -86,7 +86,8 @@ const hangs = (turn: ScriptedTurn): turn is { hangs: true } => "hangs" in turn;
 /** Rejects when the signal fires, and never otherwise: a provider that has gone quiet. */
 const untilAborted = (signal: AbortSignal | undefined, cause: () => Error) =>
   new Promise<never>((_, reject) => {
-    signal?.addEventListener("abort", () => reject(cause()), { once: true });
+    if (signal?.aborted) reject(cause());
+    else signal?.addEventListener("abort", () => reject(cause()), { once: true });
   });
 
 /**
@@ -191,7 +192,7 @@ export function createScriptedAgent(
           if (hangs(turn)) {
             return await untilAborted(signal, () => {
               aborted.push(body);
-              return new TurnFailure("The turn was aborted", retries);
+              return TurnFailure.aborted(retries);
             });
           }
 

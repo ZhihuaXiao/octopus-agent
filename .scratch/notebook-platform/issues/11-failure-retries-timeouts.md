@@ -24,8 +24,8 @@ beyond making a timed-out Cell halt the same way. What it did find was that the 
 reachable from a real provider: see the fourth comment.
 
 **Retries are pi's, and the Run records them — ADR-0018.** The spec already said pi
-auto-retries transient errors, and it does: three attempts with exponential backoff, on a
-classification of provider and transport messages maintained upstream. A runner that retried
+retries transient errors on its own, and it does: three attempts with exponential backoff, on
+a classification of provider and transport messages maintained upstream. A runner that retried
 on top would be a second loop around the first, multiplying the wait for no new class of
 error, and one that replaced pi's would be a drifting copy of pi's list. So the agent boundary
 grew a `retries` field — each attempt pi gave up on, with what it failed with — filled from
@@ -60,31 +60,48 @@ place that read `=== "error"` now reads `!== "ok"` — the scheduler's halt, the
 exit status — so nothing is built on a Cell that was stopped halfway.
 
 **Stopping a Prompt Cell is `AbortSignal` in, `session.abort()` out.** The runner makes an
-`AbortSignal.timeout` when the Cell starts — not when the Run does, so a Cell is not charged
-for waiting on the shared context or on its Dependencies — and passes it through the boundary.
-`pi.ts` calls `session.abort()`, which stops the run pi has in hand and waits for the agent to
-come to rest, after which `prompt` resolves and the signal says the Run was the one that
-stopped it. One trap: `abort` is a no-op when pi has no run active, and pi checks credentials
-before starting one, so a signal that fires in that gap is re-issued on pi's `agent_start`
-event. Another: a turn stopped while pi was sleeping before a retry leaves no message saying
-so, which is why the signal rather than the messages is what is read afterwards. The scripted
-agent gained a `{ hangs: true }` turn that comes back only when told to stop, and a log of
-which turns were.
+`AbortSignal.timeout` when the Cell's own work starts — after an Isolated Cell's context is
+made and after a continued Run's fork, not when the Cell was scheduled, so a Cell is charged
+neither for the Run's arrangements nor for waiting on the shared context — and passes it
+through the boundary. `pi.ts` calls `session.abort()`, which stops the run pi has in hand and
+waits for the agent to come to rest, after which `prompt` resolves. Two traps in pi: `abort`
+is a no-op when pi has no run active, and pi checks credentials before starting one, so a
+signal that fires in that gap is re-issued on pi's `agent_start` event; and a turn stopped
+while pi was sleeping before a retry leaves no message saying so. So whether the turn was
+stopped is a fact the agent states — `TurnFailure.aborted`, set only when `abort` found a run
+in hand — rather than something the runner reads off the signal afterwards, which would have
+thrown away a turn that finished in the last millisecond as a timeout. The scripted agent
+gained a `{ hangs: true }` turn that comes back only when told to stop, and a log of which
+turns were.
 
 **Stopping a Bash Cell kills the process group, not the shell.** `bash -c` becomes a
 single-command body outright but forks a child per command of a multi-line one, so killing bash
 alone leaves the children running — and holding the Cell's stdout open, so the Run would wait
-for them anyway. The command is spawned `detached`, which on Linux makes it a group leader,
-and stopped with `SIGKILL` to the negative of its pid. The test for this is a body of
-`echo started; sleep 5; echo finished` under a 100ms timeout, which fails in five seconds with
-`finished` in its output when the group kill is removed; that was checked. The cost is that a
-command outlives a runner that dies, since a detached child is not killed with its parent;
-acceptable for a headless Run and worth knowing about when ticket 14's server owns the
-process.
+for them anyway. A Bash Cell with a timeout is spawned `detached`, which on Linux makes it a
+group leader, and stopped with `SIGKILL` to the negative of its pid; the shell reports
+`stopped` only when the command was still running to be stopped, so a command that exited as
+the timer fired keeps its exit. The test for the group kill is a body of `echo started; sleep
+5; echo finished` under a 100ms timeout, which fails in five seconds with `finished` in its
+output when the group kill is removed; that was checked. A group of its own is out of reach of
+the terminal's Ctrl-C and outlives a runner that dies, which is why only a Bash Cell with a
+timeout is given one — every other Bash Cell runs in the Run's own group exactly as before —
+and worth knowing about when ticket 14's server owns the process.
 
-**Two things this leaves for later.** The live suite gained a test for `abort` bringing a
+**What the review changed.** The two-axis review caught three things worth recording. The
+first draft read the signal after the fact, for both kinds of Cell, and so would have recorded
+a Cell that finished as its timer fired as timed out; both paths now report whether anything
+was actually stopped. The first draft made every Bash Cell a group leader, timeout or not,
+which took every one of them out of reach of Ctrl-C for the sake of the few with a timeout.
+And a duration had no ceiling, when Node clamps a timer above 2³¹−1 ms to one millisecond and
+a Cell allowed a month would have timed out at once; a duration is now a whole number of
+milliseconds under 25 days, and the rule says so.
+
+**Three things this leaves for later.** The live suite gained a test for `abort` bringing a
 turn to rest, but no credentials were present where this was built, so it is written
-conservatively and unverified against a provider until someone with a key runs it. And pi's
+conservatively and unverified against a provider until someone with a key runs it; the same
+goes for `pi.ts` reading `stopReason` and `auto_retry_start`, which the scripted agent cannot
+reach. The command line's exit status has no test at any seam, there being no harness for
+`run-notebook.ts`; it was checked by hand against a timed-out Bash Cell and exits 1. And pi's
 retry budget is the machine's setting rather than the Notebook's, which ADR-0018 defends and
 which means a Notebook cannot ask for more patience than it is run with; if that turns out to
 matter, `settingsManager.applyOverrides` is where it would go.

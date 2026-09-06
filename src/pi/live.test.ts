@@ -152,10 +152,14 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
       // start. A Cell's timeout rests on `abort` bringing `prompt` to rest.
       const stop = new AbortController();
       const turn = agent.prompt("Count from 1 to 300, one number per line.", stop.signal);
-      setTimeout(() => stop.abort(), 1500);
+      const timer = setTimeout(() => stop.abort(), 1500);
 
-      await expect(turn).rejects.toThrow(TurnFailure);
-      await expect(turn).rejects.toThrow(/aborted/);
+      try {
+        await expect(turn).rejects.toThrow(TurnFailure);
+        await expect(turn).rejects.toMatchObject({ aborted: true });
+      } finally {
+        clearTimeout(timer);
+      }
     } finally {
       await agent.dispose();
     }

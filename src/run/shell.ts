@@ -22,6 +22,12 @@ export interface ShellResult {
    * command's own, never something said on its behalf.
    */
   readonly startupError: string | null;
+  /**
+   * Whether the command was stopped through the signal, rather than ending on
+   * its own. False for a command that had already exited when the signal fired,
+   * whose exit stands: a signal that stopped nothing is not what ended it.
+   */
+  readonly stopped: boolean;
 }
 
 /**
@@ -48,10 +54,13 @@ export function runShellCommand(
       // Nothing to read from: a Run is headless, so a command that waits on
       // input would otherwise wedge it forever rather than see end of file.
       stdio: ["ignore", "pipe", "pipe"],
-      // A process group of its own, so that stopping the command can stop the
-      // processes it started as well: `bash -c` forks a child per command of a
-      // multi-line body, and killing bash alone would leave them running.
-      detached: true,
+      // A process group of its own when there is a signal to honour, so that
+      // stopping the command can stop the processes it started as well: `bash
+      // -c` forks a child per command of a multi-line body, and killing bash
+      // alone would leave them running and holding the output open. Only then,
+      // because a group of its own is also out of reach of the terminal's
+      // Ctrl-C, and a command nothing will stop early should stay within it.
+      detached: signal !== undefined,
     });
 
     const stdout: Buffer[] = [];
@@ -62,22 +71,33 @@ export function runShellCommand(
     const text = (chunks: Buffer[]) => Buffer.concat(chunks).toString("utf8");
     const captured = () => ({ stdout: text(stdout), stderr: text(stderr) });
 
+    let stopped = false;
     const stop = () => {
+      // Only a command still running is stopped; one that has exited already
+      // has its exit, and the signal changes nothing about it.
+      if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+      stopped = true;
       // The whole group, by the negative of its leader's id. SIGKILL rather than
       // SIGTERM, because a command that has already outrun its time is not owed
       // a chance to ignore the request.
-      if (child.pid !== undefined) killGroup(child.pid);
+      killGroup(child.pid);
     };
     signal?.addEventListener("abort", stop, { once: true });
 
     child.on("error", (cause) => {
       signal?.removeEventListener("abort", stop);
-      settle({ ...captured(), exitCode: null, signal: null, startupError: cause.message });
+      settle({
+        ...captured(),
+        exitCode: null,
+        signal: null,
+        startupError: cause.message,
+        stopped,
+      });
     });
 
     child.on("close", (exitCode, killedBy) => {
       signal?.removeEventListener("abort", stop);
-      settle({ ...captured(), exitCode, signal: killedBy, startupError: null });
+      settle({ ...captured(), exitCode, signal: killedBy, startupError: null, stopped });
     });
   });
 }

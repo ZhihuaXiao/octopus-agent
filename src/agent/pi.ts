@@ -176,10 +176,18 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
       const retries: Retry[] = [];
 
       // `abort` stops the run pi has in hand and waits for the agent to come to
-      // rest, after which `prompt` below resolves. It is a no-op when no run is
-      // active — pi checks credentials before starting one — so a signal that
-      // fires in that gap is acted on again the moment the run does start.
-      const stop = () => void session.abort().catch(() => undefined);
+      // rest, after which `prompt` below resolves. Only a stop that found a run
+      // in hand counts as having stopped anything: pi checks credentials before
+      // starting the run, and settles the session after it, and a signal that
+      // fires in either gap has stopped nothing. In the gap before, it is acted
+      // on again the moment the run does start; in the gap after, the turn is
+      // over and its result stands.
+      let stopped = false;
+      const stop = () => {
+        if (session.isIdle) return;
+        stopped = true;
+        void session.abort().catch(() => undefined);
+      };
       signal?.addEventListener("abort", stop, { once: true });
 
       const unsubscribe = session.subscribe((event) => {
@@ -197,9 +205,9 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
         signal?.removeEventListener("abort", stop);
       }
 
-      // Read off the signal rather than off the messages, because a turn stopped
+      // Read off the stop rather than off the messages, because a turn stopped
       // while pi was waiting to retry leaves no message saying so.
-      if (signal?.aborted) throw new TurnFailure("The turn was aborted", retries);
+      if (stopped) throw TurnFailure.aborted(retries);
 
       const turn = session.messages.slice(before);
       const ended = failureOf(turn);

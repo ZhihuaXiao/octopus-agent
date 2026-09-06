@@ -97,6 +97,10 @@ const timedOut = (bound: Bound) => ({
  * How long a Cell may take, and the signal that fires when it has taken longer.
  * Absent when the Notebook set no timeout: the Cell then runs as long as it
  * takes, which is what every Notebook did before timeouts could be declared.
+ *
+ * Made where the Cell's own work begins — after an Isolated Cell's context is
+ * made, after a continued Run's fork — rather than when the Cell is scheduled,
+ * so the timeout is on the Cell's running and not on the Run's arrangements.
  */
 interface Bound {
   readonly timeout: number;
@@ -110,16 +114,21 @@ async function runPromptCell(
   cell: Cell,
   body: string,
   agent: Agent,
-  bound: Bound | undefined,
+  timeout: number | undefined,
 ): Promise<PromptCellRecord> {
+  const bound = boundOf(timeout);
   try {
     const result = await agent.prompt(body, bound?.signal);
     return { id: cell.id, type: "prompt", status: "ok", ...result };
   } catch (cause) {
-    // Stopped by the Run rather than failed on its own: the agent rejects when
-    // told to stop, and the signal is what says the Run was the one telling it.
-    if (bound?.signal.aborted) return { ...promptFailure(cell, cause), ...timedOut(bound) };
-    return promptFailure(cell, cause);
+    const failure = promptFailure(cell, cause);
+    // Stopped by the Run rather than failed on its own. The agent's word rather
+    // than the signal's, since a signal that fired as the turn was ending
+    // stopped nothing, and the agent is the one that knows which it was.
+    if (bound !== undefined && cause instanceof TurnFailure && cause.aborted) {
+      return { ...failure, ...timedOut(bound) };
+    }
+    return failure;
   }
 }
 
@@ -136,7 +145,7 @@ async function runIsolatedCell(
   cell: Cell,
   body: string,
   isolate: () => Promise<Agent>,
-  bound: Bound | undefined,
+  timeout: number | undefined,
 ): Promise<PromptCellRecord> {
   let agent: Agent;
   try {
@@ -152,7 +161,7 @@ async function runIsolatedCell(
     // The Anchor is dropped rather than recorded. It names an entry inside the
     // session just made, which nothing keeps: a later Run re-running this Cell
     // makes another fresh context, which is what makes the Cell reproducible.
-    const { anchor: _ended, ...recorded } = await runPromptCell(cell, body, agent, bound);
+    const { anchor: _ended, ...recorded } = await runPromptCell(cell, body, agent, timeout);
     return recorded;
   } finally {
     await agent.dispose();
@@ -171,8 +180,9 @@ async function runBashCell(
   cell: Cell,
   body: string,
   workspace: string,
-  bound: Bound | undefined,
+  timeout: number | undefined,
 ): Promise<BashCellRecord> {
+  const bound = boundOf(timeout);
   const result = await runShellCommand(body, workspace, bound?.signal);
   const error = failureOf(result);
 
@@ -189,9 +199,9 @@ async function runBashCell(
     stderr: result.stderr,
     exitCode: result.exitCode,
     ...(error !== undefined ? { error } : {}),
-    // Killed by the Run rather than by anything else, which the signal that
-    // did it says more plainly than the signal the command died of.
-    ...(bound?.signal.aborted ? timedOut(bound) : {}),
+    // Stopped by the Run rather than ended on its own, which the shell says
+    // more plainly than the signal the command died of.
+    ...(bound !== undefined && result.stopped ? timedOut(bound) : {}),
   };
 }
 
@@ -241,13 +251,10 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
    */
   const runCell = async (cell: Cell): Promise<CellRecord> => {
     const body = interpolate(bodyOf(cell), cleared.values);
-    // Started here, as the Cell starts, rather than when the Run did: a Cell's
-    // timeout is on the Cell's own running, not on however long it waited for
-    // the shared context or for the Cells it uses.
-    const bound = boundOf(cleared.timeoutOf(cell));
+    const timeout = cleared.timeoutOf(cell);
 
-    if (cell.type === "bash") return runBashCell(cell, body, workspace, bound);
-    if (cell.isolated) return runIsolatedCell(cell, body, cleared.isolate, bound);
+    if (cell.type === "bash") return runBashCell(cell, body, workspace, timeout);
+    if (cell.isolated) return runIsolatedCell(cell, body, cleared.isolate, timeout);
 
     // Once, before the first Cell that speaks into the shared context, and only
     // when this Run carries on from another — an Agent Session of its own
@@ -261,7 +268,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       await shared.resumeFrom(anchorBefore(continues, cell.id));
     }
 
-    return runPromptCell(cell, body, shared, bound);
+    return runPromptCell(cell, body, shared, timeout);
   };
 
   // Halt rather than carry on: a later cell built on a failed one would be

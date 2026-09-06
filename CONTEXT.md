@@ -112,7 +112,7 @@ _Avoid_: deadline, time limit, budget, hang detection
 One attempt at a Prompt Cell's turn that pi gave up on after a transient provider or
 transport error and made again (ADR-0018). Made by pi, recorded by the Run, never made by
 the Run itself.
-_Avoid_: re-run, redo, backoff, auto-retry
+_Avoid_: re-run, redo, reattempt
 
 **Artifact**:
 A file or image produced by a Run, written beside the Run Record and referenced by path.

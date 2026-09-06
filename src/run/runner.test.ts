@@ -1552,6 +1552,34 @@ describe("timeouts", () => {
     expect(agent.disposed).toBe(true);
   });
 
+  it("times an isolated cell from when its turn starts, not from when its context is made", async () => {
+    // Making the context takes longer than the whole allowance. Charged to the
+    // cell, the turn would be out of time before it was asked.
+    const path = await notebookFile("```prompt id=apart isolated timeout=100ms\nThink.\n```\n");
+    const ready = createScriptedAgent([{ text: "thought" }]);
+    let made = 0;
+    const slowToMake: AgentFactory = async (setup) => {
+      if ((made += 1) > 1) await new Promise((resume) => setTimeout(resume, 200));
+      return ready.create(setup);
+    };
+
+    const cell = onlyCell(await runNotebook(path, { agent: slowToMake }), "prompt");
+
+    expect(cell).toMatchObject({ status: "ok", text: "thought" });
+  });
+
+  it("keeps the exit of a command that finished just as its time ran out", async () => {
+    // The command exits at about the moment the timer fires. Whichever wins, a
+    // command that exited on its own has its exit, and only one the run had
+    // to stop is recorded as timed out.
+    const path = await notebookFile("```bash id=close timeout=100ms\nsleep 0.1\nexit 0\n```\n");
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    if (cell.status === "timeout") expect(cell.exitCode).toBeNull();
+    else expect(cell).toMatchObject({ status: "ok", exitCode: 0 });
+  });
+
   it("times a cell from when it starts, not from when the run did", async () => {
     // The first cell takes longer than the second's whole allowance. Measured
     // from the start of the run the second would be out of time before it

@@ -92,9 +92,21 @@ export class TurnFailure extends Error {
   constructor(
     message: string,
     readonly retries: readonly Retry[] = [],
+    /**
+     * Whether the turn was stopped by whoever asked for it, through the signal,
+     * rather than failing on its own. Said by the agent rather than read off the
+     * signal afterwards, because a signal that fired as the turn was finishing
+     * has stopped nothing, and the turn's result is not to be thrown away for it.
+     */
+    readonly aborted = false,
   ) {
     super(message);
     this.name = "TurnFailure";
+  }
+
+  /** The failure of a turn that was told to stop, after whatever it had retried. */
+  static aborted(retries: readonly Retry[] = []): TurnFailure {
+    return new TurnFailure("The turn was aborted", retries, true);
   }
 }
 
@@ -106,8 +118,10 @@ export interface Agent {
    * anything else when the agent itself could not take the turn.
    *
    * @param signal asks the agent to stop the turn where it is. A turn that is
-   *   stopped this way rejects rather than resolving with half a reply, since
-   *   whatever it had said so far was not what the Cell asked for.
+   *   stopped this way rejects with a `TurnFailure` marked `aborted` rather
+   *   than resolving with half a reply, since whatever it had said so far was
+   *   not what the Cell asked for. A signal that fires once the turn is over
+   *   stops nothing, and the turn resolves as it would have.
    */
   prompt(body: string, signal?: AbortSignal): Promise<CellResult>;
   /**
