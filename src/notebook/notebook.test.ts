@@ -584,6 +584,21 @@ describe("input references", () => {
   it("accepts an escaped reference, which is text rather than a reference", () => {
     expect(parseNotebook("```bash id=status\necho \\{{end}}\n```\n").ok).toBe(true);
   });
+
+  it("accepts a reference to the cell's artifact directory, which no notebook declares", () => {
+    // Every Cell has one, so `{{artifacts}}` always resolves — it is the Run's
+    // to provide rather than the Notebook's to declare.
+    const source = "```bash id=chart\ncp chart.png {{artifacts}}/\n```\n";
+
+    expect(parseNotebook(source).ok).toBe(true);
+  });
+
+  it("refuses an input named artifacts, since the name is spoken for", () => {
+    const [error] = problems("---\ninputs:\n  - name: artifacts\n---\n");
+
+    expect(error?.line).toBe(3);
+    expect(error?.message).toContain(`"artifacts" is reserved`);
+  });
 });
 
 describe("declared edges", () => {

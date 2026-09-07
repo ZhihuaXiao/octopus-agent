@@ -14,10 +14,18 @@ export interface ToolCall {
   input: unknown;
 }
 
-/** Token counts for one turn. Cost is derived later, in ticket 12. */
+/**
+ * What one turn spent: its tokens, and what the provider charged for them.
+ *
+ * The cost is the agent's figure rather than one derived here from the token
+ * counts, because the prices are the provider's and pi already keeps them —
+ * a copy of the price list here would drift, as ADR-0018 says of pi's retry
+ * classification. In US dollars, as pi reports it.
+ */
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
+  cost: number;
 }
 
 /**
@@ -99,15 +107,40 @@ export class TurnFailure extends Error {
      * has stopped nothing, and the turn's result is not to be thrown away for it.
      */
     readonly aborted = false,
+    /**
+     * What the turn had spent by the time it failed. Spent all the same, and
+     * the record has to say so: a Cell that failed after a long think is not a
+     * Cell that cost nothing. Zero when the agent never got as far as a request.
+     */
+    readonly usage: Usage = noUsage,
   ) {
     super(message);
     this.name = "TurnFailure";
   }
 
-  /** The failure of a turn that was told to stop, after whatever it had retried. */
-  static aborted(retries: readonly Retry[] = []): TurnFailure {
-    return new TurnFailure("The turn was aborted", retries, true);
+  /** The failure of a turn that was told to stop, after whatever it had retried and spent. */
+  static aborted(retries: readonly Retry[] = [], usage: Usage = noUsage): TurnFailure {
+    return new TurnFailure("The turn was aborted", retries, true, usage);
   }
+}
+
+/** What a Run asks of one turn, beyond the body it sends. */
+export interface TurnOptions {
+  /**
+   * The model to take this turn on, named as the Notebook names one — the
+   * provider and the model, `anthropic/claude-haiku-4-5`. Absent leaves the
+   * agent on its own default. Per turn rather than per agent, because a Cell
+   * may override the Notebook's model and the Cell after it goes back.
+   */
+  readonly model?: string;
+  /**
+   * Asks the agent to stop the turn where it is. A turn that is stopped this
+   * way rejects with a `TurnFailure` marked `aborted` rather than resolving
+   * with half a reply, since whatever it had said so far was not what the Cell
+   * asked for. A signal that fires once the turn is over stops nothing, and the
+   * turn resolves as it would have.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface Agent {
@@ -115,15 +148,10 @@ export interface Agent {
    * Runs one Prompt Cell body and resolves with everything the turn produced.
    *
    * Rejects with a `TurnFailure` when the turn ended in an error, and with
-   * anything else when the agent itself could not take the turn.
-   *
-   * @param signal asks the agent to stop the turn where it is. A turn that is
-   *   stopped this way rejects with a `TurnFailure` marked `aborted` rather
-   *   than resolving with half a reply, since whatever it had said so far was
-   *   not what the Cell asked for. A signal that fires once the turn is over
-   *   stops nothing, and the turn resolves as it would have.
+   * anything else when the agent itself could not take the turn — a model it
+   * cannot find or has no key for among them.
    */
-  prompt(body: string, signal?: AbortSignal): Promise<CellResult>;
+  prompt(body: string, options?: TurnOptions): Promise<CellResult>;
   /**
    * Moves the Agent Session back to an Anchor, so the next turn continues from
    * there rather than from wherever the last one left it. `undefined` moves it
@@ -141,7 +169,7 @@ export interface Agent {
   dispose(): Promise<void>;
 }
 
-export const noUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+export const noUsage: Usage = { inputTokens: 0, outputTokens: 0, cost: 0 };
 
 /** What a Cell produced when it never got as far as producing anything. */
 export const emptyResult: CellResult = {

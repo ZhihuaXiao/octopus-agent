@@ -94,7 +94,7 @@ _Avoid_: permission, approval, sandbox, allowlist
 
 **Run Record**:
 The persisted result of a Run, stored outside the Notebook: per-Cell status, timings, the
-model that actually ran, token usage and cost, and Anchors.
+model that actually ran, token usage and cost, Anchors, and Artifacts by path.
 _Avoid_: output, log, result, history, report
 
 **Stale**:
@@ -115,8 +115,9 @@ the Run itself.
 _Avoid_: re-run, redo, reattempt
 
 **Artifact**:
-A file or image produced by a Run, written beside the Run Record and referenced by path.
-Never the Notebook itself, and never embedded in it.
+A file or image a Cell left in the directory the Run gave it for the purpose, written
+`{{artifacts}}` in the Cell's body (ADR-0019). Kept beside the Run Record and referenced by
+path. Never the Notebook itself, and never embedded in it.
 _Avoid_: output, attachment, blob, asset
 
 **Anchor**:

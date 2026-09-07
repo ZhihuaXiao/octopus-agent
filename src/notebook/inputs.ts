@@ -56,6 +56,14 @@ export type SettledDefault =
   | { readonly ok: true; readonly type: InputType; readonly value: InputValue }
   | { readonly ok: false; readonly problem: string };
 
+/**
+ * The one reference no Notebook declares: `{{artifacts}}` is the directory the
+ * Run gives the Cell for the files it produces, so it always resolves and is
+ * the Run's to supply rather than the Notebook's to declare (ADR-0019). An
+ * Input may not take the name, or a body could not say which it meant.
+ */
+export const ARTIFACTS_REFERENCE = "artifacts";
+
 /** A reference, together with the backslash that would escape it. */
 const REFERENCE = new RegExp(String.raw`(\\?)\{\{[ \t]*(${NAME_PATTERN})[ \t]*\}\}`, "g");
 

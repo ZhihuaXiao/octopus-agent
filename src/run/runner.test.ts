@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -9,7 +9,7 @@ import type { AgentFactory } from "../agent/agent.js";
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import type { CellRecord, RunRecord } from "./record.js";
 import { runNotebook } from "./runner.js";
-import { recordPath } from "./store.js";
+import { recordPath, runDirectory } from "./store.js";
 
 async function notebookFile(contents: string): Promise<string> {
   // Resolved, because a bash cell reporting its own working directory sees the
@@ -73,7 +73,7 @@ describe("runNotebook", () => {
     const agent = createScriptedAgent([
       {
         text: "Hello",
-        usage: { inputTokens: 12, outputTokens: 3 },
+        usage: { inputTokens: 12, outputTokens: 3, cost: 0.0001 },
         model: "anthropic/claude-sonnet-4",
         toolCalls: [{ name: "bash", input: { command: "ls" } }],
       },
@@ -81,7 +81,7 @@ describe("runNotebook", () => {
 
     const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
 
-    expect(cell.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
+    expect(cell.usage).toEqual({ inputTokens: 12, outputTokens: 3, cost: 0.0001 });
     expect(cell.model).toBe("anthropic/claude-sonnet-4");
     expect(cell.toolCalls).toEqual([{ name: "bash", input: { command: "ls" } }]);
   });
@@ -179,7 +179,10 @@ describe("bash cells", () => {
         stdout: "to stdout\n",
         stderr: "to stderr\n",
         exitCode: 0,
-        usage: { inputTokens: 0, outputTokens: 0 },
+        usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
+        artifacts: [],
+        startedAt: expect.any(String),
+        endedAt: expect.any(String),
       },
     ]);
   });
@@ -191,7 +194,7 @@ describe("bash cells", () => {
     const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "bash");
 
     expect(agent.prompts).toEqual([]);
-    expect(cell.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(cell.usage).toEqual({ inputTokens: 0, outputTokens: 0, cost: 0 });
   });
 
   it("treats a non-zero exit as a failure, halting before the next cell", async () => {
@@ -1155,13 +1158,13 @@ describe("isolated cells", () => {
   it("records what an isolated cell produced like any other cell", async () => {
     const path = await notebookFile(isolatedCell("apart"));
     const agent = createScriptedAgent([
-      { text: "done apart", usage: { inputTokens: 7, outputTokens: 2 } },
+      { text: "done apart", usage: { inputTokens: 7, outputTokens: 2, cost: 0.00005 } },
     ]);
 
     const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
 
     expect(cell.text).toBe("done apart");
-    expect(cell.usage).toEqual({ inputTokens: 7, outputTokens: 2 });
+    expect(cell.usage).toEqual({ inputTokens: 7, outputTokens: 2, cost: 0.00005 });
   });
 
   it("fails only the cell whose fresh context could not be made", async () => {
@@ -1217,8 +1220,12 @@ describe("an isolated cell run again", () => {
     // As far as a scripted agent can carry it: what the two runs recorded for
     // the cell is the same, because what the cell was given is the same. What
     // a real model does with the same input twice is the part no test reaches,
-    // and is why reproducible here means the context and not the text.
-    expect(onlyCell(record, "prompt")).toEqual(before.cells.find((cell) => cell.id === "apart"));
+    // and is why reproducible here means the context and not the text. When
+    // each ran is the one thing that is honestly different.
+    const untimed = ({ startedAt: _s, endedAt: _e, ...rest }: CellRecord) => rest;
+    const first = before.cells.find((cell) => cell.id === "apart");
+    if (first === undefined) throw new Error("the first run never recorded the cell");
+    expect(untimed(onlyCell(record, "prompt"))).toEqual(untimed(first));
   });
 
   it("forks no session, having nothing to fork at", async () => {
@@ -1592,6 +1599,319 @@ describe("timeouts", () => {
     const record = await runNotebook(path, { agent: unusedAgent().create });
 
     expect(record.cells.map((cell) => cell.status)).toEqual(["ok", "ok"]);
+  });
+});
+
+describe("what the run record says of each cell", () => {
+  it("records when each cell started and ended, within the run's own span", async () => {
+    const path = await notebookOf(
+      "```bash id=first\nsleep 0.05\n```\n",
+      "```bash id=second\nsleep 0.05\n```\n",
+    );
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+    const [first, second] = record.cells;
+    if (first === undefined || second === undefined) throw new Error("expected two cells");
+
+    // Each cell's own span, in order: the first ended before the second began,
+    // since neither is isolated, and both fit inside the run's.
+    expect(first.startedAt <= first.endedAt).toBe(true);
+    expect(first.endedAt <= second.startedAt).toBe(true);
+    expect(second.startedAt <= second.endedAt).toBe(true);
+    expect(record.startedAt <= first.startedAt && second.endedAt <= record.endedAt).toBe(true);
+    // Not the same instant, each cell having slept.
+    expect(Date.parse(first.endedAt) - Date.parse(first.startedAt)).toBeGreaterThanOrEqual(40);
+  });
+
+  it("shows two isolated cells overlapping, which is what running at once looks like", async () => {
+    const path = await notebookOf(
+      "```bash id=a isolated\nsleep 0.1\n```\n",
+      "```bash id=b isolated\nsleep 0.1\n```\n",
+    );
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+    const [a, b] = record.cells;
+    if (a === undefined || b === undefined) throw new Error("expected two cells");
+
+    // Each began before the other ended. ADR-0016 left the overlap invisible
+    // until the record had per-cell timings; now it is what a reader sees.
+    expect(a.startedAt < b.endedAt && b.startedAt < a.endedAt).toBe(true);
+  });
+
+  it("records what a prompt cell's turn cost, beside the tokens it spent", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([
+      { text: "Hello", usage: { inputTokens: 1200, outputTokens: 300, cost: 0.0081 } },
+    ]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    // The agent's figure rather than one worked out here: the provider's prices
+    // are pi's to know, and pi already reports what each message cost.
+    expect(cell.usage).toEqual({ inputTokens: 1200, outputTokens: 300, cost: 0.0081 });
+  });
+
+  it("records a bash cell at no cost, having run no model", async () => {
+    const path = await notebookFile(oneBashCell("echo cheap"));
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell.usage).toEqual({ inputTokens: 0, outputTokens: 0, cost: 0 });
+  });
+
+  it("records what a turn had spent when it failed, since that was spent all the same", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([
+      { error: "provider exploded", usage: { inputTokens: 900, outputTokens: 40, cost: 0.003 } },
+    ]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    // ADR-0017 left a stopped turn's tokens for this accounting: a cell that
+    // failed after a long think cost what it cost, and its record says so.
+    expect(cell.status).toBe("error");
+    expect(cell.usage).toEqual({ inputTokens: 900, outputTokens: 40, cost: 0.003 });
+  });
+
+  it("records what a turn had spent when the run stopped it", async () => {
+    const path = await notebookFile("```prompt id=slow timeout=50ms\nThink.\n```\n");
+    const agent = createScriptedAgent([
+      { hangs: true, usage: { inputTokens: 500, outputTokens: 0, cost: 0.001 } },
+    ]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(cell.status).toBe("timeout");
+    expect(cell.usage).toEqual({ inputTokens: 500, outputTokens: 0, cost: 0.001 });
+  });
+
+  it("times a failed cell too, since what it spent is still spent", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ error: "provider exploded" }]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(cell.status).toBe("error");
+    expect(cell.startedAt <= cell.endedAt).toBe(true);
+  });
+});
+
+/** One prompt cell naming a model, under frontmatter naming one or not. */
+const modelled = (frontmatter: string, attributes = "") =>
+  `${frontmatter}\`\`\`prompt id=step${attributes}\nDo the step.\n\`\`\`\n`;
+
+describe("a cell's model", () => {
+  it("asks the agent for the model the cell names, and records it", async () => {
+    const path = await notebookFile(modelled("", " model=anthropic/claude-haiku-4-5"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(agent.turns[0]?.model).toBe("anthropic/claude-haiku-4-5");
+    expect(cell.model).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  it("records the model that actually served the turn, not the one asked for", async () => {
+    const path = await notebookFile(modelled("", " model=anthropic/claude-haiku-4-5"));
+    // Providers rotate versions under a stable name, which is the whole reason
+    // the record carries the model at all.
+    const agent = createScriptedAgent([
+      { text: "done", model: "anthropic/claude-haiku-4-5-20251001" },
+    ]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    expect(cell.model).toBe("anthropic/claude-haiku-4-5-20251001");
+  });
+
+  it("falls back to the notebook's model for a cell that names none", async () => {
+    const path = await notebookFile(modelled("---\nmodel: openai/gpt-5\n---\n\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.turns[0]?.model).toBe("openai/gpt-5");
+  });
+
+  it("lets a cell's model override the notebook's, for that cell alone", async () => {
+    const path = await notebookFile(
+      `---\nmodel: openai/gpt-5\n---\n\n${promptCell("first")}\n${promptFence("cheap", " model=openai/gpt-5-mini")}\n${promptCell("last")}`,
+    );
+    const agent = readyAgent();
+
+    await runNotebook(path, { agent: agent.create });
+
+    // The cell after the override goes back to the notebook's model: an
+    // override is the cell's, not a switch left thrown for the rest of the run.
+    expect(agent.turns.map((turn) => turn.model)).toEqual([
+      "openai/gpt-5",
+      "openai/gpt-5-mini",
+      "openai/gpt-5",
+    ]);
+  });
+
+  it("asks for no model in particular when neither the cell nor the notebook names one", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello" }]);
+
+    const cell = onlyCell(await runNotebook(path, { agent: agent.create }), "prompt");
+
+    // Pi's own default, whatever the machine is set up with, as every notebook
+    // before models could be named.
+    expect(agent.turns[0]?.model).toBeUndefined();
+    expect(cell.model).toBe("scripted");
+  });
+});
+
+/** Where a run keeps the artifacts of one of its cells. */
+const artifactsDirectory = (path: string, record: RunRecord, cellId: string) =>
+  join(runDirectory(path, record.id), "artifacts", cellId);
+
+describe("artifacts", () => {
+  it("gives a bash cell a directory of its own to write to, and records what it left there", async () => {
+    const path = await notebookFile(oneBashCell("echo hello > {{artifacts}}/greeting.txt"));
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+    const cell = onlyCell(record, "bash");
+
+    // By path, relative to the run's own directory, so the record and the files
+    // it names travel together; and beside the record rather than in the
+    // notebook, which holds no results (ADR-0005).
+    expect(cell.status).toBe("ok");
+    expect(cell.artifacts).toEqual(["artifacts/step/greeting.txt"]);
+    expect(
+      await readFile(join(runDirectory(path, record.id), "artifacts/step/greeting.txt"), "utf8"),
+    ).toBe("hello\n");
+  });
+
+  it("hands a cell an absolute path, whatever path the notebook was named by", async () => {
+    // Deeper than the directory the tests run from, so that a path relative to
+    // that directory, taken from the workspace instead, cannot happen to land.
+    const deep = join(dirname(await notebookFile("")), "a/b/c/d/e/f");
+    await mkdir(deep, { recursive: true });
+    const absolute = join(deep, "notebook.md");
+    await writeFile(absolute, oneBashCell("echo hello > {{artifacts}}/greeting.txt"), "utf8");
+    const path = relative(process.cwd(), absolute);
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+    const cell = onlyCell(record, "bash");
+
+    // A bash cell runs in the workspace, not where the run was launched from, so
+    // a path relative to the launch directory would point it somewhere else.
+    expect(path.startsWith("/")).toBe(false);
+    expect(cell.status).toBe("ok");
+    expect(cell.artifacts).toEqual(["artifacts/step/greeting.txt"]);
+    expect(
+      await readFile(
+        join(runDirectory(absolute, record.id), "artifacts/step/greeting.txt"),
+        "utf8",
+      ),
+    ).toBe("hello\n");
+  });
+
+  it("tells the agent where a prompt cell's artifacts go, with the directory already there", async () => {
+    const path = await notebookFile(
+      "```prompt id=chart\nPlot it and save the chart to {{artifacts}}/chart.png.\n```\n",
+    );
+    const agent = createScriptedAgent([{ text: "saved" }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+    const directory = artifactsDirectory(path, record, "chart");
+
+    // Made before the turn, so the agent can write straight into it rather than
+    // having to be told to make it first.
+    expect(agent.prompts).toEqual([`Plot it and save the chart to ${directory}/chart.png.`]);
+    expect((await stat(directory)).isDirectory()).toBe(true);
+  });
+
+  it("lists everything a cell left, however deep, in a fixed order", async () => {
+    const path = await notebookFile(
+      oneBashCell(
+        "mkdir -p {{artifacts}}/figures\ntouch {{artifacts}}/figures/b.png {{artifacts}}/figures/a.png {{artifacts}}/notes.md",
+      ),
+    );
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell.artifacts).toEqual([
+      "artifacts/step/figures/a.png",
+      "artifacts/step/figures/b.png",
+      "artifacts/step/notes.md",
+    ]);
+  });
+
+  it("records no artifacts for a cell that never referred to its directory, and makes none", async () => {
+    const path = await notebookFile(oneBashCell("echo plain"));
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(onlyCell(record, "bash").artifacts).toEqual([]);
+    await expect(stat(artifactsDirectory(path, record, "step"))).rejects.toThrow();
+  });
+
+  it("keeps each cell's artifacts apart from the others', under the cell's own id", async () => {
+    const path = await notebookOf(
+      "```bash id=one\necho 1 > {{artifacts}}/out.txt\n```\n",
+      "```bash id=two\necho 2 > {{artifacts}}/out.txt\n```\n",
+    );
+
+    const record = await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(record.cells.map((cell) => cell.artifacts)).toEqual([
+      ["artifacts/one/out.txt"],
+      ["artifacts/two/out.txt"],
+    ]);
+  });
+
+  it("keeps the artifacts of two runs apart, as it keeps their records", async () => {
+    const path = await notebookFile(oneBashCell("echo $RANDOM$RANDOM > {{artifacts}}/out.txt"));
+
+    const first = await runNotebook(path, { agent: unusedAgent().create });
+    const second = await runNotebook(path, { agent: unusedAgent().create });
+
+    const written = (record: RunRecord) =>
+      readFile(join(artifactsDirectory(path, record, "step"), "out.txt"), "utf8");
+    expect(await written(first)).not.toBe(await written(second));
+  });
+
+  it("keeps what a cell left before it failed, as the account of how far it got", async () => {
+    const path = await notebookFile(oneBashCell("echo partial > {{artifacts}}/out.txt\nexit 1"));
+
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+
+    expect(cell.status).toBe("error");
+    expect(cell.artifacts).toEqual(["artifacts/step/out.txt"]);
+  });
+
+  it("runs the example notebook the artifacts and the model override are documented against", async () => {
+    const example = fileURLToPath(new URL("../../examples/report.md", import.meta.url));
+    const path = await notebookFile(await readFile(example, "utf8"));
+    const agent = createScriptedAgent([{ text: "Wrote the summary." }, { text: "A headline" }]);
+
+    const record = await runNotebook(path, { agent: agent.create, inputs: { target: "." } });
+
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([
+      ["count", "ok"],
+      ["summary", "ok"],
+      ["headline", "ok"],
+    ]);
+    expect(record.cells[0]?.artifacts).toEqual(["artifacts/count/count.txt"]);
+    // The summary runs on the notebook's model, which here is pi's own default;
+    // only the headline names one.
+    expect(agent.turns.map((turn) => turn.model)).toEqual([
+      undefined,
+      "anthropic/claude-haiku-4-5",
+    ]);
+    expect(agent.prompts[0]).toContain(artifactsDirectory(path, record, "summary"));
+  });
+
+  it("writes nothing into the notebook, whatever the cells produced", async () => {
+    const source = oneBashCell("echo hello > {{artifacts}}/greeting.txt\necho to stdout");
+    const path = await notebookFile(source);
+
+    await runNotebook(path, { agent: unusedAgent().create });
+
+    expect(await readFile(path, "utf8")).toBe(source);
   });
 });
 

@@ -2,7 +2,9 @@
  * The persisted result of a Run, kept outside the Notebook so the document
  * stays a program rather than a log (ADR-0005).
  *
- * Minimal by design: ticket 12 adds per-cell timings, cost, and artifacts.
+ * Written to disk and read back by later versions of the program, so every
+ * field here is a commitment: what a Cell was, what it produced, what it cost,
+ * when it ran, and where whatever it left can be found.
  */
 
 import type { CellResult, Usage } from "../agent/agent.js";
@@ -15,12 +17,25 @@ import type { CellResult, Usage } from "../agent/agent.js";
  */
 export type CellStatus = "ok" | "error" | "timeout";
 
+/** When something began and ended, as ISO-8601 instants. */
+export interface Timing {
+  startedAt: string;
+  endedAt: string;
+}
+
 /** What every Cell records, whichever kind of Cell it is. */
-interface CellRecordBase {
+interface CellRecordBase extends Timing {
   id: string;
   status: CellStatus;
-  /** Tokens the Cell spent. Always zero for a Bash Cell, which runs no model. */
+  /** Tokens the Cell spent and what they cost. Always zero for a Bash Cell, which runs no model. */
   usage: Usage;
+  /**
+   * The files the Cell left in its artifact directory, as paths relative to
+   * the Run's directory. Referenced rather than embedded (ADR-0005): the record
+   * says where each is, and the bytes stay beside it on disk. Empty rather than
+   * absent when there are none, so a reader can tell none from not recorded.
+   */
+  artifacts: string[];
   /** Why the cell did not succeed, present only when the status is not `ok`. */
   error?: string;
 }

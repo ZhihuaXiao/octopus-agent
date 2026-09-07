@@ -9,6 +9,7 @@ import {
   ProjectTrustStore,
   SessionManager,
   createAgentSession,
+  getAgentDir,
   hasTrustRequiringProjectResources,
 } from "@earendil-works/pi-coding-agent";
 
@@ -142,6 +143,55 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
     }
   });
 
+  it("takes a turn on the model a cell names, then goes back, and saves nothing as the default", async () => {
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), "octo-model-")));
+    const settingsFile = join(getAgentDir(), "settings.json");
+    const settingsBefore = await readFile(settingsFile, "utf8").catch(() => undefined);
+    const agent = await createPiAgent({ workspace, tools: [] });
+
+    try {
+      const own = await agent.prompt("Reply with exactly the word: pong");
+      // Any available model other than the one pi opened on. With only one to
+      // choose from there is no switch to observe, and the test says so.
+      const other = availableModels.find(
+        // A prefix rather than equality, since what served may be a dated
+        // version of the name pi opened on.
+        (model) => !own.model.startsWith(`${model.provider}/${model.id}`),
+      );
+      if (other === undefined) return;
+      const named = `${other.provider}/${other.id}`;
+
+      const overridden = await agent.prompt("Reply with exactly the word: pong", { model: named });
+      const back = await agent.prompt("Reply with exactly the word: pong");
+
+      // The record names what served the turn with its provider, as the
+      // notebook names what it asked for, and an override is one turn's alone.
+      expect(overridden.model.startsWith(`${other.provider}/`)).toBe(true);
+      expect(overridden.model).not.toBe(own.model);
+      expect(back.model).toBe(own.model);
+      // Pi saves a model switch as the user's default; a run must not.
+      expect(await readFile(settingsFile, "utf8").catch(() => undefined)).toBe(settingsBefore);
+
+      // One turn's alone across runs too. Pi reopens a session on the model it
+      // last recorded, so a run continuing from the overridden turn's anchor
+      // would start on the override unless the switch had been undone behind it.
+      const later = await createPiAgent({
+        workspace,
+        tools: [],
+        agentSession: agent.agentSession!,
+      });
+      try {
+        await later.resumeFrom(overridden.anchor);
+        const continued = await later.prompt("Reply with exactly the word: pong");
+        expect(continued.model).toBe(own.model);
+      } finally {
+        await later.dispose();
+      }
+    } finally {
+      await agent.dispose();
+    }
+  });
+
   it("reports a turn it was told to stop as a failure, not as a reply", async () => {
     const workspace = await realpath(await mkdtemp(join(tmpdir(), "octo-abort-")));
     const agent = await createPiAgent({ workspace, tools: [] });
@@ -151,7 +201,9 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
       // exercised is pi stopping a stream and not the signal beating it to the
       // start. A Cell's timeout rests on `abort` bringing `prompt` to rest.
       const stop = new AbortController();
-      const turn = agent.prompt("Count from 1 to 300, one number per line.", stop.signal);
+      const turn = agent.prompt("Count from 1 to 300, one number per line.", {
+        signal: stop.signal,
+      });
       const timer = setTimeout(() => stop.abort(), 1500);
 
       try {

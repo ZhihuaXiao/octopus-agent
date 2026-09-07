@@ -21,7 +21,7 @@ import { type Diagnostic, lineOffset } from "./diagnostic.js";
 import { DURATION_RULE, parseDuration } from "./duration.js";
 import { type Metadata, readMetadata } from "./frontmatter.js";
 import { type PlacedCell, checkGraph } from "./graph.js";
-import { referencesIn } from "./inputs.js";
+import { ARTIFACTS_REFERENCE, referencesIn } from "./inputs.js";
 import { NAME_RULE, isName } from "./name.js";
 
 export type { Diagnostic } from "./diagnostic.js";
@@ -30,7 +30,7 @@ export type { Input, InputType, InputValue, InputValues } from "./inputs.js";
 export { formatDiagnostics } from "./diagnostic.js";
 export { formatDuration } from "./duration.js";
 export { runOrder, staleAfter } from "./graph.js";
-export { interpolate, resolveInputs } from "./inputs.js";
+export { ARTIFACTS_REFERENCE, interpolate, referencesIn, resolveInputs } from "./inputs.js";
 
 export type CellType = "prompt" | "bash";
 
@@ -139,6 +139,16 @@ export function workspaceOf(notebook: Notebook, notebookPath: string): string {
  */
 export function timeoutOf(notebook: Notebook, cell: Cell): number | undefined {
   return cell.timeout ?? notebook.metadata.timeout;
+}
+
+/**
+ * The model a Cell asks for: its own `model`, else the Notebook's, else nothing
+ * — the agent's own default then, which is what every Cell ran on before a
+ * model could be named. The same shape as `timeoutOf`, because the Cell's
+ * attribute overrides the Notebook's field in the same way.
+ */
+export function modelOf(notebook: Notebook, cell: Cell): string | undefined {
+  return cell.model ?? notebook.metadata.model;
 }
 
 /**
@@ -409,7 +419,12 @@ export function parseNotebook(source: string): ParseResult {
   let prose: string[] = [];
   const ids = new Set<string>();
   const placed: PlacedCell[] = [];
-  const inputs = new Set((metadata.inputs ?? []).map((input) => input.name));
+  // What a body may refer to: the declared Inputs, and the one name every Cell
+  // has without declaring it — its artifact directory, which the Run supplies.
+  const inputs = new Set([
+    ARTIFACTS_REFERENCE,
+    ...(metadata.inputs ?? []).map((input) => input.name),
+  ]);
 
   const flushProse = () => {
     if (prose.length === 0) return;

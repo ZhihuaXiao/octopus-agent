@@ -11,7 +11,14 @@ import { isMap, isScalar, isSeq, parseDocument, type ParsedNode } from "yaml";
 
 import { type Diagnostic, lineOffset } from "./diagnostic.js";
 import { DURATION_RULE, parseDuration } from "./duration.js";
-import { INPUT_TYPES, type Input, type InputType, isInputType, settleDefault } from "./inputs.js";
+import {
+  ARTIFACTS_REFERENCE,
+  INPUT_TYPES,
+  type Input,
+  type InputType,
+  isInputType,
+  settleDefault,
+} from "./inputs.js";
 import { NAME_RULE, isName } from "./name.js";
 
 export interface Metadata {
@@ -119,6 +126,13 @@ function readInput(
   // it is reported here rather than left to look like an unknown reference.
   if (!isName(name)) {
     errors.push({ line: nameLine, message: `Input name "${name}" ${NAME_RULE}` });
+    return undefined;
+  }
+  if (name === ARTIFACTS_REFERENCE) {
+    errors.push({
+      line: nameLine,
+      message: `Input name "${name}" is reserved: {{${name}}} is the cell's artifact directory`,
+    });
     return undefined;
   }
 

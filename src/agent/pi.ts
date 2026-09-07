@@ -1,4 +1,5 @@
 import {
+  type AgentSession,
   DefaultPackageManager,
   DefaultResourceLoader,
   ProjectTrustStore,
@@ -8,6 +9,7 @@ import {
   createAgentSession,
   getAgentDir,
   hasTrustRequiringProjectResources,
+  resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 
 import { createAssistantTextStream } from "../pi/streaming.js";
@@ -20,6 +22,7 @@ import {
   type Retry,
   type ToolCall,
   TurnFailure,
+  type TurnOptions,
   type Usage,
 } from "./agent.js";
 import type { Environment } from "./environment.js";
@@ -28,6 +31,40 @@ export interface PiAgentOptions extends AgentSetup {
   /** Called with each fragment of text as it arrives, for streaming output. */
   onText?: (text: string) => void;
 }
+
+// Derived from pi's own signature rather than imported: the model type lives in
+// @earendil-works/pi-ai, which is pi's dependency and not ours to pin.
+type Model = Parameters<AgentSession["setModel"]>[0];
+
+/**
+ * Pi's settings as the machine has them, read once and never written back.
+ *
+ * Pi saves a model switch as the user's new default — `setModel` writes the
+ * provider and model to settings.json, and the thinking level with them. That
+ * is right for someone at pi's own prompt choosing what to work with, and wrong
+ * for a Cell asking for a cheaper model than the Cell before it: a Notebook
+ * should leave the machine as it found it, the same way ADR-0010 has it leave
+ * the declared environment. So pi is given a copy to write to and the copy is
+ * dropped with the Run. It is still pi that reads the files, so what is copied
+ * is exactly what pi would otherwise have run on.
+ */
+function settingsForRun(workspace: string, agentDir: string): SettingsManager {
+  const onDisk = SettingsManager.create(workspace, agentDir);
+  const held = new Map<string, string>([
+    ["global", JSON.stringify(onDisk.getGlobalSettings())],
+    ["project", JSON.stringify(onDisk.getProjectSettings())],
+  ]);
+  return SettingsManager.fromStorage({
+    withLock(scope, fn) {
+      const next = fn(held.get(scope));
+      if (next !== undefined) held.set(scope, next);
+    },
+  });
+}
+
+/** Whether two models are the same one, by the pair that names a model. */
+const sameModel = (a: Model | undefined, b: Model | undefined) =>
+  a !== undefined && b !== undefined && a.provider === b.provider && a.id === b.id;
 
 /**
  * Reads what one turn cost and did.
@@ -41,14 +78,17 @@ export interface PiAgentOptions extends AgentSetup {
 function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text" | "retries"> {
   const assistantMessages = turn.filter(isRecord).filter((message) => message.role === "assistant");
 
-  const usage: Usage = { inputTokens: 0, outputTokens: 0 };
+  const usage: Usage = { inputTokens: 0, outputTokens: 0, cost: 0 };
   const toolCalls: ToolCall[] = [];
 
   for (const message of assistantMessages) {
     if (isRecord(message.usage)) {
-      const { input, output } = message.usage;
+      const { input, output, cost } = message.usage;
       if (typeof input === "number") usage.inputTokens += input;
       if (typeof output === "number") usage.outputTokens += output;
+      // Pi's total for the message, which is its input and output priced at the
+      // model's rates, cache reads and writes included.
+      if (isRecord(cost) && typeof cost.total === "number") usage.cost += cost.total;
     }
 
     if (!Array.isArray(message.content)) continue;
@@ -62,11 +102,15 @@ function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text" | "ret
   }
 
   // `responseModel` is what the provider actually served, which is the point:
-  // providers rotate versions under a stable name.
+  // providers rotate versions under a stable name. Named with its provider, as a
+  // Notebook names the model it asks for, so the two read side by side.
   const last = assistantMessages.at(-1);
   const responseModel = last?.responseModel ?? last?.model;
+  const served = typeof responseModel === "string" ? responseModel : "";
+  const provider = typeof last?.provider === "string" ? last.provider : "";
+  const model = served === "" ? "" : provider === "" ? served : `${provider}/${served}`;
 
-  return { toolCalls, usage, model: typeof responseModel === "string" ? responseModel : "" };
+  return { toolCalls, usage, model };
 }
 
 /**
@@ -113,7 +157,7 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
   const { workspace } = options;
   const agentDir = getAgentDir();
   const trustStore = new ProjectTrustStore(agentDir);
-  const settingsManager = SettingsManager.create(workspace, agentDir);
+  const settingsManager = settingsForRun(workspace, agentDir);
 
   const decision = decideTrust({
     workspace,
@@ -143,6 +187,50 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
       : {}),
   });
 
+  /**
+   * The model the session opened on — pi's own default, or the one the session
+   * being reopened was left on — which is what a turn that names none runs on.
+   * Captured now, because a turn that names one moves the session off it.
+   *
+   * Pi reopens a session on the model it last recorded, so a reopened session is
+   * on its own model only because every override before it was undone before
+   * the turn after it began. That is what `restore` below is for.
+   */
+  const own = session.model;
+
+  /** The model a Notebook names, `provider/model`, as pi's own `--model` reads it. */
+  const resolveModel = (named: string): Model => {
+    const { model, error } = resolveCliModel({
+      cliModel: named,
+      modelRuntime: session.modelRuntime,
+    });
+    if (model === undefined) throw new Error(error ?? `No model named "${named}" is available.`);
+    return model;
+  };
+
+  /**
+   * Puts the session on the model a turn asks for. Throws when the machine has
+   * no key for the model's provider, which is the Cell's failure to record: the
+   * Notebook asked for what the machine has not.
+   */
+  const takeOn = async (named: string): Promise<void> => {
+    const wanted = resolveModel(named);
+    if (!sameModel(wanted, session.model)) await session.setModel(wanted);
+  };
+
+  /**
+   * Puts the session back on its own model once an override's turn is over, so
+   * the override is the Cell's alone — for the next Cell, and for a later Run
+   * reopening this session, which pi opens on whatever model the session last
+   * recorded. Nothing to go back to when pi opened with no model at all: the
+   * session then stays where the override left it, which is at least somewhere
+   * the next turn can be taken.
+   */
+  const restore = async (): Promise<void> => {
+    if (own === undefined || sameModel(own, session.model)) return;
+    await session.setModel(own);
+  };
+
   const packageManager = new DefaultPackageManager({ cwd: workspace, agentDir, settingsManager });
 
   const environment: Environment = {
@@ -168,7 +256,12 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
       return session.sessionFile;
     },
 
-    async prompt(body: string, signal?: AbortSignal): Promise<CellResult> {
+    async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
+      const { signal, model } = turnOptions;
+      // Before anything is subscribed to or counted: a model that cannot be had
+      // is the agent declining the turn, not a turn that was taken and failed.
+      if (model !== undefined) await takeOn(model);
+
       const stream = createAssistantTextStream();
       // Pi's own retries, as pi announces each one. Pi decides what is transient
       // and how long to wait; what is kept here is only that it happened, and
@@ -203,15 +296,23 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
       } finally {
         unsubscribe();
         signal?.removeEventListener("abort", stop);
+        // However the turn went: the session is off its model only for as long
+        // as the override's turn lasts. Recorded in the session after the turn's
+        // messages, so that the Anchor read below is past it and a Run forking
+        // there reopens on the session's own model rather than the override.
+        if (model !== undefined) await restore();
       }
 
-      // Read off the stop rather than off the messages, because a turn stopped
-      // while pi was waiting to retry leaves no message saying so.
-      if (stopped) throw TurnFailure.aborted(retries);
-
       const turn = session.messages.slice(before);
+      const summary = summariseTurn(turn);
+
+      // Read off the stop rather than off the messages, because a turn stopped
+      // while pi was waiting to retry leaves no message saying so. What the turn
+      // had spent by then is on the messages it did leave, and is spent.
+      if (stopped) throw TurnFailure.aborted(retries, summary.usage);
+
       const ended = failureOf(turn);
-      if (ended !== undefined) throw new TurnFailure(ended, retries);
+      if (ended !== undefined) throw new TurnFailure(ended, retries, false, summary.usage);
 
       // The entry the turn left the session's leaf on, which is the Anchor: the
       // point a later Run forks at to put a Cell back in this context.
@@ -219,7 +320,7 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
 
       return {
         text: stream.text(),
-        ...summariseTurn(turn),
+        ...summary,
         retries,
         ...(anchor !== null ? { anchor } : {}),
       };

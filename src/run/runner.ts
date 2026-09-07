@@ -1,4 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import {
   type Agent,
@@ -10,6 +11,7 @@ import {
 } from "../agent/agent.js";
 import { checkEnvironment } from "../agent/environment.js";
 import {
+  ARTIFACTS_REFERENCE,
   type Cell,
   type InputValues,
   type Notebook,
@@ -18,7 +20,9 @@ import {
   formatDiagnostics,
   formatDuration,
   interpolate,
+  modelOf,
   parseNotebook,
+  referencesIn,
   resolveInputs,
   runOrder,
   staleAfter,
@@ -26,10 +30,10 @@ import {
   workspaceOf,
 } from "../notebook/notebook.js";
 import { anchorBefore } from "./anchor.js";
-import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "./record.js";
+import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord, Timing } from "./record.js";
 import { runScheduled } from "./schedule.js";
 import { type ShellResult, runShellCommand } from "./shell.js";
-import { newRunId, writeRunRecord } from "./store.js";
+import { artifactsDirectory, listArtifacts, newRunId, writeRunRecord } from "./store.js";
 
 export interface RunOptions {
   /**
@@ -72,17 +76,27 @@ export interface RunOptions {
   continues?: RunRecord;
 }
 
+/**
+ * What a Cell produced, before the Run's own bookkeeping is added: when the
+ * Cell ran, and what it left in its artifact directory. Both are stamped where
+ * the Cell is started and finished with, so no path through a Cell — success,
+ * failure, or a context that could not be made — has to remember either.
+ */
+type Outcome<Recorded extends CellRecord> = Recorded extends CellRecord
+  ? Omit<Recorded, keyof Timing | "artifacts">
+  : never;
+
 /** What a Prompt Cell records when its turn produced nothing at all. */
-function promptFailure(cell: Cell, cause: unknown): PromptCellRecord {
+function promptFailure(cell: Cell, cause: unknown): Outcome<PromptCellRecord> {
   return {
     id: cell.id,
     type: "prompt",
     status: "error",
     ...emptyResult,
-    // The attempts before the one that failed, when the agent got as far as
-    // making any: a turn that failed after three tries should not read like
-    // one that failed at once.
-    ...(cause instanceof TurnFailure ? { retries: [...cause.retries] } : {}),
+    // The attempts before the one that failed, and what the turn had spent by
+    // then, when the agent got as far as either: a turn that failed after three
+    // tries and a long think should not read like one that failed at once.
+    ...(cause instanceof TurnFailure ? { retries: [...cause.retries], usage: cause.usage } : {}),
     error: cause instanceof Error ? cause.message : String(cause),
   };
 }
@@ -110,15 +124,27 @@ interface Bound {
 const boundOf = (timeout: number | undefined): Bound | undefined =>
   timeout === undefined ? undefined : { timeout, signal: AbortSignal.timeout(timeout) };
 
+/** A Prompt Cell's turn as the Run asks for it: what to say, and on what terms. */
+interface Turn {
+  /** The body, its Input References already replaced. */
+  readonly body: string;
+  /** The model the Cell or the Notebook names, when either does. */
+  readonly model?: string;
+  /** How long the turn may take, when the Notebook bounds it. */
+  readonly timeout?: number;
+}
+
 async function runPromptCell(
   cell: Cell,
-  body: string,
+  turn: Turn,
   agent: Agent,
-  timeout: number | undefined,
-): Promise<PromptCellRecord> {
-  const bound = boundOf(timeout);
+): Promise<Outcome<PromptCellRecord>> {
+  const bound = boundOf(turn.timeout);
   try {
-    const result = await agent.prompt(body, bound?.signal);
+    const result = await agent.prompt(turn.body, {
+      ...(turn.model !== undefined ? { model: turn.model } : {}),
+      ...(bound !== undefined ? { signal: bound.signal } : {}),
+    });
     return { id: cell.id, type: "prompt", status: "ok", ...result };
   } catch (cause) {
     const failure = promptFailure(cell, cause);
@@ -143,10 +169,9 @@ async function runPromptCell(
  */
 async function runIsolatedCell(
   cell: Cell,
-  body: string,
+  turn: Turn,
   isolate: () => Promise<Agent>,
-  timeout: number | undefined,
-): Promise<PromptCellRecord> {
+): Promise<Outcome<PromptCellRecord>> {
   let agent: Agent;
   try {
     agent = await isolate();
@@ -161,7 +186,7 @@ async function runIsolatedCell(
     // The Anchor is dropped rather than recorded. It names an entry inside the
     // session just made, which nothing keeps: a later Run re-running this Cell
     // makes another fresh context, which is what makes the Cell reproducible.
-    const { anchor: _ended, ...recorded } = await runPromptCell(cell, body, agent, timeout);
+    const { anchor: _ended, ...recorded } = await runPromptCell(cell, turn, agent);
     return recorded;
   } finally {
     await agent.dispose();
@@ -181,7 +206,7 @@ async function runBashCell(
   body: string,
   workspace: string,
   timeout: number | undefined,
-): Promise<BashCellRecord> {
+): Promise<Outcome<BashCellRecord>> {
   const bound = boundOf(timeout);
   const result = await runShellCommand(body, workspace, bound?.signal);
   const error = failureOf(result);
@@ -233,6 +258,8 @@ interface Cleared {
   readonly allCells: readonly Cell[];
   /** How long a Cell may run, when the Notebook bounds it. */
   readonly timeoutOf: (cell: Cell) => number | undefined;
+  /** The model a Cell asks for, when the Cell or the Notebook names one. */
+  readonly modelOf: (cell: Cell) => string | undefined;
   /** The Run being carried on from, when this Run carries on from one. */
   readonly continues?: RunRecord;
 }
@@ -240,21 +267,46 @@ interface Cleared {
 /** Runs the Cells of a Notebook that has already been cleared to run. */
 async function runCells(cleared: Cleared): Promise<RunRecord> {
   const { path, workspace, shared, continues } = cleared;
+  // Named before the first Cell runs rather than when the record is written,
+  // because the Cells' artifact directories are under this Run's own and a Cell
+  // has to be told where that is before it can put anything there.
+  const id = newRunId();
   const startedAt = new Date().toISOString();
 
   let forked = false;
 
   /**
-   * Runs one Cell. Called by the scheduler, which may have several of these in
-   * flight at once — but never two that touch the shared context, which is what
-   * lets the fork below be a plain flag and the turns be taken in order.
+   * Does one Cell's work. Called through `runCell` below by the scheduler, which
+   * may have several of these in flight at once — but never two that touch the
+   * shared context, which is what lets the fork below be a plain flag and the
+   * turns be taken in order.
    */
-  const runCell = async (cell: Cell): Promise<CellRecord> => {
-    const body = interpolate(bodyOf(cell), cleared.values);
+  const produce = async (cell: Cell): Promise<Outcome<CellRecord>> => {
+    // Absolute, whatever path the Notebook was named by: the Cell runs in the
+    // Workspace, not where the Run was launched from, and a path relative to
+    // the launch directory would point it somewhere else.
+    const artifacts = resolve(artifactsDirectory(path, id, cell.id));
+    const body = interpolate(bodyOf(cell), {
+      ...cleared.values,
+      [ARTIFACTS_REFERENCE]: artifacts,
+    });
+    // Made only for a Cell that refers to it, and made before the Cell runs so
+    // the Cell can write straight into it. A Cell that never names it has
+    // nowhere to leave an Artifact, and gets no empty directory to say so.
+    if (referencesIn(bodyOf(cell)).some(({ name }) => name === ARTIFACTS_REFERENCE)) {
+      await mkdir(artifacts, { recursive: true });
+    }
     const timeout = cleared.timeoutOf(cell);
 
     if (cell.type === "bash") return runBashCell(cell, body, workspace, timeout);
-    if (cell.isolated) return runIsolatedCell(cell, body, cleared.isolate, timeout);
+
+    const model = cleared.modelOf(cell);
+    const turn: Turn = {
+      body,
+      ...(model !== undefined ? { model } : {}),
+      ...(timeout !== undefined ? { timeout } : {}),
+    };
+    if (cell.isolated) return runIsolatedCell(cell, turn, cleared.isolate);
 
     // Once, before the first Cell that speaks into the shared context, and only
     // when this Run carries on from another — an Agent Session of its own
@@ -268,7 +320,24 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       await shared.resumeFrom(anchorBefore(continues, cell.id));
     }
 
-    return runPromptCell(cell, body, shared, timeout);
+    return runPromptCell(cell, turn, shared);
+  };
+
+  /** Runs one Cell and adds the Run's own bookkeeping to what it produced. */
+  const runCell = async (cell: Cell): Promise<CellRecord> => {
+    // From when the Run started on the Cell to when it was done with it. This
+    // is a wider span than the timeout's, which begins only once the Cell's own
+    // work does: the record accounts for what the Run spent on the Cell, which
+    // includes making an Isolated Cell's context or forking a continued Run's
+    // Agent Session, and a Cell that failed at either of those still has a span.
+    const startedAt = new Date().toISOString();
+    const produced = await produce(cell);
+    const endedAt = new Date().toISOString();
+    // Whatever the Cell left, whether or not it succeeded: a Cell that failed
+    // halfway may have left half of what it was making, and that is still the
+    // only account there is of how far it got.
+    const artifacts = await listArtifacts(path, id, cell.id);
+    return { ...produced, artifacts, startedAt, endedAt };
   };
 
   // Halt rather than carry on: a later cell built on a failed one would be
@@ -294,7 +363,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
   });
 
   const record: RunRecord = {
-    id: newRunId(),
+    id,
     notebook: path,
     // The Run whose results the untouched Cells still hold, and whose Stale set
     // this one's was worked out from.
@@ -420,6 +489,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       order: scheduled.order,
       allCells: cellsOf(parsed.notebook),
       timeoutOf: (cell) => timeoutOf(parsed.notebook, cell),
+      modelOf: (cell) => modelOf(parsed.notebook, cell),
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
     });
   } finally {
