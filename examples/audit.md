@@ -11,7 +11,7 @@ Written conclusion first, the way a report is read rather than the way it is pro
 `uses` edges say what has to happen before what, so the cells run bottom-up while the
 document stays in the order a person wants to read it.
 
-Run it with `npm run notebook -- examples/audit.md --target src`.
+Run it with `npm run octo -- run examples/audit.md --target src`.
 
 ```prompt id=report uses=review
 Write the review up as three bullet points.

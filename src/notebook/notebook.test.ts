@@ -599,6 +599,17 @@ describe("input references", () => {
     expect(error?.line).toBe(3);
     expect(error?.message).toContain(`"artifacts" is reserved`);
   });
+
+  it.each(["trust", "no-trust"])(
+    "refuses an input named %s, which is how a run's command line decides trust",
+    (name) => {
+      const [error] = problems(`---\ninputs:\n  - name: ${name}\n---\n`);
+
+      expect(error?.line).toBe(3);
+      expect(error?.message).toContain(`"${name}" is reserved`);
+      expect(error?.message).toContain(`--${name}`);
+    },
+  );
 });
 
 describe("declared edges", () => {

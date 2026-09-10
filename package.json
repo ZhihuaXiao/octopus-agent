@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "bin": {
+    "octo": "dist/cli/octo.js"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -14,7 +17,7 @@
     "format:check": "prettier --check .",
     "lint": "npm run format:check && npm run typecheck",
     "test": "vitest run",
-    "notebook": "npm run build && node dist/cli/run-notebook.js"
+    "octo": "npm run build && node dist/cli/octo.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.2",

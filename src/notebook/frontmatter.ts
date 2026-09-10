@@ -16,6 +16,7 @@ import {
   INPUT_TYPES,
   type Input,
   type InputType,
+  TRUST_FLAGS,
   isInputType,
   settleDefault,
 } from "./inputs.js";
@@ -132,6 +133,13 @@ function readInput(
     errors.push({
       line: nameLine,
       message: `Input name "${name}" is reserved: {{${name}}} is the cell's artifact directory`,
+    });
+    return undefined;
+  }
+  if (TRUST_FLAGS.has(name)) {
+    errors.push({
+      line: nameLine,
+      message: `Input name "${name}" is reserved: --${name} is how a run decides workspace trust`,
     });
     return undefined;
   }

@@ -17,7 +17,7 @@ does not need what the summary did. Swap that model for one your machine has a k
 The directory's path is wherever this notebook lives, so a bash cell quotes it as it would
 any path it did not choose.
 
-Run it with `npm run notebook -- examples/report.md --target src`.
+Run it with `npm run octo -- run examples/report.md --target src`.
 
 ```bash id=count
 find {{target}} -type f | wc -l > "{{artifacts}}/count.txt"

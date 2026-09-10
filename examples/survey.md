@@ -16,7 +16,7 @@ context, which is why each reading writes a note and the summary goes and reads 
 summary is not isolated, so it runs in the notebook's shared context, and it waits for all
 three readings because it says it uses them.
 
-Run it with `npm run notebook -- examples/survey.md --target src`.
+Run it with `npm run octo -- run examples/survey.md --target src`.
 
 ```bash id=scope
 mkdir -p findings

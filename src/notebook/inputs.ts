@@ -64,6 +64,19 @@ export type SettledDefault =
  */
 export const ARTIFACTS_REFERENCE = "artifacts";
 
+/**
+ * The two long options a Run's command line keeps for itself, `--trust` and
+ * `--no-trust` (ADR-0011), where every other one is an Input given its value.
+ * An Input may not take either name, or `--trust` could not say which it meant;
+ * reserved here in the format rather than resolved at the command line, so a
+ * Notebook that would be ambiguous to run is reported when it is written
+ * (ADR-0020). Each name maps to the decision it makes.
+ */
+export const TRUST_FLAGS: ReadonlyMap<string, boolean> = new Map([
+  ["trust", true],
+  ["no-trust", false],
+]);
+
 /** A reference, together with the backslash that would escape it. */
 const REFERENCE = new RegExp(String.raw`(\\?)\{\{[ \t]*(${NAME_PATTERN})[ \t]*\}\}`, "g");
 
