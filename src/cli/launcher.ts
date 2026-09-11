@@ -22,6 +22,7 @@
 
 import { TRUST_FLAGS } from "../notebook/inputs.js";
 import { isName } from "../notebook/name.js";
+import { DEFAULT_PORT } from "../server/server.js";
 
 const USAGE = `usage: octo [pi arguments]...
        octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
@@ -30,7 +31,8 @@ const USAGE = `usage: octo [pi arguments]...
   A bare invocation is pi itself: anything not shown here is handed to the pi
   command as written, and only a request for help stops here instead.
   \`run\` executes a notebook headlessly, giving each declared input its value.
-  \`--web\` starts the web interface, on the port given or one of its own.`;
+  \`--web\` starts the web interface on loopback, serving the notebooks under
+  the current directory, on the port given or ${DEFAULT_PORT}.`;
 
 export type Command =
   /** Not ours: hand the arguments to pi as written. */

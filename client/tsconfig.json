@@ -1,0 +1,18 @@
+{
+  // The client is plain JavaScript served as written, with no build step; this
+  // configuration only checks it, so `npm run typecheck` covers it too.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "types": []
+  },
+  "include": ["*.js"]
+}

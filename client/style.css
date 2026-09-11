@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 48rem;
+  padding: 2rem 1.5rem;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+}
+
+.directory,
+.status {
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.directory {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.notebooks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notebooks li {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.notebooks .title {
+  font-weight: 600;
+}
+
+.notebooks .path {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}

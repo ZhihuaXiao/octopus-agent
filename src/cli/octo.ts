@@ -52,9 +52,15 @@ async function main(): Promise<void> {
       process.stderr.write(`${command.error}\n`);
       process.exitCode = 2;
       return;
-    case "web":
-      await startServer({ ...(command.port !== undefined ? { port: command.port } : {}) });
+    case "web": {
+      // Runs until the process is stopped: the listening socket keeps it alive,
+      // and Ctrl-C ends it as it ends any server.
+      const server = await startServer({
+        ...(command.port !== undefined ? { port: command.port } : {}),
+      });
+      process.stdout.write(`Serving the notebooks under ${server.directory}\nOpen ${server.url}\n`);
       return;
+    }
     case "run":
       await run(command);
       return;
