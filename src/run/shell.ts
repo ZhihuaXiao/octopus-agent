@@ -47,6 +47,21 @@ export function runShellCommand(
   signal?: AbortSignal,
 ): Promise<ShellResult> {
   return new Promise((settle) => {
+    // A signal that has already fired stops the command before it starts, as
+    // the agents stop a turn asked for after the fact: nothing is spawned, and
+    // the result says it was stopped and nothing else.
+    if (signal?.aborted) {
+      settle({
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        signal: null,
+        startupError: null,
+        stopped: true,
+      });
+      return;
+    }
+
     // `bash` rather than `sh`: the fence tag names the shell, so a body written
     // in bash's own syntax has to work.
     const child = spawn("bash", ["-c", command], {

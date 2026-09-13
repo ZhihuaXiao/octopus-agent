@@ -35,7 +35,34 @@ import { runScheduled } from "./schedule.js";
 import { type ShellResult, runShellCommand } from "./shell.js";
 import { artifactsDirectory, listArtifacts, newRunId, writeRunRecord } from "./store.js";
 
+/**
+ * What a Run reports as it goes, for whoever is watching: a terminal printing
+ * the reply as it streams, or a Notebook Session relaying it to a browser.
+ *
+ * A Cell's text arrives in fragments between its start and its end, and only a
+ * Prompt Cell has any: a command's output is not spoken, so it arrives whole
+ * with the record. The record in `cell-ended` is the one the Run Record will
+ * carry, so a watcher that kept every event holds the same account of the
+ * Run as the record does.
+ */
+export type RunEvent =
+  | { readonly type: "cell-started"; readonly cell: string }
+  | { readonly type: "cell-text"; readonly cell: string; readonly text: string }
+  | { readonly type: "cell-ended"; readonly record: CellRecord };
+
 export interface RunOptions {
+  /**
+   * Called with each event as the Run produces it. Absent when nobody is
+   * watching, which is what a Run in a script or under test mostly is.
+   */
+  observe?: (event: RunEvent) => void;
+  /**
+   * Interrupts the Run where it is: the Cell in flight is stopped and recorded
+   * as interrupted, and nothing further starts. What was already finished
+   * stands, and the Run resolves with its record as any other does, since a
+   * Run somebody stopped is still a Run that happened.
+   */
+  signal?: AbortSignal;
   /**
    * Makes the agent this Run's Prompt Cells go to. A factory rather than an
    * agent, because how the agent is set up is the Notebook's to say and the
@@ -101,28 +128,45 @@ function promptFailure(cell: Cell, cause: unknown): Outcome<PromptCellRecord> {
   };
 }
 
-/** What a Cell records when the Run stopped waiting for it. */
-const timedOut = (bound: Bound) => ({
-  status: "timeout" as const,
-  error: `Timed out after ${formatDuration(bound.timeout)}`,
-});
-
 /**
- * How long a Cell may take, and the signal that fires when it has taken longer.
- * Absent when the Notebook set no timeout: the Cell then runs as long as it
- * takes, which is what every Notebook did before timeouts could be declared.
+ * What may stop a Cell before it is done: the Notebook's timeout on it, and the
+ * Run's own interruption. Either fires `signal`, which is what the Cell's work
+ * listens to; `timer` says afterwards whether it was the timeout, so the two
+ * are recorded apart. Neither present leaves the Cell to run as long as it
+ * takes, which is what every Notebook did before either could happen.
  *
  * Made where the Cell's own work begins — after an Isolated Cell's context is
  * made, after a continued Run's fork — rather than when the Cell is scheduled,
  * so the timeout is on the Cell's running and not on the Run's arrangements.
  */
-interface Bound {
-  readonly timeout: number;
-  readonly signal: AbortSignal;
+interface Stops {
+  /** The Cell's timeout and the signal that fires when it is outrun; absent when it has none. */
+  readonly timeout?: { readonly after: number; readonly timer: AbortSignal };
+  /** Fires on either, for the Cell's work to listen to; absent when there is neither. */
+  readonly signal?: AbortSignal;
 }
 
-const boundOf = (timeout: number | undefined): Bound | undefined =>
-  timeout === undefined ? undefined : { timeout, signal: AbortSignal.timeout(timeout) };
+function stopsFor(after: number | undefined, interrupt: AbortSignal | undefined): Stops {
+  const timeout = after === undefined ? undefined : { after, timer: AbortSignal.timeout(after) };
+  const signals = [timeout?.timer, interrupt].filter((signal) => signal !== undefined);
+  return {
+    ...(timeout !== undefined ? { timeout } : {}),
+    ...(signals.length > 0 ? { signal: AbortSignal.any(signals) } : {}),
+  };
+}
+
+/**
+ * What a Cell records when it was stopped, whichever of the two stopped it.
+ * The timer's word decides, since a Cell whose timeout fired was stopped by it
+ * whatever else fired after.
+ */
+const stopped = (stops: Stops) =>
+  stops.timeout?.timer.aborted
+    ? {
+        status: "timeout" as const,
+        error: `Timed out after ${formatDuration(stops.timeout.after)}`,
+      }
+    : { status: "interrupted" as const, error: "Interrupted" };
 
 /** A Prompt Cell's turn as the Run asks for it: what to say, and on what terms. */
 interface Turn {
@@ -132,6 +176,10 @@ interface Turn {
   readonly model?: string;
   /** How long the turn may take, when the Notebook bounds it. */
   readonly timeout?: number;
+  /** Hears the reply as it is produced. */
+  readonly onText: (text: string) => void;
+  /** Fires when the Run is interrupted, when the Run can be. */
+  readonly interrupt?: AbortSignal;
 }
 
 async function runPromptCell(
@@ -139,11 +187,12 @@ async function runPromptCell(
   turn: Turn,
   agent: Agent,
 ): Promise<Outcome<PromptCellRecord>> {
-  const bound = boundOf(turn.timeout);
+  const stops = stopsFor(turn.timeout, turn.interrupt);
   try {
     const result = await agent.prompt(turn.body, {
+      onText: turn.onText,
       ...(turn.model !== undefined ? { model: turn.model } : {}),
-      ...(bound !== undefined ? { signal: bound.signal } : {}),
+      ...(stops.signal !== undefined ? { signal: stops.signal } : {}),
     });
     return { id: cell.id, type: "prompt", status: "ok", ...result };
   } catch (cause) {
@@ -151,9 +200,7 @@ async function runPromptCell(
     // Stopped by the Run rather than failed on its own. The agent's word rather
     // than the signal's, since a signal that fired as the turn was ending
     // stopped nothing, and the agent is the one that knows which it was.
-    if (bound !== undefined && cause instanceof TurnFailure && cause.aborted) {
-      return { ...failure, ...timedOut(bound) };
-    }
+    if (cause instanceof TurnFailure && cause.aborted) return { ...failure, ...stopped(stops) };
     return failure;
   }
 }
@@ -205,10 +252,9 @@ async function runBashCell(
   cell: Cell,
   body: string,
   workspace: string,
-  timeout: number | undefined,
+  stops: Stops,
 ): Promise<Outcome<BashCellRecord>> {
-  const bound = boundOf(timeout);
-  const result = await runShellCommand(body, workspace, bound?.signal);
+  const result = await runShellCommand(body, workspace, stops.signal);
   const error = failureOf(result);
 
   return {
@@ -226,7 +272,7 @@ async function runBashCell(
     ...(error !== undefined ? { error } : {}),
     // Stopped by the Run rather than ended on its own, which the shell says
     // more plainly than the signal the command died of.
-    ...(bound !== undefined && result.stopped ? timedOut(bound) : {}),
+    ...(result.stopped ? stopped(stops) : {}),
   };
 }
 
@@ -262,11 +308,15 @@ interface Cleared {
   readonly modelOf: (cell: Cell) => string | undefined;
   /** The Run being carried on from, when this Run carries on from one. */
   readonly continues?: RunRecord;
+  /** Whoever is watching the Run, told of each event as it happens. */
+  readonly observe: (event: RunEvent) => void;
+  /** Fires when the Run is interrupted, when it can be. */
+  readonly interrupt?: AbortSignal;
 }
 
 /** Runs the Cells of a Notebook that has already been cleared to run. */
 async function runCells(cleared: Cleared): Promise<RunRecord> {
-  const { path, workspace, shared, continues } = cleared;
+  const { path, workspace, shared, continues, observe, interrupt } = cleared;
   // Named before the first Cell runs rather than when the record is written,
   // because the Cells' artifact directories are under this Run's own and a Cell
   // has to be told where that is before it can put anything there.
@@ -298,13 +348,17 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     }
     const timeout = cleared.timeoutOf(cell);
 
-    if (cell.type === "bash") return runBashCell(cell, body, workspace, timeout);
+    // A command's work begins here, with no context to make first.
+    if (cell.type === "bash")
+      return runBashCell(cell, body, workspace, stopsFor(timeout, interrupt));
 
     const model = cleared.modelOf(cell);
     const turn: Turn = {
       body,
       ...(model !== undefined ? { model } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
+      ...(interrupt !== undefined ? { interrupt } : {}),
+      onText: (text) => observe({ type: "cell-text", cell: cell.id, text }),
     };
     if (cell.isolated) return runIsolatedCell(cell, turn, cleared.isolate);
 
@@ -331,22 +385,26 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     // includes making an Isolated Cell's context or forking a continued Run's
     // Agent Session, and a Cell that failed at either of those still has a span.
     const startedAt = new Date().toISOString();
+    observe({ type: "cell-started", cell: cell.id });
     const produced = await produce(cell);
     const endedAt = new Date().toISOString();
     // Whatever the Cell left, whether or not it succeeded: a Cell that failed
     // halfway may have left half of what it was making, and that is still the
     // only account there is of how far it got.
     const artifacts = await listArtifacts(path, id, cell.id);
-    return { ...produced, artifacts, startedAt, endedAt };
+    const recorded: CellRecord = { ...produced, artifacts, startedAt, endedAt };
+    observe({ type: "cell-ended", record: recorded });
+    return recorded;
   };
 
   // Halt rather than carry on: a later cell built on a failed one would be
-  // building on a partially-applied change — and a cell that timed out may
-  // have half-applied one just the same.
+  // building on a partially-applied change — and a cell that timed out or was
+  // interrupted may have half-applied one just the same.
   const cells = [
     ...(await runScheduled(cleared.order, {
       run: runCell,
       failed: (recorded) => recorded.status !== "ok",
+      ...(interrupt !== undefined ? { signal: interrupt } : {}),
     })),
   ];
 
@@ -491,6 +549,8 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       timeoutOf: (cell) => timeoutOf(parsed.notebook, cell),
       modelOf: (cell) => modelOf(parsed.notebook, cell),
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
+      observe: options.observe ?? (() => undefined),
+      ...(options.signal !== undefined ? { interrupt: options.signal } : {}),
     });
   } finally {
     await shared.dispose();

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentFactory } from "../agent/agent.js";
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import type { CellRecord, RunRecord } from "./record.js";
-import { runNotebook } from "./runner.js";
+import { type RunEvent, runNotebook } from "./runner.js";
 import { recordPath, runDirectory } from "./store.js";
 
 async function notebookFile(contents: string): Promise<string> {
@@ -1912,6 +1912,167 @@ describe("artifacts", () => {
     await runNotebook(path, { agent: unusedAgent().create });
 
     expect(await readFile(path, "utf8")).toBe(source);
+  });
+});
+
+describe("watching a run", () => {
+  it("reports a cell starting, what it says, and what it recorded, in that order", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const events: RunEvent[] = [];
+
+    const record = await runNotebook(path, { agent: agent.create, observe: (e) => events.push(e) });
+
+    expect(events).toEqual([
+      { type: "cell-started", cell: "greet" },
+      { type: "cell-text", cell: "greet", text: "Hello, world" },
+      { type: "cell-ended", record: record.cells[0] },
+    ]);
+  });
+
+  it("reports what a cell has said so far, before the cell is over", async () => {
+    const path = await notebookFile("```prompt id=slow timeout=50ms\nThink.\n```\n");
+    // Says this much, then goes quiet until the run gives up on it.
+    const agent = createScriptedAgent([{ hangs: true, text: "Working on it…" }]);
+    const events: RunEvent[] = [];
+
+    const record = await runNotebook(path, { agent: agent.create, observe: (e) => events.push(e) });
+
+    expect(events.map((event) => event.type)).toEqual(["cell-started", "cell-text", "cell-ended"]);
+    expect(events[1]).toEqual({ type: "cell-text", cell: "slow", text: "Working on it…" });
+    expect(onlyCell(record, "prompt").status).toBe("timeout");
+  });
+
+  it("reports a bash cell's output with its record, since a command is not spoken", async () => {
+    const path = await notebookFile(oneBashCell("echo hello"));
+    const events: RunEvent[] = [];
+
+    const record = await runNotebook(path, {
+      agent: unusedAgent().create,
+      observe: (e) => events.push(e),
+    });
+
+    expect(events).toEqual([
+      { type: "cell-started", cell: "step" },
+      { type: "cell-ended", record: expect.objectContaining({ id: "step", stdout: "hello\n" }) },
+    ]);
+    expect(record.cells).toHaveLength(1);
+  });
+});
+
+describe("interrupting a run", () => {
+  /** Interrupts the run at the first event of the given kind. */
+  const interruptingAt = (type: RunEvent["type"]) => {
+    const controller = new AbortController();
+    const observe = (event: RunEvent) => {
+      if (event.type === type) controller.abort();
+    };
+    return { signal: controller.signal, observe };
+  };
+
+  it("stops the cell in flight, and records it as interrupted rather than failed", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ hangs: true }, { text: "never reached" }]);
+
+    const record = await runNotebook(path, {
+      agent: agent.create,
+      ...interruptingAt("cell-started"),
+    });
+
+    // A status of its own, as a timeout is (ADR-0017): nothing went wrong that
+    // wants putting right, somebody stopped it.
+    expect(record.cells).toEqual([
+      expect.objectContaining({ id: "first", status: "interrupted", error: "Interrupted" }),
+    ]);
+    expect(agent.aborted).toEqual(["Do the first thing."]);
+    expect(agent.prompts).toEqual(["Do the first thing."]);
+  });
+
+  it("starts nothing further once interrupted, leaving the rest unrun", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "first done" }, { text: "never reached" }]);
+
+    const record = await runNotebook(path, {
+      agent: agent.create,
+      ...interruptingAt("cell-ended"),
+    });
+
+    // The first cell finished on its own, so its result stands; the second
+    // never began, so it is absent rather than recorded as anything.
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([["first", "ok"]]);
+    expect(agent.prompts).toEqual(["Do the first thing."]);
+  });
+
+  it("leaves an interrupted cell's dependents stale, as a failed cell does", async () => {
+    const path = await chainOfThree();
+    const agent = createScriptedAgent([{ hangs: true }]);
+
+    const record = await runNotebook(path, {
+      agent: agent.create,
+      ...interruptingAt("cell-started"),
+    });
+
+    expect(record.cells.map((cell) => [cell.id, cell.status])).toEqual([["a", "interrupted"]]);
+    expect(record.stale).toEqual(["b", "c"]);
+  });
+
+  it("tells an interruption from a timeout on a cell that has one", async () => {
+    const path = await notebookFile("```prompt id=slow timeout=5s\nThink.\n```\n");
+    const agent = createScriptedAgent([{ hangs: true }]);
+
+    const cell = onlyCell(
+      await runNotebook(path, { agent: agent.create, ...interruptingAt("cell-started") }),
+      "prompt",
+    );
+
+    expect(cell.status).toBe("interrupted");
+  });
+
+  it("kills a bash cell where it is, keeping what it had written", async () => {
+    const path = await notebookFile(oneBashCell("echo started\nsleep 5\necho finished"));
+    const controller = new AbortController();
+    const began = Date.now();
+
+    const record = await runNotebook(path, {
+      agent: unusedAgent().create,
+      signal: controller.signal,
+      // A moment after the command starts, so it has written its first line.
+      observe: (event) => {
+        if (event.type === "cell-started") setTimeout(() => controller.abort(), 200);
+      },
+    });
+    const cell = onlyCell(record, "bash");
+
+    expect(cell.status).toBe("interrupted");
+    expect(cell.stdout).toBe("started\n");
+    expect(cell.exitCode).toBeNull();
+    expect(Date.now() - began).toBeLessThan(3000);
+  });
+
+  it("never starts a command the interruption beat to the start", async () => {
+    const path = await notebookFile(oneBashCell("echo started\nsleep 5"));
+    const began = Date.now();
+
+    const record = await runNotebook(path, {
+      agent: unusedAgent().create,
+      ...interruptingAt("cell-started"),
+    });
+    const cell = onlyCell(record, "bash");
+
+    expect(cell).toMatchObject({ status: "interrupted", stdout: "", exitCode: null });
+    expect(Date.now() - began).toBeLessThan(3000);
+  });
+
+  it("runs as it always did when the signal never fires", async () => {
+    const path = await notebookFile(twoCells);
+    const agent = createScriptedAgent([{ text: "one" }, { text: "two" }]);
+
+    const record = await runNotebook(path, {
+      agent: agent.create,
+      signal: new AbortController().signal,
+    });
+
+    expect(record.cells.map((cell) => cell.status)).toEqual(["ok", "ok"]);
   });
 });
 

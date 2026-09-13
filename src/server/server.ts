@@ -2,8 +2,11 @@
  * The server: owns Notebook Sessions, serves the browser client, streams events
  * and handles auth. This is where the launcher's web flags arrive.
  *
- * Today it is the shell the rest is built inside: it binds to loopback, serves
- * the client, and lists the Notebooks under the directory it was started in.
+ * It binds to loopback, serves the client, lists the Notebooks under the
+ * directory it was started in, and opens them into Notebook Sessions that it
+ * owns: a Run started from a browser carries on when the browser has gone.
+ * Commands — open, run, interrupt — are HTTP requests, each with an answer;
+ * what a Run produces is a stream, and goes to the browser over a WebSocket.
  * Loopback only, because starting it must never expose the machine by accident
  * (ADR-0006); reaching it from elsewhere is a deliberate act that ticket 19 owns.
  */
@@ -13,7 +16,16 @@ import { type IncomingMessage, type ServerResponse, createServer } from "node:ht
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { WebSocketServer } from "ws";
+
+import type { AgentFactory } from "../agent/agent.js";
+import { isRecord } from "../util/guards.js";
 import { listNotebooks } from "./notebooks.js";
+import {
+  type NotebookSessions,
+  type RunRequest,
+  createNotebookSessions,
+} from "./notebook-session.js";
 
 /** The address the server listens on: this machine, and nothing beyond it. */
 const LOOPBACK = "127.0.0.1";
@@ -34,6 +46,9 @@ const CLIENT_DIRECTORY = fileURLToPath(new URL("../../client/", import.meta.url)
 const CLIENT_ROUTE = "/client/";
 const SHELL = "index.html";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
+const SESSIONS_ROUTE = "/api/sessions";
+/** A Notebook Session by id, and what may be asked of it. */
+const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|events))?$/;
 
 /** The kinds of file the client is made of; anything else under `/client/` is not served. */
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -44,6 +59,10 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
 
 /** What a browser fetches a page and its assets with; Node itself leaves a HEAD's body out. */
 const READS: readonly string[] = ["GET", "HEAD"];
+const WRITES: readonly string[] = ["POST"];
+
+/** As much as a request's body may be: a Notebook's Inputs, not a Notebook. */
+const LONGEST_BODY = 1024 * 1024;
 
 export interface ServerOptions {
   /**
@@ -53,6 +72,8 @@ export interface ServerOptions {
   readonly port?: number;
   /** The directory whose Notebooks are served; the working directory when absent. */
   readonly directory?: string;
+  /** Makes the agent each Run's Prompt Cells go to: pi's, or a scripted one under test. */
+  readonly agent: AgentFactory;
 }
 
 export interface RunningServer {
@@ -112,29 +133,168 @@ async function serveClient(pathname: string, response: ServerResponse): Promise<
   }
 }
 
-async function serveNotebooks(directory: string, response: ServerResponse): Promise<void> {
-  const notebooks = await listNotebooks(directory);
-  response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-  response.end(JSON.stringify({ directory, notebooks }));
+function json(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(body));
 }
 
-async function handle(
-  directory: string,
+async function serveNotebooks(directory: string, response: ServerResponse): Promise<void> {
+  const notebooks = await listNotebooks(directory);
+  json(response, 200, { directory, notebooks });
+}
+
+/** A request's body read as JSON, or nothing when it is not JSON. Too long a body is a mistake too. */
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const chunk of request) {
+    const buffer = chunk as Buffer;
+    length += buffer.length;
+    if (length > LONGEST_BODY) return undefined;
+    chunks.push(buffer);
+  }
+  if (chunks.length === 0) return {};
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+const isStrings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/** The Run a body asks for, or nothing when the body is not one: unknown keys are a mistake. */
+function runRequestOf(body: unknown): RunRequest | undefined {
+  if (!isRecord(body)) return undefined;
+  const request: { cells?: string[]; inputs?: Record<string, string> } = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (key === "cells" && isStrings(value)) request.cells = value;
+    else if (
+      key === "inputs" &&
+      isRecord(value) &&
+      Object.values(value).every((item) => typeof item === "string")
+    ) {
+      request.inputs = value as Record<string, string>;
+    } else return undefined;
+  }
+  return request;
+}
+
+async function openSession(
+  sessions: NotebookSessions,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  if (!READS.includes(request.method ?? "")) {
-    reply(response, 405, "Method not allowed\n", { allow: READS.join(", ") });
+  const body = await readJson(request);
+  if (!isRecord(body) || typeof body.notebook !== "string") {
+    reply(response, 400, "The request must name a notebook to open, as JSON.\n");
     return;
   }
 
+  const opened = await sessions.open(body.notebook);
+  switch (opened.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "refused":
+      reply(response, 422, `${opened.problem}\n`);
+      return;
+    case "opened":
+      json(response, opened.created ? 201 : 200, opened.session.state());
+      return;
+  }
+}
+
+async function serveSession(
+  sessions: NotebookSessions,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const [, id = "", action] = matched;
+  // The state and the events are read; a run and an interrupt change things.
+  const allowed = action === undefined || action === "events" ? READS : WRITES;
+  if (!permitted(allowed, request, response)) return;
+
+  const session = sessions.get(id);
+  if (session === undefined) {
+    notFound(response);
+    return;
+  }
+
+  switch (action) {
+    case undefined:
+      json(response, 200, session.state());
+      return;
+    case "run": {
+      const asked = runRequestOf(await readJson(request));
+      if (asked === undefined) {
+        reply(response, 400, "The request may name cells to run and values for inputs, as JSON.\n");
+        return;
+      }
+      if (!session.run(asked)) {
+        reply(response, 409, "This notebook is already running; interrupt it or wait.\n");
+        return;
+      }
+      json(response, 202, session.state());
+      return;
+    }
+    case "interrupt":
+      // Answered once the Run has stopped, so the answer means what it says:
+      // nothing is running now, and the next `run` will be taken.
+      await session.interrupt();
+      response.writeHead(204);
+      response.end();
+      return;
+    case "events":
+      // A plain read of the events: the WebSocket handshake is an upgrade and
+      // never arrives here, so whoever did is told what to connect with.
+      reply(response, 426, "Connect to the events with a WebSocket.\n", { upgrade: "websocket" });
+      return;
+  }
+}
+
+/** Whether the request's method is one the route takes; a 405 saying which are, when not. */
+function permitted(
+  allowed: readonly string[],
+  request: IncomingMessage,
+  response: ServerResponse,
+): boolean {
+  if (allowed.includes(request.method ?? "")) return true;
+  reply(response, 405, "Method not allowed\n", { allow: allowed.join(", ") });
+  return false;
+}
+
+interface Served {
+  readonly directory: string;
+  readonly sessions: NotebookSessions;
+}
+
+async function handle(
+  served: Served,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
   const { pathname } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
+
+  const matched = SESSION_ROUTE.exec(pathname);
+  if (matched !== null) {
+    await serveSession(served.sessions, matched, request, response);
+    return;
+  }
+  if (pathname === SESSIONS_ROUTE) {
+    if (permitted(WRITES, request, response)) await openSession(served.sessions, request, response);
+    return;
+  }
+
+  if (!permitted(READS, request, response)) return;
   if (pathname === "/" || pathname.startsWith(CLIENT_ROUTE)) {
     await serveClient(pathname, response);
     return;
   }
   if (pathname === NOTEBOOKS_ROUTE) {
-    await serveNotebooks(directory, response);
+    await serveNotebooks(served.directory, response);
     return;
   }
   notFound(response);
@@ -143,11 +303,40 @@ async function handle(
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const port = options.port ?? DEFAULT_PORT;
   const directory = resolve(options.directory ?? process.cwd());
+  const sessions = createNotebookSessions({ directory, agent: options.agent });
+  const served: Served = { directory, sessions };
+
   const server = createServer((request, response) => {
-    handle(directory, request, response).catch((cause: unknown) => {
+    handle(served, request, response).catch((cause: unknown) => {
       if (!response.headersSent) reply(response, 500, "Something went wrong\n");
       else response.destroy();
       process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
+    });
+  });
+
+  // The events of a Notebook Session, streamed to each browser watching it.
+  // The WebSocket is `ws`'s: a framing protocol is the point at which a
+  // dependency earns its place over Node's own `http`, which speaks none.
+  const sockets = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    const { pathname } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
+    const matched = SESSION_ROUTE.exec(pathname);
+    const session = matched?.[2] === "events" ? sessions.get(matched[1] ?? "") : undefined;
+    if (session === undefined) {
+      socket.write("HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    sockets.handleUpgrade(request, socket, head, (client) => {
+      // A socket's failure is the end of that browser's watching and nothing
+      // more; unheard, Node would make it the end of the process.
+      client.on("error", () => client.terminate());
+      // What the Notebook Session stands at now, before anything that happens next.
+      client.send(JSON.stringify({ type: "notebook-session", session: session.state() }));
+      const unsubscribe = session.subscribe((event) => {
+        if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
+      });
+      client.on("close", unsubscribe);
     });
   });
 
@@ -167,12 +356,17 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       started({
         url: `http://${LOOPBACK}:${bound}/`,
         directory,
-        close: () =>
-          new Promise((done, fail) => {
+        close: async () => {
+          // Nothing outlives the server: the Runs in progress are interrupted
+          // and their records written, then the browsers watching are cut off.
+          await sessions.close();
+          for (const client of sockets.clients) client.terminate();
+          await new Promise<void>((done, fail) => {
             server.close((cause) => (cause ? fail(cause) : done()));
             // Keep-alive connections would otherwise hold the close open until they idle out.
             server.closeAllConnections();
-          }),
+          });
+        },
       });
     });
   });

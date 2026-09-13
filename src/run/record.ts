@@ -12,10 +12,12 @@ import type { CellResult, Usage } from "../agent/agent.js";
 /**
  * A Cell that timed out is told apart from one that errored, because what to
  * do about them differs: a timed-out Cell may want a longer timeout, an
- * errored one wants whatever went wrong put right. Neither is `ok`, and either
- * halts the Run.
+ * errored one wants whatever went wrong put right. A Cell that was interrupted
+ * is told apart from both for the same reason: somebody stopped it, and
+ * nothing about it wants putting right. None of the three is `ok`, and any of
+ * them halts the Run.
  */
-export type CellStatus = "ok" | "error" | "timeout";
+export type CellStatus = "ok" | "error" | "timeout" | "interrupted";
 
 /** When something began and ended, as ISO-8601 instants. */
 export interface Timing {

@@ -12,7 +12,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { basename, extname, join, relative, sep } from "node:path";
 
-import { cellsOf, parseNotebook } from "../notebook/notebook.js";
+import { type Notebook, cellsOf, parseNotebook } from "../notebook/notebook.js";
 
 export interface NotebookEntry {
   /** Relative to the served directory, with forward slashes whatever the platform. */
@@ -30,13 +30,18 @@ const NOTEBOOK_EXTENSION = ".md";
  */
 const isSkipped = (name: string) => name === "node_modules" || name.startsWith(".");
 
+/** A Notebook's path as the server names it: relative to the served directory, forward slashes. */
+export const pathWithin = (directory: string, file: string) =>
+  relative(directory, file).split(sep).join("/");
+
+/** A Notebook's declared title, or its file's name when it declares none. */
+export const titleOf = (notebook: Notebook, file: string) =>
+  notebook.metadata.title ?? basename(file, NOTEBOOK_EXTENSION);
+
 async function readEntry(directory: string, file: string): Promise<NotebookEntry | undefined> {
   const parsed = parseNotebook(await readFile(file, "utf8"));
   if (!parsed.ok || cellsOf(parsed.notebook).length === 0) return undefined;
-  return {
-    path: relative(directory, file).split(sep).join("/"),
-    title: parsed.notebook.metadata.title ?? basename(file, NOTEBOOK_EXTENSION),
-  };
+  return { path: pathWithin(directory, file), title: titleOf(parsed.notebook, file) };
 }
 
 /**

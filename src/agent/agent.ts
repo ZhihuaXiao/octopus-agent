@@ -141,6 +141,13 @@ export interface TurnOptions {
    * turn resolves as it would have.
    */
   readonly signal?: AbortSignal;
+  /**
+   * Called with each fragment of the reply as the agent produces it, so
+   * whoever asked can show the turn as it goes rather than when it is over.
+   * Per turn rather than per agent, because the text is a Cell's and only the
+   * Run knows which Cell is speaking.
+   */
+  readonly onText?: (text: string) => void;
 }
 
 export interface Agent {

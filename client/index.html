@@ -8,13 +8,27 @@
   </head>
   <body>
     <header>
-      <h1>octo</h1>
+      <h1><a href="#" id="home">octo</a></h1>
       <p id="directory" class="directory"></p>
     </header>
-    <main>
+    <main id="list">
       <h2>Notebooks</h2>
       <p id="status" class="status">Looking for notebooks…</p>
       <ul id="notebooks" class="notebooks"></ul>
+    </main>
+    <main id="session" hidden>
+      <div class="session-header">
+        <div>
+          <h2 id="title"></h2>
+          <p id="notebook" class="path"></p>
+        </div>
+        <div class="controls">
+          <button id="run-all" type="button">Run all</button>
+          <button id="interrupt" type="button" disabled>Interrupt</button>
+        </div>
+      </div>
+      <p id="session-status" class="status"></p>
+      <ol id="cells" class="cells"></ol>
     </main>
     <script type="module" src="/client/main.js"></script>
   </body>

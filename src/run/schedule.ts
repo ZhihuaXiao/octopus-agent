@@ -26,6 +26,12 @@ export interface ScheduledWork<T> {
    * doing the starting is in a position to take it.
    */
   readonly failed: (result: T) => boolean;
+  /**
+   * Fires when the Run is interrupted, after which nothing further starts,
+   * exactly as after a failure. What is in flight is the caller's to stop; the
+   * scheduler waits for it as it waits for anything in flight.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -116,9 +122,15 @@ export async function runScheduled<T extends object>(
   };
 
   while (inFlight.size > 0 || (!halted && waiting.length > 0)) {
+    // Read before each round of starts rather than listened for, since a
+    // signal that fired while a Cell was in flight matters only now, when the
+    // next would otherwise start.
+    if (work.signal?.aborted) halted = true;
     if (!halted) for (const cell of startable()) start(cell);
 
     if (inFlight.size === 0) {
+      // Interrupted between Cells, with nothing in flight to wait for.
+      if (halted) break;
       // Unreachable for a topological order: nothing has failed, or the loop
       // would have stopped, so every Cell before the first one still waiting
       // has succeeded — its edges are satisfied and the shared context is free.

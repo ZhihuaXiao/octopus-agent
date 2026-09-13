@@ -27,11 +27,6 @@ import {
 } from "./agent.js";
 import type { Environment } from "./environment.js";
 
-export interface PiAgentOptions extends AgentSetup {
-  /** Called with each fragment of text as it arrives, for streaming output. */
-  onText?: (text: string) => void;
-}
-
 // Derived from pi's own signature rather than imported: the model type lives in
 // @earendil-works/pi-ai, which is pi's dependency and not ours to pin.
 type Model = Parameters<AgentSession["setModel"]>[0];
@@ -153,7 +148,7 @@ function failureOf(turn: readonly unknown[]): string | undefined {
  * a step earlier is what lets the session be told the decision instead of
  * falling back on the no that pi returns when nothing can be asked.
  */
-export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
+export async function createPiAgent(options: AgentSetup): Promise<Agent> {
   const { workspace } = options;
   const agentDir = getAgentDir();
   const trustStore = new ProjectTrustStore(agentDir);
@@ -257,7 +252,7 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
     },
 
     async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
-      const { signal, model } = turnOptions;
+      const { signal, model, onText } = turnOptions;
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
       if (model !== undefined) await takeOn(model);
@@ -287,7 +282,7 @@ export async function createPiAgent(options: PiAgentOptions): Promise<Agent> {
         if (event.type === "agent_start" && signal?.aborted) stop();
         if (event.type === "auto_retry_start") retries.push({ error: event.errorMessage });
         const revealed = stream.accept(event);
-        if (revealed) options.onText?.(revealed);
+        if (revealed) onText?.(revealed);
       });
 
       const before = session.messages.length;

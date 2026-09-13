@@ -45,6 +45,12 @@ timeout, an errored one wants whatever went wrong put right. Both halt the Run, 
 and both leave their dependents Stale, since a Cell stopped halfway may have half-applied a
 change just as a failed one may have.
 
+The same reasoning gives a Cell somebody interrupted — from the browser, through its
+Notebook Session (ticket 15) — a status of its own, `interrupted`, beside the two: nothing
+about it wants putting right, and neither a longer timeout nor a fix is the remedy. It is
+stopped through the same signal a timeout uses, halts the Run and leaves dependents Stale the
+same way, and when both fire the timeout's word decides which it was.
+
 A Cell's clock starts when its own work does — after an Isolated Cell's context has been
 made, after a continued Run has forked the Agent Session — and not when the Cell was
 scheduled, so the Run's own arrangements are not charged to the Cell. And a signal that fires

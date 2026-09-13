@@ -108,6 +108,13 @@ the Cell or on the whole Notebook (ADR-0017). A Cell that outruns it is Timed Ou
 status of its own beside Errored, and halts the Run like an error.
 _Avoid_: deadline, time limit, budget, hang detection
 
+**Interrupted**:
+The status of a Cell that somebody stopped while it ran — from the browser, through its
+Notebook Session — rather than one that failed or outran its Timeout. A status of its own
+beside Errored and Timed Out because nothing about it wants putting right; it halts the Run
+and leaves its dependents Stale as either of them does.
+_Avoid_: cancelled, aborted, stopped, killed
+
 **Retry**:
 One attempt at a Prompt Cell's turn that pi gave up on after a transient provider or
 transport error and made again (ADR-0018). Made by pi, recorded by the Run, never made by

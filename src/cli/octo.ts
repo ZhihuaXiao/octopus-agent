@@ -13,9 +13,11 @@ async function run(command: Extract<Command, { kind: "run" }>): Promise<void> {
   const path = resolve(command.notebook);
 
   const record = await runNotebook(path, {
-    // How the agent is set up is the Notebook's to say, so the Run decides it
-    // and this supplies only what a terminal adds: somewhere to stream to.
-    agent: (setup) => createPiAgent({ ...setup, onText: (text) => process.stdout.write(text) }),
+    agent: createPiAgent,
+    // What a terminal adds to a Run: somewhere for the reply to stream to.
+    observe: (event) => {
+      if (event.type === "cell-text") process.stdout.write(event.text);
+    },
     inputs: command.inputs,
     ...(command.trust !== undefined ? { trust: command.trust } : {}),
   });
@@ -25,7 +27,12 @@ async function run(command: Extract<Command, { kind: "run" }>): Promise<void> {
   // than an errored one; the two are named apart because their remedies are.
   const failed = record.cells.filter((cell) => cell.status !== "ok");
   for (const cell of failed) {
-    const what = cell.status === "timeout" ? "timed out" : "failed";
+    const what =
+      cell.status === "timeout"
+        ? "timed out"
+        : cell.status === "interrupted"
+          ? "was interrupted"
+          : "failed";
     process.stderr.write(`Cell "${cell.id}" ${what}: ${cell.error}\n`);
     if (cell.type === "prompt" && cell.retries.length > 0) {
       const times = cell.retries.length === 1 ? "once" : `${cell.retries.length} times`;
@@ -56,6 +63,7 @@ async function main(): Promise<void> {
       // Runs until the process is stopped: the listening socket keeps it alive,
       // and Ctrl-C ends it as it ends any server.
       const server = await startServer({
+        agent: createPiAgent,
         ...(command.port !== undefined ? { port: command.port } : {}),
       });
       process.stdout.write(`Serving the notebooks under ${server.directory}\nOpen ${server.url}\n`);
