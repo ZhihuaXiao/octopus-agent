@@ -300,13 +300,31 @@ const post = (server: RunningServer, path: string, body?: unknown) =>
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 
+/** One Cell as a Notebook Session shows it, with as much of its shape as the tests read. */
+interface CellView {
+  id: string;
+  type: string;
+  body: string;
+  uses: string[];
+  isolated: boolean;
+  model?: string;
+  timeout?: number;
+  status: string;
+  text: string;
+  toolCalls: { name: string; input: unknown }[];
+  artifacts: string[];
+  run?: string;
+  error?: string;
+}
+
 /** What a Notebook Session says of itself, as the server reports it. */
 interface NotebookSessionState {
   id: string;
   notebook: string;
   title: string;
   running: boolean;
-  cells: { id: string; type: string; status: string; text: string; error?: string }[];
+  run?: string;
+  cells: CellView[];
 }
 
 /** Opens a Notebook into a Notebook Session and returns what the server said of it. */
@@ -335,10 +353,60 @@ describe("opening a notebook", () => {
       notebook: "hello.md",
       title: "Hello",
       running: false,
-      cells: [{ id: "greet", type: "prompt", status: "idle", text: "" }],
+      cells: [
+        {
+          id: "greet",
+          type: "prompt",
+          body: "Say hello.\n",
+          uses: [],
+          isolated: false,
+          status: "idle",
+          text: "",
+          toolCalls: [],
+          artifacts: [],
+        },
+      ],
     });
     // Kept by the server, not by whoever asked: found again by its id alone.
     expect(await stateOf(server, session.id)).toEqual(session);
+  });
+
+  it("shows each cell as the notebook declares it, so the browser can draw the notebook", async () => {
+    const server = await serve({
+      "declared.md": [
+        "```bash id=count timeout=30s",
+        "ls | wc -l",
+        "```",
+        "",
+        "```prompt id=summary uses=count isolated=true model=anthropic/claude-haiku-4-5",
+        "Summarise.",
+        "```",
+        "",
+      ].join("\n"),
+    });
+
+    const session = await open(server, "declared.md");
+
+    expect(session.cells).toMatchObject([
+      {
+        id: "count",
+        type: "bash",
+        body: "ls | wc -l\n",
+        uses: [],
+        isolated: false,
+        timeout: 30_000,
+      },
+      {
+        id: "summary",
+        type: "prompt",
+        body: "Summarise.\n",
+        uses: ["count"],
+        isolated: true,
+        model: "anthropic/claude-haiku-4-5",
+      },
+    ]);
+    expect(session.cells[0]).not.toHaveProperty("model");
+    expect(session.cells[1]).not.toHaveProperty("timeout");
   });
 
   it("opens the same notebook into the session already open for it", async () => {
@@ -358,7 +426,7 @@ describe("opening a notebook", () => {
     const other = await open(server, "audit.md");
 
     expect(other.id).not.toBe(one.id);
-    expect(other.cells).toEqual([{ id: "scope", type: "bash", status: "idle", text: "" }]);
+    expect(other.cells).toMatchObject([{ id: "scope", type: "bash", status: "idle", text: "" }]);
   });
 
   it("opens nothing outside the served directory, and nothing that is not there", async () => {
@@ -412,10 +480,18 @@ describe("opening a notebook", () => {
 /** An event as the server sends it, with as much of its shape as the tests read. */
 interface Event {
   type: string;
+  run?: string;
+  cells?: string[];
   cell?: string;
   text?: string;
+  call?: { name: string; input: unknown };
   session?: NotebookSessionState;
-  record?: { id?: string; status?: string; cells?: { id: string; status: string }[] };
+  record?: {
+    id?: string;
+    status?: string;
+    artifacts?: string[];
+    cells?: { id: string; status: string }[];
+  };
   error?: string;
 }
 
@@ -503,6 +579,87 @@ describe("running a notebook in its session", () => {
     await browser.close();
   });
 
+  it("names the run as it starts, by the id its record will carry", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    const started = await browser.next("run-started");
+    const ended = await browser.next("run-ended");
+
+    expect(started).toEqual({ type: "run-started", run: ended.record?.id, cells: ["greet"] });
+    // A browser that asks sees which run each cell's result is from, and no run
+    // in progress once it is over.
+    const state = await stateOf(server, session.id);
+    expect(state.cells).toMatchObject([{ id: "greet", run: ended.record?.id }]);
+    expect(state).not.toHaveProperty("run");
+    await browser.close();
+  });
+
+  it("names the run in progress to a browser arriving between cells", async () => {
+    // A command slow enough for a browser to arrive while the run is between
+    // it and the next cell — no cell running, but a run under way.
+    const agent = createScriptedAgent([{ hangs: true }]);
+    const server = await serve(
+      { "two.md": "```bash id=wait\nsleep 0.3\n```\n\n```prompt id=then uses=wait\nGo.\n```\n" },
+      agent,
+    );
+    const session = await open(server, "two.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    const started = await browser.next("run-started");
+
+    const later = await watch(server, session.id);
+    const told = await later.next("notebook-session");
+
+    // What a cell that starts from here on is running in, so the files it
+    // leaves can be placed before the record naming them arrives.
+    expect(told.session).toMatchObject({ running: true, run: started.run });
+    await Promise.all([browser.close(), later.close()]);
+  });
+
+  it("streams each tool call as the agent makes it, and holds them for a browser that asks", async () => {
+    const calls = [
+      { name: "read", input: { path: "README.md" } },
+      { name: "bash", input: { command: "ls" } },
+    ];
+    // Invokes both tools, then goes quiet, so the calls are heard mid-cell.
+    const agent = createScriptedAgent([{ hangs: true, toolCalls: calls }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    const first = await browser.next("cell-tool-call");
+    const second = await browser.next("cell-tool-call");
+
+    expect(first).toEqual({ type: "cell-tool-call", cell: "greet", call: calls[0] });
+    expect(second).toEqual({ type: "cell-tool-call", cell: "greet", call: calls[1] });
+    expect(await stateOf(server, session.id)).toMatchObject({
+      running: true,
+      cells: [{ id: "greet", status: "running", toolCalls: calls }],
+    });
+    await browser.close();
+  });
+
+  it("holds a cell's tool calls with its result once the run is over", async () => {
+    const calls = [{ name: "bash", input: { command: "ls" } }];
+    const agent = createScriptedAgent([{ text: "Listed", toolCalls: calls }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+
+    expect((await stateOf(server, session.id)).cells).toMatchObject([
+      { id: "greet", status: "ok", text: "Listed", toolCalls: calls },
+    ]);
+    await browser.close();
+  });
+
   it("streams a cell's text while the cell is still running", async () => {
     const agent = createScriptedAgent([{ hangs: true, text: "Working on it…" }]);
     const server = await serve({ "hello.md": hello }, agent);
@@ -552,7 +709,7 @@ describe("running a notebook in its session", () => {
     // Session, and left the cell built on `a` stale rather than rerun.
     expect(agent.prompts).toEqual(["Do a.", "Do b.", "Do a."]);
     expect(agent.resumptions).toEqual([undefined]);
-    expect((await stateOf(server, session.id)).cells).toEqual([
+    expect((await stateOf(server, session.id)).cells).toMatchObject([
       { id: "a", type: "prompt", status: "ok", text: "b again" },
       { id: "b", type: "prompt", status: "stale", text: "b" },
     ]);
@@ -567,7 +724,7 @@ describe("running a notebook in its session", () => {
     await run(server, session.id);
     await browser.next("run-ended");
 
-    expect((await stateOf(server, session.id)).cells).toEqual([
+    expect((await stateOf(server, session.id)).cells).toMatchObject([
       {
         id: "scope",
         type: "bash",
@@ -835,9 +992,162 @@ describe("a browser that goes away", () => {
     const later = await watch(server, session.id);
     const told = await later.next("notebook-session");
 
-    expect(told.session?.cells).toEqual([
+    expect(told.session?.cells).toMatchObject([
       { id: "greet", type: "prompt", status: "ok", text: "Hello, world" },
     ]);
     await later.close();
+  });
+});
+
+/** A one-pixel PNG, which is the smallest image a browser will draw. */
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/**
+ * A Notebook whose one Cell leaves a picture, a page, a note and a page with a
+ * name no Latin-1 header could carry in its artifact directory, and a link
+ * pointing out of it at the workspace.
+ */
+const leaves = [
+  "```bash id=make",
+  `printf '%s' '${PIXEL.toString("base64")}' | base64 -d > "{{artifacts}}/chart.png"`,
+  `printf '<script>alert(1)</script>' > "{{artifacts}}/page.html"`,
+  `printf 'noted' > "{{artifacts}}/notes.txt"`,
+  `printf '<h1>页面</h1>' > "{{artifacts}}/页面.html"`,
+  `ln -s "$(pwd)" "{{artifacts}}/away"`,
+  "```",
+  "",
+].join("\n");
+
+describe("the files a run leaves", () => {
+  /** Runs the one-Cell Notebook and returns the session's view of the Cell, the run over. */
+  const made = async (server: RunningServer) => {
+    const session = await open(server, "leaves.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    const ended = await browser.next("run-ended");
+    await browser.close();
+    const cell = (await stateOf(server, session.id)).cells[0] as CellView;
+    return { session, cell, run: ended.record?.id ?? "" };
+  };
+
+  /** Where the browser fetches one of a run's files from. */
+  const fileUrl = (server: RunningServer, session: string, run: string, path: string) =>
+    new URL(`/api/sessions/${session}/runs/${run}/${path}`, server.url);
+
+  it("are named against the cell with the run they belong to", async () => {
+    const server = await serve({ "leaves.md": leaves });
+
+    const { cell, run } = await made(server);
+
+    // The files, and not the link: a link is not something the cell left.
+    expect(cell).toMatchObject({
+      status: "ok",
+      run,
+      artifacts: [
+        "artifacts/make/chart.png",
+        "artifacts/make/notes.txt",
+        "artifacts/make/page.html",
+        "artifacts/make/页面.html",
+      ],
+    });
+  });
+
+  it("are served from under the run's directory, an image as the image it is", async () => {
+    const server = await serve({ "leaves.md": leaves });
+    const { session, run } = await made(server);
+
+    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/chart.png"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(Buffer.from(await response.arrayBuffer()).equals(PIXEL)).toBe(true);
+  });
+
+  it("serve a text file as text, and the run's own record as JSON", async () => {
+    const server = await serve({ "leaves.md": leaves });
+    const { session, run } = await made(server);
+
+    const notes = await fetch(fileUrl(server, session.id, run, "artifacts/make/notes.txt"));
+    const record = await fetch(fileUrl(server, session.id, run, "record.json"));
+
+    expect(notes.headers.get("content-type")).toContain("text/plain");
+    expect(await notes.text()).toBe("noted");
+    expect(record.headers.get("content-type")).toContain("application/json");
+    expect(((await record.json()) as { id: string }).id).toBe(run);
+  });
+
+  it("never serve a file the browser would run: a page an agent wrote is a download", async () => {
+    const server = await serve({ "leaves.md": leaves });
+    const { session, run } = await made(server);
+
+    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/page.html"));
+
+    // The client and the files a run leaves share an origin, so a page served
+    // as a page could read whatever the client holds.
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="page.html"; filename*=UTF-8''page.html`,
+    );
+  });
+
+  it("offer a download under a name a header cannot carry as written", async () => {
+    const server = await serve({ "leaves.md": leaves });
+    const { session, run } = await made(server);
+
+    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/页面.html"));
+
+    // The header itself is Latin-1; the name goes encoded, with a fallback the
+    // header can spell, rather than the response failing to be written at all.
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="__.html"; filename*=UTF-8''${encodeURIComponent("页面.html")}`,
+    );
+  });
+
+  it("follow no link out of the run's directory", async () => {
+    const server = await serve({ "leaves.md": leaves, "hello.md": hello });
+    const { session, run } = await made(server);
+
+    // `away` points at the workspace, where `hello.md` is.
+    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/away/hello.md"));
+
+    expect(response.status).toBe(404);
+  });
+
+  it("are nothing outside the run's directory, and nothing for a run that never was", async () => {
+    const server = await serve({ "leaves.md": leaves, "hello.md": hello });
+    const { session, run } = await made(server);
+    const runs = `/api/sessions/${session.id}/runs`;
+
+    // A climb the URL parser does not fold away, spelt with encoded slashes,
+    // in the run's name and in the file's; `hello.md` is there to be reached.
+    expect(await rawRequest(server.url, `${runs}/..%2F..%2F..%2F..%2Fhello.md/record.json`)).toBe(
+      404,
+    );
+    expect(await rawRequest(server.url, `${runs}/${run}/..%2F..%2F..%2F..%2Fhello.md`)).toBe(404);
+    expect(await rawRequest(server.url, `${runs}/${run}/%00record.json`)).toBe(404);
+    expect((await fetch(fileUrl(server, session.id, "no-such-run", "record.json"))).status).toBe(
+      404,
+    );
+    expect(
+      (await fetch(fileUrl(server, session.id, run, "artifacts/make/absent.png"))).status,
+    ).toBe(404);
+    // A directory is not a file to serve.
+    expect((await fetch(fileUrl(server, session.id, run, "artifacts"))).status).toBe(404);
+  });
+
+  it("are read, never written", async () => {
+    const server = await serve({ "leaves.md": leaves });
+    const { session, run } = await made(server);
+
+    const response = await post(server, `/api/sessions/${session.id}/runs/${run}/record.json`);
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
   });
 });

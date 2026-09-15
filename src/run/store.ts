@@ -1,7 +1,8 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join, relative } from "node:path";
+import { mkdir, readdir, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { within } from "../util/paths.js";
 import type { RunRecord } from "./record.js";
 
 /**
@@ -14,13 +15,48 @@ import type { RunRecord } from "./record.js";
 const OCTO_DIRECTORY = ".octo";
 const ARTIFACTS_DIRECTORY = "artifacts";
 
-export function runDirectory(notebookPath: string, runId: string): string {
+/** Where a Notebook's Runs are kept: one directory each, under the Notebook's own. */
+export function runsDirectory(notebookPath: string): string {
   const stem = basename(notebookPath, extname(notebookPath));
-  return join(dirname(notebookPath), OCTO_DIRECTORY, "runs", stem, runId);
+  return join(dirname(notebookPath), OCTO_DIRECTORY, "runs", stem);
+}
+
+export function runDirectory(notebookPath: string, runId: string): string {
+  return join(runsDirectory(notebookPath), runId);
 }
 
 export function recordPath(notebookPath: string, runId: string): string {
   return join(runDirectory(notebookPath, runId), "record.json");
+}
+
+/**
+ * The file at `file` under the directory of the Notebook's Run `runId`, as it
+ * really is on disk — an Artifact as a record names one, or the record itself
+ * — or nothing when the pair names no file there.
+ *
+ * Nothing, in particular, for a run name or a file path that climbs out of the
+ * directory it was given, however the climb is spelt, and for a link a Cell
+ * left pointing out of its directory: the Run's directory is the only place the
+ * Run answers for, so the path is followed to where it really leads before it
+ * is said to be inside. What was asked for here came off a request.
+ */
+export async function runFile(
+  notebookPath: string,
+  runId: string,
+  file: string,
+): Promise<string | undefined> {
+  if (runId.includes("\0") || file.includes("\0")) return undefined;
+  const directory = resolve(runDirectory(notebookPath, runId));
+  if (!within(resolve(runsDirectory(notebookPath)), directory)) return undefined;
+  const named = resolve(directory, file);
+  if (!within(directory, named)) return undefined;
+
+  try {
+    const real = await realpath(named);
+    return within(await realpath(directory), real) ? real : undefined;
+  } catch {
+    return undefined; // Nothing there, or a directory on the way that is not one.
+  }
 }
 
 /**

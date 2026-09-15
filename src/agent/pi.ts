@@ -252,7 +252,7 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
     },
 
     async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
-      const { signal, model, onText } = turnOptions;
+      const { signal, model, onText, onToolCall } = turnOptions;
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
       if (model !== undefined) await takeOn(model);
@@ -281,6 +281,11 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       const unsubscribe = session.subscribe((event) => {
         if (event.type === "agent_start" && signal?.aborted) stop();
         if (event.type === "auto_retry_start") retries.push({ error: event.errorMessage });
+        // As pi starts the tool, with the arguments it validated: the same
+        // call `summariseTurn` reads off the message afterwards, heard now.
+        if (event.type === "tool_execution_start") {
+          onToolCall?.({ name: event.toolName, input: event.args ?? null });
+        }
         const revealed = stream.accept(event);
         if (revealed) onText?.(revealed);
       });

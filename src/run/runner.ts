@@ -5,6 +5,7 @@ import {
   type Agent,
   type AgentFactory,
   type AgentSetup,
+  type ToolCall,
   TurnFailure,
   emptyResult,
   noUsage,
@@ -29,7 +30,7 @@ import {
   timeoutOf,
   workspaceOf,
 } from "../notebook/notebook.js";
-import { anchorBefore } from "./anchor.js";
+import { anchorBefore, anchorsAfter } from "./anchor.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord, Timing } from "./record.js";
 import { runScheduled } from "./schedule.js";
 import { type ShellResult, runShellCommand } from "./shell.js";
@@ -39,15 +40,20 @@ import { artifactsDirectory, listArtifacts, newRunId, writeRunRecord } from "./s
  * What a Run reports as it goes, for whoever is watching: a terminal printing
  * the reply as it streams, or a Notebook Session relaying it to a browser.
  *
- * A Cell's text arrives in fragments between its start and its end, and only a
- * Prompt Cell has any: a command's output is not spoken, so it arrives whole
- * with the record. The record in `cell-ended` is the one the Run Record will
- * carry, so a watcher that kept every event holds the same account of the
- * Run as the record does.
+ * The Run names itself first, once everything that could stop it has settled,
+ * with the Cells it is about to run in their order: its id is what the Cells'
+ * artifact directories sit under, so a watcher can place what a Cell leaves
+ * before the record that names it arrives. A Cell's text and tool calls arrive
+ * between its start and its end, and only a Prompt Cell has any: a command's
+ * output is not spoken, so it arrives whole with the record. The record in
+ * `cell-ended` is the one the Run Record will carry, so a watcher that kept
+ * every event holds the same account of the Run as the record does.
  */
 export type RunEvent =
+  | { readonly type: "run-started"; readonly run: string; readonly cells: readonly string[] }
   | { readonly type: "cell-started"; readonly cell: string }
   | { readonly type: "cell-text"; readonly cell: string; readonly text: string }
+  | { readonly type: "cell-tool-call"; readonly cell: string; readonly call: ToolCall }
   | { readonly type: "cell-ended"; readonly record: CellRecord };
 
 export interface RunOptions {
@@ -178,6 +184,8 @@ interface Turn {
   readonly timeout?: number;
   /** Hears the reply as it is produced. */
   readonly onText: (text: string) => void;
+  /** Hears each tool the agent invokes, as it does. */
+  readonly onToolCall: (call: ToolCall) => void;
   /** Fires when the Run is interrupted, when the Run can be. */
   readonly interrupt?: AbortSignal;
 }
@@ -191,6 +199,7 @@ async function runPromptCell(
   try {
     const result = await agent.prompt(turn.body, {
       onText: turn.onText,
+      onToolCall: turn.onToolCall,
       ...(turn.model !== undefined ? { model: turn.model } : {}),
       ...(stops.signal !== undefined ? { signal: stops.signal } : {}),
     });
@@ -322,6 +331,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
   // has to be told where that is before it can put anything there.
   const id = newRunId();
   const startedAt = new Date().toISOString();
+  observe({ type: "run-started", run: id, cells: cleared.order.map((cell) => cell.id) });
 
   let forked = false;
 
@@ -359,6 +369,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       ...(timeout !== undefined ? { timeout } : {}),
       ...(interrupt !== undefined ? { interrupt } : {}),
       onText: (text) => observe({ type: "cell-text", cell: cell.id, text }),
+      onToolCall: (call) => observe({ type: "cell-tool-call", cell: cell.id, call }),
     };
     if (cell.isolated) return runIsolatedCell(cell, turn, cleared.isolate);
 
@@ -371,7 +382,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     // passed over here as it is passed over when an Anchor is looked for.
     if (continues !== undefined && !forked) {
       forked = true;
-      await shared.resumeFrom(anchorBefore(continues, cell.id));
+      await shared.resumeFrom(anchorBefore(continues.anchors, cleared.allCells, cell.id));
     }
 
     return runPromptCell(cell, turn, shared);
@@ -408,9 +419,6 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     })),
   ];
 
-  const anchored = cells.some(
-    (recorded) => recorded.type === "prompt" && recorded.anchor !== undefined,
-  );
   // Read off the Graph rather than accumulated as the Cells ran, because the
   // Cells left Stale are mostly ones this Run never touched: the question is
   // what the Notebook now stands at, and only the whole Graph answers it.
@@ -419,6 +427,10 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     ran: cells.map((recorded) => recorded.id),
     staleBefore: continues?.stale ?? [],
   });
+  // Carried through the chain for the same reason: the Cells a later Run may
+  // want to fork behind are mostly ones this Run never touched.
+  const anchors = anchorsAfter({ anchorsBefore: continues?.anchors ?? {}, cells });
+  const anchored = Object.keys(anchors).length > 0;
 
   const record: RunRecord = {
     id,
@@ -432,8 +444,10 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       piVersion: shared.environment.piVersion,
       tools: [...shared.environment.tools],
     },
-    // The shared session, and named only when some Cell left an Anchor in it,
-    // since an Anchor is the only thing a later Run would reopen a session for.
+    // The shared session, and named only when an Anchor stands in it — this
+    // Run's or an earlier one's, since a Run that reopened a session and took
+    // no turn in it still leaves the earlier Anchors where they were — because
+    // an Anchor is the only thing a later Run would reopen a session for.
     // Nothing anchored a Notebook of Bash Cells, nor one of Isolated Cells whose
     // sessions are gone, nor one whose every turn failed — and pi does not write
     // a session file until an assistant message arrives, so naming one on the
@@ -443,6 +457,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     endedAt: new Date().toISOString(),
     cells,
     stale: [...stale],
+    anchors,
   };
   await writeRunRecord(record);
   return record;

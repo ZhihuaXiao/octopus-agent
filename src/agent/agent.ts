@@ -148,6 +148,12 @@ export interface TurnOptions {
    * Run knows which Cell is speaking.
    */
   readonly onText?: (text: string) => void;
+  /**
+   * Called with each tool the agent invokes, as it invokes it, so whoever
+   * asked can show what the agent is doing rather than only what it says it
+   * did. The same calls are on the result once the turn is over.
+   */
+  readonly onToolCall?: (call: ToolCall) => void;
 }
 
 export interface Agent {

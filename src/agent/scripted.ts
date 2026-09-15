@@ -18,13 +18,14 @@ import type { Environment } from "./environment.js";
  * does, and the next scripted turn is what that attempt gets — or a turn that
  * never comes back until the Run tells it to stop. A turn that fails or hangs
  * may say what it had spent by then, as a real one had; a turn that hangs may
- * have said something first, as a real one that went quiet halfway had.
+ * have said something or invoked a tool first, as a real one that went quiet
+ * halfway had.
  */
 export type ScriptedTurn =
   | ({ text: string } & Partial<Omit<CellResult, "text" | "retries">>)
   | { error: string; usage?: Usage }
   | { transient: string }
-  | { hangs: true; text?: string; usage?: Usage };
+  | { hangs: true; text?: string; toolCalls?: ToolCall[]; usage?: Usage };
 
 /** One turn as it arrived: what was asked, where, and what was already there. */
 export interface ScriptedTurnRecord {
@@ -86,8 +87,9 @@ export interface ScriptedAgent {
 
 const isError = (turn: ScriptedTurn): turn is { error: string; usage?: Usage } => "error" in turn;
 const isTransient = (turn: ScriptedTurn): turn is { transient: string } => "transient" in turn;
-const hangs = (turn: ScriptedTurn): turn is { hangs: true; text?: string; usage?: Usage } =>
-  "hangs" in turn;
+const hangs = (
+  turn: ScriptedTurn,
+): turn is { hangs: true; text?: string; toolCalls?: ToolCall[]; usage?: Usage } => "hangs" in turn;
 
 /** Rejects when the signal fires, and never otherwise: a provider that has gone quiet. */
 const untilAborted = (signal: AbortSignal | undefined, cause: () => Error) =>
@@ -171,7 +173,7 @@ export function createScriptedAgent(
       agentSession: session,
 
       async prompt(body: string, options: TurnOptions = {}): Promise<CellResult> {
-        const { signal, model, onText } = options;
+        const { signal, model, onText, onToolCall } = options;
         prompts.push(body);
         turns.push({
           body,
@@ -201,8 +203,10 @@ export function createScriptedAgent(
 
           // Nothing comes back until the Run gives up waiting, as pi's turn
           // resolves only once `abort` has brought the agent to rest. What the
-          // turn said before going quiet is spoken, and is all it ever says.
+          // turn did and said before going quiet is announced, and is all it
+          // ever does or says.
           if (hangs(turn)) {
+            for (const call of turn.toolCalls ?? []) onToolCall?.(call);
             if (turn.text !== undefined) onText?.(turn.text);
             const spent = turn.usage;
             return await untilAborted(signal, () => {
@@ -211,12 +215,14 @@ export function createScriptedAgent(
             });
           }
 
-          // Spoken in one piece before the turn resolves, which is the least a
-          // real turn streams: everything above the boundary hears the text
-          // before it holds the result, as it would from pi.
+          // Announced one at a time and then spoken in one piece, all before the
+          // turn resolves, which is the least a real turn streams: everything
+          // above the boundary hears the calls and the text before it holds the
+          // result, as it would from pi — whose tools run before its reply.
+          const toolCalls: ToolCall[] = turn.toolCalls ?? [];
+          for (const call of toolCalls) onToolCall?.(call);
           onText?.(turn.text);
 
-          const toolCalls: ToolCall[] = turn.toolCalls ?? [];
           const usage: Usage = turn.usage ?? noUsage;
           // Anchors are opaque to everything above the boundary, so a counter is
           // as faithful a stand-in as pi's entry ids: all a Run may assume of one

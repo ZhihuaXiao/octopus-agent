@@ -116,6 +116,20 @@ export interface RunRecord {
   endedAt: string;
   cells: CellRecord[];
   /**
+   * The Anchor each Prompt Cell's turn last ended on, by the Cell's id, across
+   * this Run and the Runs it continues — not only the Cells this Run ran. All
+   * inside `agentSession`, which is named whenever this is not empty.
+   *
+   * What a Run continuing this one forks at: a re-run Cell begins at the Anchor
+   * of the nearest Cell before it in the Run order that has one (ADR-0014). A
+   * Run of some Cells has nothing to say about the rest, so like `stale` this
+   * is carried through the chain rather than read off one Run's `cells`. A
+   * Cell whose last turn failed or was stopped has none, its earlier one being
+   * on a branch that turn abandoned; an Isolated Cell never has one; a Bash
+   * Cell never enters the Agent Session.
+   */
+  anchors: Record<string, string>;
+  /**
    * The Cells this Run left Stale, in the order they would run — every Cell of
    * the Notebook whose last result no longer reflects the Cells it depends on,
    * not only those this Run disturbed.

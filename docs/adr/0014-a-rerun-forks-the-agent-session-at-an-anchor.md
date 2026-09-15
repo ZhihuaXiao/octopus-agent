@@ -50,6 +50,20 @@ The Agent Session accumulates every abandoned branch, which is the price of losi
 Pi already carries that cost for its own users navigating an entry tree, and ticket 21's
 import is where a session's size becomes something anybody has to look at.
 
+A Run Record carries the Anchors standing after it — the continued Run's, with this Run's
+own laid over them — and not only those its own Cells recorded. A Run of one Cell alone has
+nothing before that Cell in its own record to say where it began, so reading one record
+alone could not continue such a Run with another Run of the same Cell: the second would find
+no Anchor before the Cell and drop it into an empty context. The search for where a Cell
+begins runs over the standing Anchors instead, in Run order, and finds the last one before
+the Cell — which is where its predecessor's turn most recently ended, whichever Run that was.
+A turn that ended on no Anchor — it failed, was stopped, or was Isolated — takes its Cell's
+standing Anchor down with it, since what stood is on a branch the new turn abandoned; a
+re-run of that Cell then begins where the failed turn began, as this decision promised. A
+Bash Cell stands nowhere in the Agent Session and leaves the Anchors as they were, and a Run
+of Bash Cells alone still names the Agent Session it carried on from, so that the Run after
+it can.
+
 A Run forks once, before the first Prompt Cell it runs, and every later Cell follows the
 one before it. That is right for a contiguous set of Cells, which is what ticket 09's stale
 set is, being reachability from a single Cell. A Run naming a set with a gap in it — the

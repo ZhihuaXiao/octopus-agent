@@ -6,20 +6,23 @@
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
  * Commands — open, run, interrupt — are HTTP requests, each with an answer;
- * what a Run produces is a stream, and goes to the browser over a WebSocket.
+ * what a Run produces is a stream, and goes to the browser over a WebSocket;
+ * what a Run leaves — its Artifacts, its record — is served from under the
+ * Run's directory, so the browser can show a file where the record names it.
  * Loopback only, because starting it must never expose the machine by accident
  * (ADR-0006); reaching it from elsewhere is a deliberate act that ticket 19 owns.
  */
 
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
-import { extname, isAbsolute, relative, resolve } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
 import { isRecord } from "../util/guards.js";
+import { within } from "../util/paths.js";
 import { listNotebooks } from "./notebooks.js";
 import {
   type NotebookSessions,
@@ -49,6 +52,8 @@ const NOTEBOOKS_ROUTE = "/api/notebooks";
 const SESSIONS_ROUTE = "/api/sessions";
 /** A Notebook Session by id, and what may be asked of it. */
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|events))?$/;
+/** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
+const RUN_FILE_ROUTE = /^\/api\/sessions\/([^/]+)\/runs\/([^/]+)\/(.+)$/;
 
 /** The kinds of file the client is made of; anything else under `/client/` is not served. */
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -56,6 +61,28 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
 };
+
+/**
+ * What a file a Run left is served as. An image is served as the image it is,
+ * so the browser draws it; plain text and the record as text, so the browser
+ * shows them. Anything else is a download, HTML and SVG among it: the files a
+ * Run leaves share an origin with the client, and a page or a script served
+ * as one could read whatever the client holds, so nothing an agent wrote is
+ * ever run.
+ */
+const RUN_FILE_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain; charset=utf-8",
+  ".md": "text/plain; charset=utf-8",
+  ".csv": "text/plain; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+};
+const DOWNLOAD = "application/octet-stream";
 
 /** What a browser fetches a page and its assets with; Node itself leaves a HEAD's body out. */
 const READS: readonly string[] = ["GET", "HEAD"];
@@ -110,9 +137,7 @@ function clientFile(pathname: string): string | undefined {
   }
   if (name.includes("\0")) return undefined;
   const file = resolve(CLIENT_DIRECTORY, name);
-  const inside = relative(CLIENT_DIRECTORY, file);
-  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) return undefined;
-  return file;
+  return within(CLIENT_DIRECTORY, file) ? file : undefined;
 }
 
 async function serveClient(pathname: string, response: ServerResponse): Promise<void> {
@@ -255,6 +280,61 @@ async function serveSession(
   }
 }
 
+/** A path's segments as written in the URL, decoded; nothing when a percent sign escapes nothing. */
+function decoded(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
+async function serveRunFile(
+  sessions: NotebookSessions,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!permitted(READS, request, response)) return;
+  const [, id = "", run = "", path = ""] = matched;
+  const session = sessions.get(id);
+  const file = await session?.runFile(decoded(run) ?? "\0", decoded(path) ?? "\0");
+  if (file === undefined) {
+    notFound(response);
+    return;
+  }
+
+  let contents: Buffer;
+  try {
+    contents = await readFile(file);
+  } catch (cause) {
+    const { code } = cause as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") notFound(response);
+    else throw cause;
+    return;
+  }
+
+  const type = RUN_FILE_TYPES[extname(file).toLowerCase()] ?? DOWNLOAD;
+  response.writeHead(200, {
+    "content-type": type,
+    // Served as what its name says and nothing else, whatever its bytes look like.
+    "x-content-type-options": "nosniff",
+    ...(type === DOWNLOAD ? { "content-disposition": attachment(basename(file)) } : {}),
+  });
+  response.end(contents);
+}
+
+/**
+ * A Content-Disposition offering the file for download under `name`. A header
+ * carries only Latin-1 as written, so the name is spelt out UTF-8-encoded as
+ * `filename*` (RFC 6266) beside a `filename` browsers without it fall back on,
+ * with whatever cannot be written there replaced.
+ */
+function attachment(name: string): string {
+  const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
 /** Whether the request's method is one the route takes; a 405 saying which are, when not. */
 function permitted(
   allowed: readonly string[],
@@ -281,6 +361,11 @@ async function handle(
   const matched = SESSION_ROUTE.exec(pathname);
   if (matched !== null) {
     await serveSession(served.sessions, matched, request, response);
+    return;
+  }
+  const runFile = RUN_FILE_ROUTE.exec(pathname);
+  if (runFile !== null) {
+    await serveRunFile(served.sessions, runFile, request, response);
     return;
   }
   if (pathname === SESSIONS_ROUTE) {
