@@ -147,6 +147,13 @@ _Avoid_: run mode, form mode, simple mode, user mode
 An authenticated client attachment to the server.
 _Avoid_: session, login, client session
 
+**Revision**:
+Which version of a Notebook's file a Notebook Session holds, named by a digest of its
+bytes. A save says which Revision its draft was made from, so a draft made from an
+earlier one — the file saved by another browser since, or changed on disk — is detected
+rather than written over what it never saw.
+_Avoid_: version, etag, hash, checksum, timestamp
+
 ### Inherited from pi
 
 **Skill**, **Package**, **Extension**, and **Tool** are pi's own concepts and keep pi's

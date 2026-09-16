@@ -15,6 +15,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
+import { applyEdit, editOf } from "./edit.js";
 import {
   cellsOf,
   formatDiagnostics,
@@ -275,6 +276,45 @@ describe("round-trip property", () => {
         // The generated bodies are unique, so putting the original back is a
         // check that nothing else moved: any other change would survive it.
         expect(edited.replace("A replaced body.\n", target.body)).toBe(notebook.source);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it("reproduces the bytes from an edit that describes the notebook as it stands", () => {
+    fc.assert(
+      fc.property(notebooks, (notebook) => {
+        const before = parsed(notebook);
+        const result = applyEdit(before, editOf(before));
+
+        expect(result.ok && result.source).toBe(notebook.source);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it("changes nothing outside a cell whose body an edit replaces", () => {
+    fc.assert(
+      fc.property(editableNotebooks, fc.nat(), (notebook, choice) => {
+        const target = notebook.cells[choice % notebook.cells.length];
+        if (!target) throw new Error("expected a generated cell to edit");
+        const before = parsed(notebook);
+        const edit = editOf(before);
+
+        const result = applyEdit(before, {
+          ...edit,
+          segments: edit.segments.map((segment) =>
+            segment.kind === "cell" && segment.id === target.id
+              ? { ...segment, body: "A replaced body." }
+              : segment,
+          ),
+        });
+
+        if (!result.ok) throw new Error(formatDiagnostics(result.errors));
+        const newline = notebook.source.includes("\r\n") ? "\r\n" : "\n";
+        expect(result.source.replace(`A replaced body.${newline}`, target.body)).toBe(
+          notebook.source,
+        );
       }),
       { numRuns: 500 },
     );

@@ -25,10 +25,20 @@
         <div class="controls">
           <button id="run-all" type="button">Run all</button>
           <button id="interrupt" type="button" disabled>Interrupt</button>
+          <button id="edit" type="button">Edit</button>
+          <button id="duplicate" type="button">Duplicate</button>
         </div>
       </div>
       <p id="session-status" class="status"></p>
-      <ol id="cells" class="cells"></ol>
+      <ol id="segments" class="segments"></ol>
+      <form id="editor" class="editor" hidden>
+        <div class="editor-controls">
+          <button id="save" type="submit">Save</button>
+          <button id="cancel" type="button">Cancel</button>
+          <p id="editor-status" class="status"></p>
+        </div>
+        <div id="draft"></div>
+      </form>
     </main>
     <script type="module" src="/client/main.js"></script>
   </body>

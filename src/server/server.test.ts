@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -317,11 +317,17 @@ interface CellView {
   error?: string;
 }
 
+/** The document's layout: its Prose, and where each Cell sits among it. */
+type SegmentView = { kind: "prose"; text: string } | { kind: "cell"; id: string };
+
 /** What a Notebook Session says of itself, as the server reports it. */
 interface NotebookSessionState {
   id: string;
   notebook: string;
   title: string;
+  revision: string;
+  frontmatter?: string;
+  segments: SegmentView[];
   running: boolean;
   run?: string;
   cells: CellView[];
@@ -352,6 +358,12 @@ describe("opening a notebook", () => {
       id: expect.any(String),
       notebook: "hello.md",
       title: "Hello",
+      revision: expect.any(String),
+      frontmatter: "title: Hello\n",
+      segments: [
+        { kind: "prose", text: "\n" },
+        { kind: "cell", id: "greet" },
+      ],
       running: false,
       cells: [
         {
@@ -1149,5 +1161,499 @@ describe("the files a run leaves", () => {
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET, HEAD");
+  });
+});
+
+/** A Notebook with Prose around its Cells, as an author would write one. */
+const essay = `---
+title: Essay
+---
+
+# The work
+
+An introduction.
+
+\`\`\`bash id=look
+echo before
+\`\`\`
+
+Then the agent takes over.
+
+\`\`\`prompt id=think uses=look
+Think about it.
+\`\`\`
+`;
+
+/** One segment of a document as an edit describes it. */
+type SegmentEdit =
+  | { kind: "prose"; text: string }
+  | {
+      kind: "cell";
+      id: string;
+      type: string;
+      body: string;
+      uses: string[];
+      isolated: boolean;
+      model?: string;
+      timeout?: string;
+    };
+
+/** The edit describing a Notebook Session's document exactly as it stands. */
+function editOf(state: NotebookSessionState): {
+  frontmatter?: string;
+  segments: SegmentEdit[];
+} {
+  return {
+    ...(state.frontmatter !== undefined ? { frontmatter: state.frontmatter } : {}),
+    segments: state.segments.map((segment): SegmentEdit => {
+      if (segment.kind === "prose") return segment;
+      const cell = state.cells.find((candidate) => candidate.id === segment.id);
+      if (cell === undefined)
+        throw new Error(`the layout names a cell "${segment.id}" the state lacks`);
+      return {
+        kind: "cell",
+        id: cell.id,
+        type: cell.type,
+        body: cell.body.replace(/\r?\n$/, ""),
+        uses: cell.uses,
+        isolated: cell.isolated,
+        ...(cell.model !== undefined ? { model: cell.model } : {}),
+        ...(cell.timeout !== undefined ? { timeout: `${cell.timeout}ms` } : {}),
+      };
+    }),
+  };
+}
+
+/** Asks the session to save a document, based on the state the browser has, and returns the answer. */
+const save = (server: RunningServer, state: NotebookSessionState, edit: unknown) =>
+  post(server, `/api/sessions/${state.id}/save`, {
+    base: state.revision,
+    ...(edit as Record<string, unknown>),
+  });
+
+/** The state, with one Cell's declaration changed. */
+function withCell(
+  state: NotebookSessionState,
+  id: string,
+  change: (cell: Extract<SegmentEdit, { kind: "cell" }>) => SegmentEdit,
+) {
+  const edit = editOf(state);
+  return {
+    ...edit,
+    segments: edit.segments.map((segment) =>
+      segment.kind === "cell" && segment.id === id ? change(segment) : segment,
+    ),
+  };
+}
+
+describe("editing a notebook in its session", () => {
+  it("shows the document around the cells: its frontmatter, and the prose between them", async () => {
+    const server = await serve({ "essay.md": essay });
+
+    const session = await open(server, "essay.md");
+
+    expect(session.frontmatter).toBe("title: Essay\n");
+    expect(session.segments).toEqual([
+      { kind: "prose", text: "\n# The work\n\nAn introduction.\n\n" },
+      { kind: "cell", id: "look" },
+      { kind: "prose", text: "\nThen the agent takes over.\n\n" },
+      { kind: "cell", id: "think" },
+    ]);
+    expect(session.revision).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("has no frontmatter to show for a notebook that has none", async () => {
+    const server = await serve({ "chain.md": chain });
+
+    const session = await open(server, "chain.md");
+
+    expect(session).not.toHaveProperty("frontmatter");
+  });
+
+  it("saves one cell's body, changing only that cell's bytes on disk", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const browser = await watch(server, session.id);
+
+    const response = await save(
+      server,
+      session,
+      withCell(session, "look", (cell) => ({ ...cell, body: "echo after" })),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(
+      essay.replace("echo before\n", "echo after\n"),
+    );
+    // The session now shows the notebook as saved, under a new revision, and
+    // every browser watching hears so.
+    const saved = (await response.json()) as NotebookSessionState;
+    expect(saved.cells[0]).toMatchObject({ id: "look", body: "echo after\n" });
+    expect(saved.revision).not.toBe(session.revision);
+    expect(await stateOf(server, session.id)).toEqual(saved);
+    const heard = await browser.next("notebook-changed");
+    expect(heard.session).toEqual(saved);
+    await browser.close();
+  });
+
+  it("runs the notebook as saved", async () => {
+    const server = await serve({ "essay.md": essay }, createScriptedAgent([{ text: "Thought" }]));
+    const session = await open(server, "essay.md");
+    await save(
+      server,
+      session,
+      withCell(session, "look", (cell) => ({ ...cell, body: "echo after" })),
+    );
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+
+    expect((await stateOf(server, session.id)).cells).toMatchObject([
+      { id: "look", status: "ok", text: "after\n" },
+      { id: "think", status: "ok", text: "Thought" },
+    ]);
+    await browser.close();
+  });
+
+  it("keeps what each cell last produced across an edit, and forgets a cell that is removed", async () => {
+    const server = await serve({ "essay.md": essay }, createScriptedAgent([{ text: "Thought" }]));
+    const session = await open(server, "essay.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    await browser.next("run-ended");
+    const ran = await stateOf(server, session.id);
+
+    const edit = withCell(ran, "look", (cell) => ({ ...cell, body: "echo changed" }));
+    const response = await save(server, ran, {
+      ...edit,
+      segments: edit.segments.filter(
+        (segment) => !(segment.kind === "cell" && segment.id === "think"),
+      ),
+    });
+
+    expect(response.status).toBe(200);
+    const saved = (await response.json()) as NotebookSessionState;
+    expect(saved.cells).toMatchObject([
+      { id: "look", body: "echo changed\n", status: "ok", text: "before\n" },
+    ]);
+    await browser.close();
+  });
+
+  it("adds, removes and reorders cells", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const edit = editOf(session);
+    const [intro, look, between, think] = edit.segments as [
+      SegmentEdit,
+      SegmentEdit,
+      SegmentEdit,
+      SegmentEdit,
+    ];
+    const added: SegmentEdit = {
+      kind: "cell",
+      id: "report",
+      type: "prompt",
+      body: "Report.",
+      uses: ["look"],
+      isolated: true,
+      model: "anthropic/claude-haiku-4-5",
+      timeout: "5m",
+    };
+
+    // `think` moved above `look`, `report` added at the end; nothing depends on
+    // `think` any more, so its edge to `look` goes too.
+    const response = await save(server, session, {
+      ...edit,
+      segments: [
+        intro,
+        { ...(think as Extract<SegmentEdit, { kind: "cell" }>), uses: [] },
+        between,
+        look,
+        { kind: "prose", text: "\n" },
+        added,
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    const saved = (await response.json()) as NotebookSessionState;
+    expect(saved.segments).toEqual([
+      { kind: "prose", text: "\n# The work\n\nAn introduction.\n\n" },
+      { kind: "cell", id: "think" },
+      { kind: "prose", text: "\nThen the agent takes over.\n\n" },
+      { kind: "cell", id: "look" },
+      { kind: "prose", text: "\n" },
+      { kind: "cell", id: "report" },
+    ]);
+    expect(saved.cells).toMatchObject([
+      { id: "think", uses: [] },
+      { id: "look" },
+      {
+        id: "report",
+        type: "prompt",
+        body: "Report.\n",
+        uses: ["look"],
+        isolated: true,
+        model: "anthropic/claude-haiku-4-5",
+        timeout: 300_000,
+        status: "idle",
+      },
+    ]);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(
+      [
+        "---",
+        "title: Essay",
+        "---",
+        "",
+        "# The work",
+        "",
+        "An introduction.",
+        "",
+        "```prompt id=think",
+        "Think about it.",
+        "```",
+        "",
+        "Then the agent takes over.",
+        "",
+        "```bash id=look",
+        "echo before",
+        "```",
+        "",
+        "```prompt id=report uses=look isolated model=anthropic/claude-haiku-4-5 timeout=5m",
+        "Report.",
+        "```",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("edits the frontmatter: a new title is the session's, a new input is the run's to take", async () => {
+    const agent = createScriptedAgent([{ text: "Thought" }]);
+    const server = await serve({ "essay.md": essay }, agent);
+    const session = await open(server, "essay.md");
+    const edit = withCell(session, "think", (cell) => ({
+      ...cell,
+      body: "Think about {{topic}}.",
+    }));
+
+    const response = await save(server, session, {
+      ...edit,
+      frontmatter: "title: An essay\ninputs:\n  - name: topic\n",
+    });
+
+    expect(response.status).toBe(200);
+    const saved = (await response.json()) as NotebookSessionState;
+    expect(saved.title).toBe("An essay");
+    expect(saved.frontmatter).toBe("title: An essay\ninputs:\n  - name: topic\n");
+    const browser = await watch(server, session.id);
+    await run(server, session.id, { inputs: { topic: "fidelity" } });
+    await browser.next("run-ended");
+    expect(agent.prompts).toEqual(["Think about fidelity."]);
+    await browser.close();
+  });
+
+  it("edits a cell's dependency edges", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+
+    const response = await save(
+      server,
+      session,
+      withCell(session, "think", (cell) => ({ ...cell, uses: [], isolated: true })),
+    );
+
+    expect(response.status).toBe(200);
+    const saved = (await response.json()) as NotebookSessionState;
+    expect(saved.cells[1]).toMatchObject({ id: "think", uses: [], isolated: true });
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(
+      essay.replace("```prompt id=think uses=look", "```prompt id=think isolated"),
+    );
+  });
+
+  it("refuses an edit the format cannot read, saying why, and writes nothing", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+
+    const response = await save(
+      server,
+      session,
+      withCell(session, "think", (cell) => ({ ...cell, uses: ["nowhere"] })),
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.text()).toMatch(/line 15: Cell "think" uses "nowhere"/);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+    expect(await stateOf(server, session.id)).toEqual(session);
+  });
+
+  it("refuses to save a notebook with no cells left in it", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const edit = editOf(session);
+
+    const response = await save(server, session, {
+      ...edit,
+      segments: edit.segments.filter((segment) => segment.kind === "prose"),
+    });
+
+    expect(response.status).toBe(422);
+    expect(await response.text()).toMatch(/no cells/);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+  });
+
+  it("detects that the notebook changed on disk since it was opened, rather than overwriting it", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const browser = await watch(server, session.id);
+    const onDisk = essay.replace("echo before", "echo elsewhere");
+    await writeFile(join(server.directory, "essay.md"), onDisk, "utf8");
+
+    const response = await save(
+      server,
+      session,
+      withCell(session, "look", (cell) => ({ ...cell, body: "echo mine" })),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.text()).toMatch(/changed on disk/);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(onDisk);
+    // The session now shows what is on disk, and says so to whoever is watching.
+    const now = await stateOf(server, session.id);
+    expect(now.cells[0]).toMatchObject({ id: "look", body: "echo elsewhere\n" });
+    expect(now.revision).not.toBe(session.revision);
+    expect((await browser.next("notebook-changed")).session).toEqual(now);
+    // Told, the browser may save over it on purpose, from the revision it now knows.
+    const again = await save(
+      server,
+      now,
+      withCell(now, "look", (cell) => ({ ...cell, body: "echo mine" })),
+    );
+    expect(again.status).toBe(200);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(
+      essay.replace("echo before", "echo mine"),
+    );
+    await browser.close();
+  });
+
+  it("detects a draft made from a revision another browser has since saved over", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+
+    const first = await save(
+      server,
+      session,
+      withCell(session, "look", (cell) => ({ ...cell, body: "echo first" })),
+    );
+    const second = await save(
+      server,
+      session,
+      withCell(session, "look", (cell) => ({ ...cell, body: "echo second" })),
+    );
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(409);
+    expect(await second.text()).toMatch(/saved since/);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(
+      essay.replace("echo before", "echo first"),
+    );
+  });
+
+  it("takes only a document based on a revision, with segments it can read", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const edit = editOf(session);
+    const url = `/api/sessions/${session.id}/save`;
+
+    expect((await post(server, url, edit)).status).toBe(400);
+    expect((await post(server, url, { base: session.revision })).status).toBe(400);
+    expect(
+      (await post(server, url, { base: session.revision, segments: [{ kind: "verse" }] })).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(server, url, {
+          base: session.revision,
+          segments: [{ kind: "cell", id: "a", type: "prompt", body: "x" }],
+        })
+      ).status,
+    ).toBe(400);
+    expect((await post(server, url, { ...edit, base: session.revision, extra: 1 })).status).toBe(
+      400,
+    );
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+  });
+
+  it("is a change to the file, never a read", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+
+    const response = await fetch(new URL(`/api/sessions/${session.id}/save`, server.url));
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+});
+
+describe("duplicating a notebook", () => {
+  it("copies the file byte for byte under the new name, which is then a notebook of its own", async () => {
+    const server = await serve({ "essay.md": essay });
+
+    const response = await post(server, "/api/notebooks", {
+      from: "essay.md",
+      to: "drafts/essay-copy.md",
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ path: "drafts/essay-copy.md", title: "Essay" });
+    expect(await readFile(join(server.directory, "drafts/essay-copy.md"), "utf8")).toBe(essay);
+    const listed = (await (await fetch(new URL("/api/notebooks", server.url))).json()) as {
+      notebooks: unknown[];
+    };
+    expect(listed.notebooks).toEqual([
+      { path: "drafts/essay-copy.md", title: "Essay" },
+      { path: "essay.md", title: "Essay" },
+    ]);
+  });
+
+  it("is edited independently of the original", async () => {
+    const server = await serve({ "essay.md": essay });
+    await post(server, "/api/notebooks", { from: "essay.md", to: "copy.md" });
+    const original = await open(server, "essay.md");
+    const copy = await open(server, "copy.md");
+    expect(copy.id).not.toBe(original.id);
+
+    const response = await save(server, copy, {
+      ...editOf(copy),
+      frontmatter: "title: The copy\n",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await readFile(join(server.directory, "copy.md"), "utf8")).toBe(
+      essay.replace("title: Essay", "title: The copy"),
+    );
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+    expect(await stateOf(server, original.id)).toEqual(original);
+  });
+
+  it("never writes over a notebook that is already there", async () => {
+    const server = await serve({ "essay.md": essay, "hello.md": hello });
+
+    const response = await post(server, "/api/notebooks", { from: "essay.md", to: "hello.md" });
+
+    expect(response.status).toBe(409);
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+  });
+
+  it("copies only a notebook that is there, to a Markdown name under the served directory", async () => {
+    const server = await serve({ "essay.md": essay });
+    const copy = (body: unknown) => post(server, "/api/notebooks", body);
+
+    expect((await copy({ from: "missing.md", to: "copy.md" })).status).toBe(404);
+    expect((await copy({ from: "../essay.md", to: "copy.md" })).status).toBe(404);
+    expect((await copy({ from: "essay.md", to: "../copy.md" })).status).toBe(400);
+    expect((await copy({ from: "essay.md", to: "copy.txt" })).status).toBe(400);
+    expect((await copy({ from: "essay.md" })).status).toBe(400);
+    expect((await copy({ from: "essay.md", to: "copy.md", title: "x" })).status).toBe(400);
+    expect(await readdir(server.directory)).toEqual(["essay.md"]);
   });
 });

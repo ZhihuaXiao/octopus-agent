@@ -5,10 +5,12 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt — are HTTP requests, each with an answer;
- * what a Run produces is a stream, and goes to the browser over a WebSocket;
- * what a Run leaves — its Artifacts, its record — is served from under the
- * Run's directory, so the browser can show a file where the record names it.
+ * Commands — open, run, interrupt, save, duplicate — are HTTP requests, each
+ * with an answer; what a Run produces is a stream, and goes to the browser
+ * over a WebSocket; what a Run leaves — its Artifacts, its record — is served
+ * from under the Run's directory, so the browser can show a file where the
+ * record names it. A save writes the Notebook's file, and only the bytes the
+ * edit changed, so a diff of the file shows what the author did and no more.
  * Loopback only, because starting it must never expose the machine by accident
  * (ADR-0006); reaching it from elsewhere is a deliberate act that ticket 19 owns.
  */
@@ -21,12 +23,14 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
+import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
-import { listNotebooks } from "./notebooks.js";
+import { copyNotebook, listNotebooks } from "./notebooks.js";
 import {
   type NotebookSessions,
   type RunRequest,
+  type SaveRequest,
   createNotebookSessions,
 } from "./notebook-session.js";
 
@@ -51,7 +55,7 @@ const SHELL = "index.html";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
 const SESSIONS_ROUTE = "/api/sessions";
 /** A Notebook Session by id, and what may be asked of it. */
-const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|events))?$/;
+const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events))?$/;
 /** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
 const RUN_FILE_ROUTE = /^\/api\/sessions\/([^/]+)\/runs\/([^/]+)\/(.+)$/;
 
@@ -88,7 +92,7 @@ const DOWNLOAD = "application/octet-stream";
 const READS: readonly string[] = ["GET", "HEAD"];
 const WRITES: readonly string[] = ["POST"];
 
-/** As much as a request's body may be: a Notebook's Inputs, not a Notebook. */
+/** As much as a request's body may be: a Notebook being saved, which is Markdown, not its Artifacts. */
 const LONGEST_BODY = 1024 * 1024;
 
 export interface ServerOptions {
@@ -168,6 +172,40 @@ async function serveNotebooks(directory: string, response: ServerResponse): Prom
   json(response, 200, { directory, notebooks });
 }
 
+/** Duplicates a Notebook under a new name, so it can be adapted rather than written from nothing. */
+async function duplicateNotebook(
+  directory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["from", "to"]) ||
+    typeof body.from !== "string" ||
+    typeof body.to !== "string"
+  ) {
+    reply(response, 400, "The request must name the notebook to copy and the new name, as JSON.\n");
+    return;
+  }
+
+  const copied = await copyNotebook(directory, body.from, body.to);
+  switch (copied.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "invalid":
+      reply(response, 400, `${copied.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${body.to}.\n`);
+      return;
+    case "copied":
+      json(response, 201, copied.entry);
+      return;
+  }
+}
+
 /** A request's body read as JSON, or nothing when it is not JSON. Too long a body is a mistake too. */
 async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -204,6 +242,59 @@ function runRequestOf(body: unknown): RunRequest | undefined {
     } else return undefined;
   }
   return request;
+}
+
+/** Whether `value` is a record with exactly the keys named, some of them optional. */
+function hasKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const keys = Object.keys(value);
+  return (
+    required.every((key) => keys.includes(key)) &&
+    keys.every((key) => required.includes(key) || optional.includes(key))
+  );
+}
+
+/** One segment of a Notebook as a request describes it, or nothing when it is not one. */
+function segmentEditOf(value: unknown): SegmentEdit | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.kind === "prose") {
+    return hasKeys(value, ["kind", "text"]) && typeof value.text === "string"
+      ? { kind: "prose", text: value.text }
+      : undefined;
+  }
+  if (value.kind !== "cell") return undefined;
+  if (!hasKeys(value, ["kind", "id", "type", "body", "uses", "isolated"], ["model", "timeout"])) {
+    return undefined;
+  }
+  const { id, type, body, uses, isolated, model, timeout } = value;
+  if (typeof id !== "string" || typeof body !== "string" || typeof isolated !== "boolean") {
+    return undefined;
+  }
+  if (type !== "prompt" && type !== "bash") return undefined;
+  if (!isStrings(uses)) return undefined;
+  if (model !== undefined && typeof model !== "string") return undefined;
+  if (timeout !== undefined && typeof timeout !== "string") return undefined;
+  const cell: CellEdit = { kind: "cell", id, type, body, uses, isolated };
+  return {
+    ...cell,
+    ...(model !== undefined ? { model } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+  };
+}
+
+/** The save a body asks for, or nothing when the body is not one. */
+function saveRequestOf(body: unknown): SaveRequest | undefined {
+  if (!isRecord(body) || !hasKeys(body, ["base", "segments"], ["frontmatter"])) return undefined;
+  const { base, segments, frontmatter } = body;
+  if (typeof base !== "string" || !Array.isArray(segments)) return undefined;
+  if (frontmatter !== undefined && typeof frontmatter !== "string") return undefined;
+  const read = segments.map(segmentEditOf);
+  const edits = read.filter((segment) => segment !== undefined);
+  if (edits.length !== read.length) return undefined;
+  return { base, segments: edits, ...(frontmatter !== undefined ? { frontmatter } : {}) };
 }
 
 async function openSession(
@@ -272,6 +363,29 @@ async function serveSession(
       response.writeHead(204);
       response.end();
       return;
+    case "save": {
+      const asked = saveRequestOf(await readJson(request));
+      if (asked === undefined) {
+        reply(
+          response,
+          400,
+          "The request must carry the notebook's segments and the revision it was based on, as JSON.\n",
+        );
+        return;
+      }
+      const saved = await session.save(asked);
+      switch (saved.kind) {
+        case "changed":
+          reply(response, 409, `${saved.problem}\n`);
+          return;
+        case "refused":
+          reply(response, 422, `${saved.problem}\n`);
+          return;
+        case "saved":
+          json(response, 200, session.state());
+          return;
+      }
+    }
     case "events":
       // A plain read of the events: the WebSocket handshake is an upgrade and
       // never arrives here, so whoever did is told what to connect with.
@@ -372,14 +486,18 @@ async function handle(
     if (permitted(WRITES, request, response)) await openSession(served.sessions, request, response);
     return;
   }
+  if (pathname === NOTEBOOKS_ROUTE) {
+    // Read, the Notebooks under the directory; written to, a copy of one of them.
+    if (!permitted([...READS, ...WRITES], request, response)) return;
+    if (WRITES.includes(request.method ?? "")) {
+      await duplicateNotebook(served.directory, request, response);
+    } else await serveNotebooks(served.directory, response);
+    return;
+  }
 
   if (!permitted(READS, request, response)) return;
   if (pathname === "/" || pathname.startsWith(CLIENT_ROUTE)) {
     await serveClient(pathname, response);
-    return;
-  }
-  if (pathname === NOTEBOOKS_ROUTE) {
-    await serveNotebooks(served.directory, response);
     return;
   }
   notFound(response);

@@ -1,15 +1,18 @@
 // @ts-check
 /**
  * The client: lists the Notebooks the server can see, opens one into its
- * Notebook Session, and shows the Session as the Author View — each Cell as
- * the Notebook declares it, with what running it has produced: its text as it
- * is spoken, each tool the agent invokes as it invokes it, and the files it
- * left — and a way to run one Cell or all of them, or to stop.
+ * Notebook Session, and shows the Session as the Author View — the Notebook as
+ * written, each Cell as the Notebook declares it, with what running it has
+ * produced: its text as it is spoken, each tool the agent invokes as it
+ * invokes it, and the files it left — and a way to run one Cell or all of
+ * them, or to stop; and, while editing, the whole Notebook as a form —
+ * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
+ * saved whole, based on the revision it was drawn from.
  *
- * The Session is the server's. This page asks it to run or to stop, over HTTP,
- * and hears what happens over a WebSocket; closing the page changes nothing
- * about the work. The Notebook opened is kept in the URL's fragment, so a
- * reload opens the same one again.
+ * The Session is the server's. This page asks it to run, to stop, or to save,
+ * over HTTP, and hears what happens over a WebSocket; closing the page changes
+ * nothing about the work. The Notebook opened is kept in the URL's fragment,
+ * so a reload opens the same one again.
  */
 
 /**
@@ -32,7 +35,17 @@
  *   run?: string,
  *   error?: string,
  * }} CellView
- * @typedef {{ id: string, notebook: string, title: string, running: boolean, cells: CellView[] }} NotebookSessionState
+ * @typedef {{ kind: "prose", text: string } | { kind: "cell", id: string }} SegmentView
+ * @typedef {{
+ *   id: string,
+ *   notebook: string,
+ *   title: string,
+ *   revision: string,
+ *   frontmatter?: string,
+ *   segments: SegmentView[],
+ *   running: boolean,
+ *   cells: CellView[],
+ * }} NotebookSessionState
  * @typedef {{
  *   id: string,
  *   type: "prompt" | "bash",
@@ -52,6 +65,7 @@
  *   | { type: "cell-ended", record: CellRecord }
  *   | { type: "run-ended", record: { id: string, stale: string[] } }
  *   | { type: "run-refused", error: string }
+ *   | { type: "notebook-changed", session: NotebookSessionState }
  * )} NotebookSessionEvent
  */
 
@@ -295,6 +309,18 @@ function renderCell(cell, session, running) {
   return item;
 }
 
+/**
+ * The Notebook in order: its Prose as written, and each Cell where it sits.
+ * @param {NotebookSessionState} state
+ */
+function renderSegments(state) {
+  return state.segments.map((segment) => {
+    if (segment.kind === "prose") return make("li", "prose", segment.text.replace(/\r?\n$/, ""));
+    const cell = state.cells.find((candidate) => candidate.id === segment.id);
+    return cell === undefined ? make("li", "prose", "") : renderCell(cell, state.id, state.running);
+  });
+}
+
 function renderSession() {
   if (watching === undefined) return;
   const { state } = watching;
@@ -302,9 +328,12 @@ function renderSession() {
   element("notebook").textContent = state.notebook;
   /** @type {HTMLButtonElement} */ (element("run-all")).disabled = state.running;
   /** @type {HTMLButtonElement} */ (element("interrupt")).disabled = !state.running;
-  element("cells").replaceChildren(
-    ...state.cells.map((cell) => renderCell(cell, state.id, state.running)),
-  );
+  element("edit").hidden = draft !== undefined;
+  element("segments").hidden = draft !== undefined;
+  element("editor").hidden = draft === undefined;
+  // While the Notebook is being edited the draft is what is on the page; the
+  // Cells are drawn again from the state once the editing is over.
+  if (draft === undefined) element("segments").replaceChildren(...renderSegments(state));
 }
 
 /**
@@ -314,7 +343,7 @@ function renderSession() {
  * @param {string} text
  */
 function appendText(id, text) {
-  const output = element("cells").querySelector(`[data-cell="${id}"] .cell-output`);
+  const output = element("segments").querySelector(`[data-cell="${id}"] .cell-output`);
   if (output !== null) output.textContent += text;
 }
 
@@ -325,7 +354,7 @@ function appendText(id, text) {
  * @param {ToolCall} call
  */
 function appendToolCall(id, call) {
-  const calls = element("cells").querySelector(`[data-cell="${id}"] .tool-calls`);
+  const calls = element("segments").querySelector(`[data-cell="${id}"] .tool-calls`);
   if (calls !== null) calls.append(renderToolCall(call));
 }
 
@@ -406,6 +435,17 @@ function apply(event) {
       status.textContent = event.error;
       renderSession();
       return;
+    case "notebook-changed":
+      // Saved from here or elsewhere, or found changed on disk: what the
+      // session holds now, which is what the next save is based on. A draft
+      // on the page is left alone, since it is the author's work in progress.
+      watching.state = event.session;
+      if (draft !== undefined && !draft.saving && draft.base !== event.session.revision) {
+        element("editor-status").textContent =
+          `${event.session.notebook} has changed since this draft was begun. Save to write over it, or cancel to see what it holds now.`;
+      }
+      renderSession();
+      return;
   }
 }
 
@@ -440,6 +480,385 @@ async function interrupt() {
 }
 
 /**
+ * The Notebook as it is being edited: each field as typed, so a half-written
+ * `uses` or timeout is kept as text until the save, when the server reads it
+ * and says what it makes of it. A body is content, without the line ending
+ * that closes it, which is the fence's to supply.
+ * @typedef {{
+ *   kind: "cell",
+ *   id: string,
+ *   type: "prompt" | "bash",
+ *   body: string,
+ *   uses: string,
+ *   isolated: boolean,
+ *   model: string,
+ *   timeout: string,
+ * }} DraftCell
+ * @typedef {{ kind: "prose", text: string }} DraftProse
+ * @typedef {DraftCell | DraftProse} DraftSegment
+ * @typedef {{
+ *   base: string,
+ *   frontmatter: string,
+ *   segments: DraftSegment[],
+ *   saving: boolean,
+ * }} Draft
+ */
+
+/** The draft being edited, when the page is in its edit mode. */
+/** @type {Draft | undefined} */
+let draft;
+
+/**
+ * A draft of the Notebook as the session holds it.
+ * @param {NotebookSessionState} state
+ * @returns {Draft}
+ */
+function draftOf(state) {
+  return {
+    base: state.revision,
+    frontmatter: state.frontmatter ?? "",
+    segments: state.segments.flatMap(
+      /** @returns {DraftSegment[]} */ (segment) => {
+        if (segment.kind === "prose") return [{ kind: "prose", text: segment.text }];
+        const cell = state.cells.find((candidate) => candidate.id === segment.id);
+        if (cell === undefined) return [];
+        return [
+          {
+            kind: "cell",
+            id: cell.id,
+            type: cell.type,
+            body: cell.body.replace(/\r?\n$/, ""),
+            uses: cell.uses.join(", "),
+            isolated: cell.isolated,
+            model: cell.model ?? "",
+            timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
+          },
+        ];
+      },
+    ),
+    saving: false,
+  };
+}
+
+/**
+ * The draft as the server takes it: the fields as the format spells them, an
+ * empty one left out rather than sent as empty — the frontmatter among them,
+ * so clearing its field is how it is removed.
+ * @param {Draft} edited
+ */
+function saveRequestOf(edited) {
+  return {
+    base: edited.base,
+    ...(edited.frontmatter === "" ? {} : { frontmatter: edited.frontmatter }),
+    segments: edited.segments.map((segment) => {
+      if (segment.kind === "prose") return segment;
+      const model = segment.model.trim();
+      const timeout = segment.timeout.trim();
+      return {
+        kind: "cell",
+        id: segment.id.trim(),
+        type: segment.type,
+        body: segment.body,
+        uses: segment.uses
+          .split(",")
+          .map((name) => name.trim())
+          .filter((name) => name !== ""),
+        isolated: segment.isolated,
+        ...(model === "" ? {} : { model }),
+        ...(timeout === "" ? {} : { timeout }),
+      };
+    }),
+  };
+}
+
+/**
+ * A text field sized to what it holds, bound to one string of the draft.
+ * @param {string} value
+ * @param {(value: string) => void} set
+ * @param {string} [placeholder]
+ */
+function textarea(value, set, placeholder) {
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.rows = Math.max(3, value.split("\n").length + 1);
+  if (placeholder !== undefined) field.placeholder = placeholder;
+  field.addEventListener("input", () => {
+    set(field.value);
+    field.rows = Math.max(3, field.value.split("\n").length + 1);
+  });
+  return field;
+}
+
+/**
+ * A one-line field bound to one string of the draft.
+ * @param {string} label
+ * @param {string} value
+ * @param {(value: string) => void} set
+ * @param {string} [className]
+ */
+function field(label, value, set, className) {
+  const wrapper = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value;
+  if (className !== undefined) input.className = className;
+  input.addEventListener("input", () => set(input.value));
+  wrapper.append(label, input);
+  return wrapper;
+}
+
+/** A Cell id no Cell of the draft has yet. */
+function freshId() {
+  const taken = new Set(
+    (draft?.segments ?? []).flatMap((segment) => (segment.kind === "cell" ? [segment.id] : [])),
+  );
+  let count = taken.size + 1;
+  while (taken.has(`cell-${count}`)) count += 1;
+  return `cell-${count}`;
+}
+
+/**
+ * The row that adds a segment after position `at` — before everything when
+ * `at` is -1 — and the ways to move and remove the segment it is under.
+ * @param {number} at
+ */
+function actionsFor(at) {
+  const actions = make("div", "draft-actions");
+  const segments = draft?.segments ?? [];
+
+  /**
+   * @param {string} label
+   * @param {() => void} act
+   * @param {boolean} [disabled]
+   */
+  const button = (label, act, disabled = false) => {
+    const made = make("button", "", label);
+    made.type = "button";
+    made.disabled = disabled;
+    made.addEventListener("click", () => {
+      act();
+      renderEditor();
+    });
+    return made;
+  };
+
+  if (at >= 0) {
+    actions.append(
+      button("↑", () => swap(at, at - 1), at === 0),
+      button("↓", () => swap(at, at + 1), at === segments.length - 1),
+      button("Remove", () => segments.splice(at, 1)),
+    );
+  }
+
+  /** @param {DraftSegment[]} added */
+  const insert = (added) => segments.splice(at + 1, 0, ...added);
+  /**
+   * A Cell with nothing in it yet, with a blank line before it when it would
+   * follow another Cell, so the two fences do not abut.
+   * @param {"prompt" | "bash"} type
+   * @returns {DraftSegment[]}
+   */
+  const newCell = (type) => {
+    const cell = /** @type {DraftCell} */ ({
+      kind: "cell",
+      id: freshId(),
+      type,
+      body: "",
+      uses: "",
+      isolated: false,
+      model: "",
+      timeout: "",
+    });
+    return segments[at]?.kind === "cell" ? [{ kind: "prose", text: "\n" }, cell] : [cell];
+  };
+  const inserts = make("span", "draft-insert", at >= 0 ? "Insert below:" : "Insert at the top:");
+  inserts.append(
+    button("prompt cell", () => insert(newCell("prompt"))),
+    button("bash cell", () => insert(newCell("bash"))),
+    button("prose", () => insert([{ kind: "prose", text: "\n" }])),
+  );
+  actions.append(inserts);
+  return actions;
+}
+
+/**
+ * Trades the segments at two positions, when both are there.
+ * @param {number} from
+ * @param {number} to
+ */
+function swap(from, to) {
+  const segments = draft?.segments;
+  if (segments === undefined || to < 0 || to >= segments.length) return;
+  const a = segments[from];
+  const b = segments[to];
+  if (a === undefined || b === undefined) return;
+  segments[from] = b;
+  segments[to] = a;
+}
+
+/**
+ * @param {DraftCell} cell
+ * @param {number} at
+ */
+function renderDraftCell(cell, at) {
+  const card = make("li", `draft-segment cell ${cell.type}`);
+  const declaration = make("div", "draft-declaration");
+
+  const type = document.createElement("select");
+  for (const option of ["prompt", "bash"]) {
+    const choice = document.createElement("option");
+    choice.value = option;
+    choice.textContent = option;
+    choice.selected = cell.type === option;
+    type.append(choice);
+  }
+  type.addEventListener("change", () => {
+    cell.type = type.value === "bash" ? "bash" : "prompt";
+    card.className = `draft-segment cell ${cell.type}`;
+  });
+
+  const isolated = document.createElement("label");
+  const flag = document.createElement("input");
+  flag.type = "checkbox";
+  flag.checked = cell.isolated;
+  flag.addEventListener("change", () => (cell.isolated = flag.checked));
+  isolated.append(flag, "isolated");
+
+  declaration.append(
+    type,
+    field("id", cell.id, (value) => (cell.id = value), "draft-id"),
+    field("uses", cell.uses, (value) => (cell.uses = value)),
+    isolated,
+    field("model", cell.model, (value) => (cell.model = value)),
+    field("timeout", cell.timeout, (value) => (cell.timeout = value)),
+  );
+
+  card.append(
+    declaration,
+    textarea(
+      cell.body,
+      (value) => (cell.body = value),
+      cell.type === "bash" ? "A shell command" : "What to ask the agent",
+    ),
+    actionsFor(at),
+  );
+  return card;
+}
+
+/**
+ * @param {DraftProse} prose
+ * @param {number} at
+ */
+function renderDraftProse(prose, at) {
+  const card = make("li", "draft-segment prose");
+  card.append(
+    make("span", "draft-label", "Prose"),
+    textarea(prose.text, (value) => (prose.text = value), "Markdown between the cells"),
+    actionsFor(at),
+  );
+  return card;
+}
+
+/** Draws the draft as a form, whole: after a segment is added, moved or removed. */
+function renderEditor() {
+  if (draft === undefined) return;
+  const edited = draft;
+  const frontmatter = make("div", "draft-frontmatter");
+  frontmatter.append(
+    make("span", "draft-label", "Frontmatter"),
+    textarea(
+      edited.frontmatter,
+      (value) => (edited.frontmatter = value),
+      "title, mode, workspace, model, inputs…",
+    ),
+    actionsFor(-1),
+  );
+  const list = make("ol", "segments");
+  list.append(
+    ...edited.segments.map((segment, at) =>
+      segment.kind === "cell" ? renderDraftCell(segment, at) : renderDraftProse(segment, at),
+    ),
+  );
+  element("draft").replaceChildren(frontmatter, list);
+}
+
+function beginEditing() {
+  if (watching === undefined || draft !== undefined) return;
+  draft = draftOf(watching.state);
+  element("editor-status").textContent = "";
+  renderEditor();
+  renderSession();
+}
+
+function stopEditing() {
+  draft = undefined;
+  element("draft").replaceChildren();
+  renderSession();
+}
+
+/**
+ * Saves the draft, based on the revision the session held when it was begun
+ * or last found changed. A save the server would not take is explained where
+ * the draft is, and the draft stays for the author to act on: change it, save
+ * over what changed on disk, or cancel.
+ */
+async function saveDraft() {
+  if (watching === undefined || draft === undefined) return;
+  const { state } = watching;
+  const edited = draft;
+  const status = element("editor-status");
+  edited.saving = true;
+  /** @type {HTMLButtonElement} */ (element("save")).disabled = true;
+  try {
+    const response = await fetch(`/api/sessions/${state.id}/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(saveRequestOf(edited)),
+    });
+    if (draft !== edited || watching?.state.id !== state.id) return;
+    if (response.ok) {
+      watching.state = /** @type {NotebookSessionState} */ (await response.json());
+      stopEditing();
+      element("session-status").textContent = "";
+      return;
+    }
+    const problem = (await response.text()).trim() || `The server answered ${response.status}`;
+    if (response.status === 409) {
+      // The session holds something newer; the next save is based on that,
+      // so saving again is a choice to write over it, made knowingly.
+      const now = await fetch(`/api/sessions/${state.id}`);
+      if (now.ok && draft === edited) {
+        watching.state = /** @type {NotebookSessionState} */ (await now.json());
+        edited.base = watching.state.revision;
+      }
+      status.textContent = `${problem}\nSave again to write over it, or cancel to see what it holds now.`;
+    } else status.textContent = problem;
+  } catch (cause) {
+    status.textContent = `Could not save: ${describe(cause)}`;
+  } finally {
+    edited.saving = false;
+    /** @type {HTMLButtonElement} */ (element("save")).disabled = false;
+  }
+}
+
+/** Copies the Notebook under a name the author gives, and opens the copy. */
+async function duplicate() {
+  if (watching === undefined) return;
+  const { notebook } = watching.state;
+  const suggested = notebook.replace(/(\.md)?$/, "-copy.md");
+  const to = window.prompt("Save a copy of this notebook as:", suggested);
+  if (to === null || to.trim() === "") return;
+  try {
+    const made = /** @type {NotebookEntry} */ (
+      await (await post("/api/notebooks", { from: notebook, to: to.trim() })).json()
+    );
+    location.hash = `#${encodeURIComponent(made.path)}`;
+  } catch (cause) {
+    element("session-status").textContent = `Could not duplicate: ${describe(cause)}`;
+  }
+}
+
+/**
  * The Notebook the URL most recently asked for. Opening one takes a round trip,
  * and the URL may have moved on by the time it is back; the answer to an
  * earlier request is then dropped rather than shown over the later one.
@@ -450,6 +869,10 @@ let asked = "";
 async function showSession(notebook) {
   watching?.socket.close();
   watching = undefined;
+  draft = undefined;
+  element("draft").replaceChildren();
+  element("editor").hidden = true;
+  element("segments").hidden = false;
   element("list").hidden = true;
   const view = element("session");
   view.hidden = false;
@@ -464,7 +887,7 @@ async function showSession(notebook) {
     if (asked !== notebook) return;
     element("title").textContent = notebook;
     element("notebook").textContent = "";
-    element("cells").replaceChildren();
+    element("segments").replaceChildren();
     status.textContent = `Could not open the notebook: ${describe(cause)}`;
     return;
   }
@@ -497,5 +920,12 @@ function route() {
 
 element("run-all").addEventListener("click", () => void startRun());
 element("interrupt").addEventListener("click", () => void interrupt());
+element("edit").addEventListener("click", beginEditing);
+element("duplicate").addEventListener("click", () => void duplicate());
+element("cancel").addEventListener("click", stopEditing);
+element("editor").addEventListener("submit", (event) => {
+  event.preventDefault();
+  void saveDraft();
+});
 window.addEventListener("hashchange", route);
 route();

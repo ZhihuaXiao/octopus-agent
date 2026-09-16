@@ -17,23 +17,25 @@
  * Notebook edited between Runs be run as it now stands.
  */
 
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 
 import type { AgentFactory, ToolCall } from "../agent/agent.js";
+import { type NotebookEdit, applyEdit } from "../notebook/edit.js";
 import {
   type Cell,
   type CellType,
+  type Diagnostic,
+  type Notebook,
   cellsOf,
   formatDiagnostics,
+  isCellSegment,
   parseNotebook,
 } from "../notebook/notebook.js";
 import type { CellRecord, CellStatus, RunRecord } from "../run/record.js";
 import { type RunEvent, runNotebook } from "../run/runner.js";
 import { runFile } from "../run/store.js";
-import { within } from "../util/paths.js";
-import { pathWithin, titleOf } from "./notebooks.js";
+import { fileWithin, pathWithin, titleOf } from "./notebooks.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -77,12 +79,32 @@ export interface CellView {
   readonly error?: string;
 }
 
-/** What a Notebook Session says of itself: enough to draw it. */
+/**
+ * The Notebook's layout: its Prose as written, and where among it each Cell
+ * sits, by id. The Cells themselves are in `cells`, so a browser that is only
+ * running them need not look here, and one that is editing has the whole
+ * Notebook to draw.
+ */
+export type SegmentView =
+  | { readonly kind: "prose"; readonly text: string }
+  | { readonly kind: "cell"; readonly id: string };
+
+/** What a Notebook Session says of itself: enough to draw it, and to edit it. */
 export interface NotebookSessionState {
   readonly id: string;
   /** The Notebook's path relative to the served directory, forward slashes throughout. */
   readonly notebook: string;
   readonly title: string;
+  /**
+   * Which version of the file the session holds. A save says which revision
+   * its draft was made from, so one made from an earlier version — the file
+   * saved by another browser since, or changed on disk — is detected rather
+   * than written over what it never saw.
+   */
+  readonly revision: string;
+  /** The YAML between the frontmatter's delimiters, as written; absent when there is none. */
+  readonly frontmatter?: string;
+  readonly segments: readonly SegmentView[];
   readonly running: boolean;
   /**
    * The Run in progress, once it has named itself: what a Cell that starts
@@ -102,7 +124,9 @@ export interface NotebookSessionState {
 export type NotebookSessionEvent =
   | RunEvent
   | { readonly type: "run-ended"; readonly record: RunRecord }
-  | { readonly type: "run-refused"; readonly error: string };
+  | { readonly type: "run-refused"; readonly error: string }
+  /** The Notebook itself changed — saved from a browser, or found changed on disk — and this is it now. */
+  | { readonly type: "notebook-changed"; readonly session: NotebookSessionState };
 
 export interface RunRequest {
   /** The Cells to run, by id; absent runs the whole Notebook. */
@@ -111,9 +135,29 @@ export interface RunRequest {
   readonly inputs?: Readonly<Record<string, string>>;
 }
 
+/** The Notebook as a browser wants it saved, and the revision its draft was made from. */
+export interface SaveRequest extends NotebookEdit {
+  readonly base: string;
+}
+
+/** How saving went. */
+export type Saved =
+  | { readonly kind: "saved" }
+  /** The draft was made from a version the session no longer holds; the state says what it holds now. */
+  | { readonly kind: "changed"; readonly problem: string }
+  /** What the edit makes is not a Notebook that can be opened, and nothing was written. */
+  | { readonly kind: "refused"; readonly problem: string };
+
 export interface NotebookSession {
   readonly id: string;
   state(): NotebookSessionState;
+  /**
+   * Writes the Notebook as edited to its file, when the draft was made from
+   * the version the file still holds and the result is a Notebook that can be
+   * opened; the session then shows the Notebook as saved. Only the bytes the
+   * edit changed change on disk — see `applyEdit`.
+   */
+  save(request: SaveRequest): Promise<Saved>;
   /**
    * Starts a Run of the Notebook, carrying on from the Run before it, and
    * returns whether it started: a Notebook Session runs one Run at a time,
@@ -139,15 +183,48 @@ interface NotebookSessionSetup {
   readonly id: string;
   /** The Notebook's absolute path, which is what the runner is given. */
   readonly path: string;
+  /** The Notebook's path as the server names it. */
   readonly notebook: string;
-  readonly title: string;
-  readonly cells: readonly Cell[];
+  /** The file's bytes as read, which is what a save is checked against. */
+  readonly source: string;
+  readonly parsed: Notebook;
   readonly agent: AgentFactory;
 }
 
+/** The revision a file's bytes are: enough of their digest to tell two versions apart. */
+const revisionOf = (source: string) =>
+  createHash("sha256").update(source).digest("hex").slice(0, 16);
+
+/**
+ * Whether what was read or made is a Notebook the server can hold — one that
+ * parses, with a Cell in it — and why not when it is not, said as `cannot`
+ * begins it: "Cannot open essay.md", "Cannot save essay.md".
+ */
+function readable<Made extends { readonly ok: true; readonly notebook: Notebook }>(
+  result: Made | { readonly ok: false; readonly errors: readonly Diagnostic[] },
+  cannot: string,
+): Made | { readonly ok: false; readonly problem: string } {
+  if (!result.ok) return { ok: false, problem: `${cannot}:\n${formatDiagnostics(result.errors)}` };
+  if (cellsOf(result.notebook).length === 0) {
+    return { ok: false, problem: `${cannot}: it has no cells.` };
+  }
+  return result;
+}
+
 function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
-  const { id, path, notebook, title, cells, agent } = setup;
+  const { id, path, notebook, agent } = setup;
   const listeners = new Set<(event: NotebookSessionEvent) => void>();
+
+  /** The Notebook as the session holds it: the file's bytes, and what they parse to. */
+  let source = setup.source;
+  let parsed = setup.parsed;
+  let revision = revisionOf(source);
+  /**
+   * The saves in flight, one after another: a save reads the file and then
+   * writes it, and two doing so at once would each write over the other's
+   * work without either being told.
+   */
+  let saving: Promise<unknown> = Promise.resolve();
 
   /** What each Cell last recorded, across every Run so far, and in which Run. */
   const results = new Map<string, { readonly record: CellRecord; readonly run: string }>();
@@ -240,17 +317,74 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
     emit(event);
   };
 
+  const state = (): NotebookSessionState => ({
+    id,
+    notebook,
+    title: titleOf(parsed, path),
+    revision,
+    ...(parsed.frontmatter !== undefined ? { frontmatter: parsed.frontmatter.text } : {}),
+    segments: parsed.segments.map((segment) =>
+      isCellSegment(segment)
+        ? { kind: "cell", id: segment.cell.id }
+        : { kind: "prose", text: segment.text },
+    ),
+    running: current !== undefined,
+    ...(current?.run !== undefined ? { run: current.run } : {}),
+    cells: cellsOf(parsed).map(viewOf),
+  });
+
+  /** Makes `bytes` the Notebook the session holds, and tells whoever is watching. */
+  const adopt = (bytes: string, made: Notebook) => {
+    source = bytes;
+    parsed = made;
+    revision = revisionOf(bytes);
+    emit({ type: "notebook-changed", session: state() });
+  };
+
+  const save = async (request: SaveRequest): Promise<Saved> => {
+    // The file first: a Notebook is edited in any editor (ADR-0002), and one
+    // that changed under the session is what the session should hold, whether
+    // or not the draft is then written over it. A file that is gone has
+    // nothing in it to write over, so saving puts it back.
+    const onDisk = await readFile(path, "utf8").catch((cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return undefined;
+      throw cause;
+    });
+    if (onDisk !== undefined && onDisk !== source) {
+      const found = readable(parseNotebook(onDisk), `Cannot open ${notebook}`);
+      // A file that no longer parses is still the file: the revision moves to
+      // it, so a save made knowingly can put a readable Notebook back, and
+      // the Cells shown stay the last ones that could be read.
+      adopt(onDisk, found.ok ? found.notebook : parsed);
+      return {
+        kind: "changed",
+        problem: `${notebook} changed on disk since it was opened${found.ok ? "" : `, and cannot now be read:\n${found.problem}`}`,
+      };
+    }
+    if (request.base !== revision) {
+      return { kind: "changed", problem: `${notebook} was saved since this draft was made.` };
+    }
+
+    const { base: _base, ...edit } = request;
+    const made = readable(applyEdit(parsed, edit), `Cannot save ${notebook}`);
+    if (!made.ok) return { kind: "refused", problem: made.problem };
+
+    await writeFile(path, made.source, "utf8");
+    adopt(made.source, made.notebook);
+    return { kind: "saved" };
+  };
+
   return {
     id,
 
-    state: () => ({
-      id,
-      notebook,
-      title,
-      running: current !== undefined,
-      ...(current?.run !== undefined ? { run: current.run } : {}),
-      cells: cells.map(viewOf),
-    }),
+    state,
+
+    save(request) {
+      const saved = saving.then(() => save(request));
+      // The next save waits for this one however it went; its failure is its caller's.
+      saving = saved.catch(() => undefined);
+      return saved;
+    },
 
     run(request) {
       if (current !== undefined) return false;
@@ -344,16 +478,9 @@ export function createNotebookSessions(options: NotebookSessionsOptions): Notebo
   const byId = new Map<string, NotebookSession>();
   const byPath = new Map<string, NotebookSession>();
 
-  /** The file a name under the served directory points at, or nothing when it leads out. */
-  const fileOf = (notebook: string): string | undefined => {
-    if (notebook.includes("\0")) return undefined;
-    const file = resolve(directory, notebook);
-    return within(directory, file) ? file : undefined;
-  };
-
   return {
     async open(notebook) {
-      const path = fileOf(notebook);
+      const path = fileWithin(directory, notebook);
       if (path === undefined) return { kind: "absent" };
 
       const existing = byPath.get(path);
@@ -368,18 +495,9 @@ export function createNotebookSessions(options: NotebookSessionsOptions): Notebo
         throw cause;
       }
 
-      const parsed = parseNotebook(source);
       const relativePath = pathWithin(directory, path);
-      if (!parsed.ok) {
-        return {
-          kind: "refused",
-          problem: `Cannot open ${relativePath}:\n${formatDiagnostics(parsed.errors)}`,
-        };
-      }
-      const cells = cellsOf(parsed.notebook);
-      if (cells.length === 0) {
-        return { kind: "refused", problem: `Cannot open ${relativePath}: it has no cells.` };
-      }
+      const found = readable(parseNotebook(source), `Cannot open ${relativePath}`);
+      if (!found.ok) return { kind: "refused", problem: found.problem };
 
       // Two requests to open the same Notebook may have read it side by side;
       // whichever finished first has the session, and the other joins it.
@@ -390,8 +508,8 @@ export function createNotebookSessions(options: NotebookSessionsOptions): Notebo
         id: randomUUID(),
         path,
         notebook: relativePath,
-        title: titleOf(parsed.notebook, path),
-        cells,
+        source,
+        parsed: found.notebook,
         agent,
       });
       byId.set(session.id, session);
