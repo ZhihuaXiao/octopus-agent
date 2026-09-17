@@ -2030,7 +2030,13 @@ describe("watching a run", () => {
     const record = await runNotebook(path, { agent: agent.create, observe: (e) => events.push(e) });
 
     expect(events).toEqual([
-      { type: "run-started", run: record.id, cells: ["greet"] },
+      {
+        type: "run-started",
+        run: record.id,
+        cells: ["greet"],
+        environment: record.environment,
+        agentSession: agent.agentSession,
+      },
       { type: "cell-started", cell: "greet" },
       { type: "cell-text", cell: "greet", text: "Hello, world" },
       { type: "cell-ended", record: record.cells[0] },
@@ -2049,11 +2055,29 @@ describe("watching a run", () => {
     // The id the record will carry, announced first: a watcher can then place
     // whatever the cells leave — their artifacts are under the run's directory —
     // before the record that names them arrives.
-    expect(events[0]).toEqual({
+    expect(events[0]).toMatchObject({
       type: "run-started",
       run: record.id,
       cells: ["collect", "report"],
     });
+  });
+
+  it("names the environment it found and the agent session it speaks into as it starts", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello, world" }], { tools: ["read"] });
+    const events: RunEvent[] = [];
+
+    const record = await runNotebook(path, { agent: agent.create, observe: (e) => events.push(e) });
+
+    // What the record will say at the end, said at the start: a watcher that
+    // outlives the run when the process does not can then write the record
+    // the run never got to.
+    expect(events[0]).toMatchObject({
+      type: "run-started",
+      environment: record.environment,
+      agentSession: agent.agentSession,
+    });
+    expect(record.environment.tools).toEqual(["read"]);
   });
 
   it("reports what a cell has said so far, before the cell is over", async () => {
@@ -2120,7 +2144,7 @@ describe("watching a run", () => {
     });
 
     expect(events).toEqual([
-      { type: "run-started", run: record.id, cells: ["step"] },
+      expect.objectContaining({ type: "run-started", run: record.id, cells: ["step"] }),
       { type: "cell-started", cell: "step" },
       { type: "cell-ended", record: expect.objectContaining({ id: "step", stdout: "hello\n" }) },
     ]);

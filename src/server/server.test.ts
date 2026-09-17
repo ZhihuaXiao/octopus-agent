@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -330,6 +330,7 @@ interface NotebookSessionState {
   segments: SegmentView[];
   running: boolean;
   run?: string;
+  sequence: number;
   cells: CellView[];
 }
 
@@ -365,6 +366,7 @@ describe("opening a notebook", () => {
         { kind: "cell", id: "greet" },
       ],
       running: false,
+      sequence: 0,
       cells: [
         {
           id: "greet",
@@ -492,6 +494,7 @@ describe("opening a notebook", () => {
 /** An event as the server sends it, with as much of its shape as the tests read. */
 interface Event {
   type: string;
+  sequence?: number;
   run?: string;
   cells?: string[];
   cell?: string;
@@ -516,10 +519,14 @@ interface Watching {
   close(): Promise<void>;
 }
 
-/** Connects to a Notebook Session's events the way the browser does. */
-function watch(server: RunningServer, id: string): Promise<Watching> {
+/**
+ * Connects to a Notebook Session's events the way the browser does: fresh, or
+ * — given `since` — as one reconnecting that has heard everything up to there.
+ */
+function watch(server: RunningServer, id: string, since?: number | string): Promise<Watching> {
   const url = new URL(`/api/sessions/${id}/events`, server.url);
   url.protocol = "ws:";
+  if (since !== undefined) url.searchParams.set("since", String(since));
   const socket = new WebSocket(url);
   const events: Event[] = [];
   const waiting: { type: string; settle: (event: Event) => void }[] = [];
@@ -586,7 +593,12 @@ describe("running a notebook in its session", () => {
       "run-ended",
     ]);
     expect(browser.events[0]?.session).toEqual(session);
-    expect(browser.events[3]).toEqual({ type: "cell-text", cell: "greet", text: "Hello, world" });
+    expect(browser.events[3]).toEqual({
+      sequence: 3,
+      type: "cell-text",
+      cell: "greet",
+      text: "Hello, world",
+    });
     expect(ended.record?.cells).toEqual([expect.objectContaining({ id: "greet", status: "ok" })]);
     await browser.close();
   });
@@ -601,7 +613,12 @@ describe("running a notebook in its session", () => {
     const started = await browser.next("run-started");
     const ended = await browser.next("run-ended");
 
-    expect(started).toEqual({ type: "run-started", run: ended.record?.id, cells: ["greet"] });
+    expect(started).toMatchObject({
+      sequence: 1,
+      type: "run-started",
+      run: ended.record?.id,
+      cells: ["greet"],
+    });
     // A browser that asks sees which run each cell's result is from, and no run
     // in progress once it is over.
     const state = await stateOf(server, session.id);
@@ -647,8 +664,8 @@ describe("running a notebook in its session", () => {
     const first = await browser.next("cell-tool-call");
     const second = await browser.next("cell-tool-call");
 
-    expect(first).toEqual({ type: "cell-tool-call", cell: "greet", call: calls[0] });
-    expect(second).toEqual({ type: "cell-tool-call", cell: "greet", call: calls[1] });
+    expect(first).toEqual({ sequence: 3, type: "cell-tool-call", cell: "greet", call: calls[0] });
+    expect(second).toEqual({ sequence: 4, type: "cell-tool-call", cell: "greet", call: calls[1] });
     expect(await stateOf(server, session.id)).toMatchObject({
       running: true,
       cells: [{ id: "greet", status: "running", toolCalls: calls }],
@@ -681,7 +698,12 @@ describe("running a notebook in its session", () => {
     await run(server, session.id);
     const spoken = await browser.next("cell-text");
 
-    expect(spoken).toEqual({ type: "cell-text", cell: "greet", text: "Working on it…" });
+    expect(spoken).toEqual({
+      sequence: 3,
+      type: "cell-text",
+      cell: "greet",
+      text: "Working on it…",
+    });
     // Still running, with what it has said so far, to anyone who asks.
     expect(await stateOf(server, session.id)).toMatchObject({
       running: true,
@@ -942,11 +964,20 @@ describe("several notebook sessions", () => {
       "cell-started",
     ]);
     expect(watchingQuick.events.filter((event) => event.type === "cell-text")).toEqual([
-      { type: "cell-text", cell: "go", text: "Audited" },
+      { sequence: 3, type: "cell-text", cell: "go", text: "Audited" },
     ]);
     await Promise.all([watchingSlow.close(), watchingQuick.close()]);
   });
 });
+
+/** The session's state once nothing is running in it, asked for as a browser with no socket would. */
+async function settled(server: RunningServer, id: string): Promise<NotebookSessionState> {
+  for (;;) {
+    const state = await stateOf(server, id);
+    if (!state.running) return state;
+    await new Promise((tick) => setTimeout(tick, 20));
+  }
+}
 
 describe("a browser that goes away", () => {
   it("leaves the work running: the session is the server's, not the browser's", async () => {
@@ -959,14 +990,7 @@ describe("a browser that goes away", () => {
 
     await browser.close();
 
-    const settled = async (): Promise<NotebookSessionState> => {
-      for (;;) {
-        const state = await stateOf(server, session.id);
-        if (!state.running) return state;
-        await new Promise((tick) => setTimeout(tick, 20));
-      }
-    };
-    expect((await settled()).cells).toMatchObject([
+    expect((await settled(server, session.id)).cells).toMatchObject([
       { id: "wait", status: "ok", text: "survived\n" },
     ]);
   });
@@ -1008,6 +1032,434 @@ describe("a browser that goes away", () => {
       { id: "greet", type: "prompt", status: "ok", text: "Hello, world" },
     ]);
     await later.close();
+  });
+});
+
+describe("a browser that comes back", () => {
+  it("hears every event numbered, and is told in the snapshot which number the session stands at", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+
+    const [snapshot, ...events] = browser.events;
+    // Nothing has happened yet when the notebook is opened.
+    expect(snapshot?.session?.sequence).toBe(0);
+    expect(events.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
+    // What a browser that asks now is told it stands at: the last event's number.
+    expect((await stateOf(server, session.id)).sequence).toBe(5);
+    await browser.close();
+  });
+
+  it("is told everything that happened while it was away, as it happened, and nothing twice", async () => {
+    const calls = [{ name: "bash", input: { command: "ls" } }];
+    const agent = createScriptedAgent([{ text: "Hello, world", toolCalls: calls }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+    const heard = (await browser.next("notebook-session")).session?.sequence ?? -1;
+    await browser.close();
+    // The whole run happens with nobody watching.
+    await run(server, session.id);
+    const ended = await settled(server, session.id);
+
+    const back = await watch(server, session.id, heard);
+    const over = await back.next("run-ended");
+
+    // No snapshot to redraw from and then hear the same events over: the
+    // events since, in order, which is what the browser would have heard.
+    expect(back.events).toEqual([
+      expect.objectContaining({ sequence: 1, type: "run-started", run: ended.cells[0]?.run }),
+      { sequence: 2, type: "cell-started", cell: "greet" },
+      { sequence: 3, type: "cell-tool-call", cell: "greet", call: calls[0] },
+      { sequence: 4, type: "cell-text", cell: "greet", text: "Hello, world" },
+      { sequence: 5, type: "cell-ended", record: expect.objectContaining({ id: "greet" }) },
+      { sequence: 6, type: "run-ended", record: expect.objectContaining({ id: over.record?.id }) },
+    ]);
+    await back.close();
+  });
+
+  it("hears what happens next after what it missed, with no gap between", async () => {
+    const agent = createScriptedAgent([{ text: "First" }, { text: "Second" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    await settled(server, session.id);
+
+    // Back from having heard the first run's start, and running again at once.
+    const back = await watch(server, session.id, 1);
+    await run(server, session.id);
+    await back.next("run-ended");
+    await back.next("run-ended");
+
+    expect(back.events.map((event) => event.sequence)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(back.events.filter((event) => event.type === "cell-text")).toMatchObject([
+      { text: "First" },
+      { text: "Second" },
+    ]);
+    await back.close();
+  });
+
+  it("has missed nothing when it comes back where it left, and hears only what follows", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+
+    const back = await watch(server, session.id, 0);
+    await run(server, session.id);
+    await back.next("run-ended");
+
+    expect(back.events.map((event) => event.type)).toEqual([
+      "run-started",
+      "cell-started",
+      "cell-text",
+      "cell-ended",
+      "run-ended",
+    ]);
+    await back.close();
+  });
+
+  it("is given the snapshot instead when it names a number the session does not know", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    await settled(server, session.id);
+
+    // From the future, from nowhere, not a number, and nothing at all: none of
+    // them a place in this session's events, so each is a browser that must
+    // start over.
+    for (const since of [99, -1, "soon", ""]) {
+      const back = await watch(server, session.id, since);
+      const told = await back.next("notebook-session");
+      expect(told.session, String(since)).toMatchObject({
+        sequence: 5,
+        cells: [{ id: "greet", status: "ok", text: "Hello, world" }],
+      });
+      await back.close();
+    }
+  });
+});
+
+/**
+ * Starts a server again over the directory a closed one served, with the
+ * agent the new one is to run with — a fresh one, since nothing in memory
+ * survives a restart.
+ */
+async function restart(server: RunningServer, agent: ScriptedAgent = unusedAgent()) {
+  await server.close();
+  running.splice(running.indexOf(server), 1);
+  const again = await startServer({ port: 0, directory: server.directory, agent: agent.create });
+  running.push(again);
+  return again;
+}
+
+describe("a server that restarts", () => {
+  it("finds the notebook sessions where it left them, under the ids it gave out", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    await settled(server, session.id);
+
+    const again = await restart(server);
+
+    expect(await stateOf(again, session.id)).toMatchObject({
+      id: session.id,
+      notebook: "hello.md",
+      running: false,
+      sequence: 5,
+      cells: [{ id: "greet", status: "ok", text: "Hello, world" }],
+    });
+    // Opening the notebook finds that session, not a second one beside it.
+    const response = await post(again, "/api/sessions", { notebook: "hello.md" });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as NotebookSessionState).id).toBe(session.id);
+  });
+
+  it("keeps what each run left, stale cells included, across the restart", async () => {
+    const agent = createScriptedAgent([{ text: "a" }, { text: "b" }, { text: "a again" }]);
+    const server = await serve({ "chain.md": chain }, agent);
+    const session = await open(server, "chain.md");
+    await run(server, session.id);
+    await settled(server, session.id);
+    await run(server, session.id, { cells: ["a"] });
+    const before = await settled(server, session.id);
+
+    const again = await restart(server);
+
+    const after = await stateOf(again, session.id);
+    expect(after).toEqual(before);
+    expect(after.cells).toMatchObject([
+      { id: "a", status: "ok", text: "a again" },
+      { id: "b", status: "stale", text: "b" },
+    ]);
+  });
+
+  it("stops a run in progress as it goes down, and comes back with the cell recorded as interrupted", async () => {
+    const agent = createScriptedAgent([{ hangs: true, text: "Half way" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    const browser = await watch(server, session.id);
+    await browser.next("cell-text");
+    await browser.close();
+
+    const again = await restart(server);
+
+    expect(await stateOf(again, session.id)).toMatchObject({
+      running: false,
+      cells: [{ id: "greet", status: "interrupted", text: "", error: "Interrupted" }],
+    });
+  });
+
+  it("tells a browser coming back after the restart what it missed, from where it left", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+    const heard = (await browser.next("notebook-session")).session?.sequence ?? -1;
+    await browser.close();
+    await run(server, session.id);
+    await settled(server, session.id);
+
+    const again = await restart(server);
+    const back = await watch(again, session.id, heard);
+    await back.next("run-ended");
+
+    expect(back.events.map((event) => [event.sequence, event.type])).toEqual([
+      [1, "run-started"],
+      [2, "cell-started"],
+      [3, "cell-text"],
+      [4, "cell-ended"],
+      [5, "run-ended"],
+    ]);
+    await back.close();
+  });
+
+  it("carries the next run on from the agent session the records name, reopened through the agent", async () => {
+    const before = createScriptedAgent([{ text: "a" }, { text: "b" }]);
+    const server = await serve({ "chain.md": chain }, before);
+    const session = await open(server, "chain.md");
+    await run(server, session.id);
+    await settled(server, session.id);
+
+    const after = createScriptedAgent([{ text: "a again" }]);
+    const again = await restart(server, after);
+    expect(await run(again, session.id, { cells: ["a"] })).toBe(202);
+    const state = await settled(again, session.id);
+
+    // The new server's agent was asked to reopen the Agent Session the old
+    // one's runs were in, and to fork it where `a` began: nothing of pi's was
+    // read or written by anything but pi.
+    expect(after.setups.map((setup) => setup.agentSession)).toEqual([before.agentSession]);
+    expect(after.resumptions).toEqual([undefined]);
+    expect(state.cells).toMatchObject([
+      { id: "a", status: "ok", text: "a again" },
+      { id: "b", status: "stale", text: "b" },
+    ]);
+  });
+
+  /**
+   * Leaves the directory as a server that died mid-run would have: the
+   * session's journal cut off after its last event of `type`, with the line
+   * it was writing as it died left half-written, and the run's record —
+   * written only when a run ends — never written.
+   */
+  async function crashed(server: RunningServer, session: string, type: string, run: string) {
+    await server.close();
+    running.splice(running.indexOf(server), 1);
+    const journal = join(server.directory, ".octo/journals", `${session}.jsonl`);
+    const lines = (await readFile(journal, "utf8")).split("\n").filter((line) => line !== "");
+    const cut = lines.findLastIndex((line) => (JSON.parse(line) as Event).type === type);
+    const kept = lines.slice(0, cut + 1);
+    const halfWritten = (lines[cut + 1] ?? '{"at":"2026-09-17T00:00:00.000Z"').slice(0, 20);
+    await writeFile(journal, `${kept.join("\n")}\n${halfWritten}`, "utf8");
+    await rm(join(server.directory, ".octo/runs/hello", run, "record.json"));
+  }
+
+  it("records a run it died in the middle of as far as it got, the cell in flight interrupted", async () => {
+    const calls = [{ name: "bash", input: { command: "ls" } }];
+    const agent = createScriptedAgent([{ text: "Hello, wor", toolCalls: calls }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    const started = await browser.next("run-started");
+    await browser.next("run-ended");
+    await browser.close();
+    await crashed(server, session.id, "cell-text", started.run ?? "");
+
+    const again = await startServer({
+      port: 0,
+      directory: server.directory,
+      agent: unusedAgent().create,
+    });
+    running.push(again);
+
+    // Not running: nothing is. The cell is interrupted as one stopped from the
+    // browser is — half a reply is not what it asked for (ADR-0017) — and the
+    // run has a record, so the next run can carry on from it. The cell's end
+    // and the run's are two events more than the journal held.
+    const recovered = await stateOf(again, session.id);
+    expect(recovered).toMatchObject({
+      running: false,
+      sequence: 6,
+      cells: [
+        {
+          id: "greet",
+          status: "interrupted",
+          text: "",
+          toolCalls: [],
+          run: started.run,
+          error: "The server stopped while this cell was running",
+        },
+      ],
+    });
+    const record = (await (
+      await fetch(new URL(`/api/sessions/${session.id}/runs/${started.run}/record.json`, again.url))
+    ).json()) as { cells: unknown[]; agentSession?: string };
+    expect(record.cells).toEqual([
+      expect.objectContaining({ id: "greet", type: "prompt", status: "interrupted" }),
+    ]);
+    // No turn ended, so no Anchor stands, so no Agent Session is named: pi
+    // may never have written one.
+    expect(record).not.toHaveProperty("agentSession");
+
+    // The half-written line was cut off before the recovery wrote after it,
+    // so the journal reads whole to the next server too.
+    const once = await restart(again);
+    expect(await stateOf(once, session.id)).toEqual(recovered);
+  });
+
+  it("tells a browser coming back after the crash how the run ended", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    const started = await browser.next("run-started");
+    await browser.next("run-ended");
+    await browser.close();
+    await crashed(server, session.id, "cell-started", started.run ?? "");
+
+    const again = await startServer({
+      port: 0,
+      directory: server.directory,
+      agent: unusedAgent().create,
+    });
+    running.push(again);
+    const back = await watch(again, session.id, 2);
+    const ended = await back.next("run-ended");
+
+    expect(back.events.map((event) => [event.sequence, event.type])).toEqual([
+      [3, "cell-ended"],
+      [4, "run-ended"],
+    ]);
+    expect(ended.record).toMatchObject({
+      id: started.run,
+      cells: [{ id: "greet", status: "interrupted" }],
+    });
+    await back.close();
+  });
+
+  it("carries on from a run it died in, keeping the anchors of the cells that had ended", async () => {
+    const before = createScriptedAgent([{ text: "a" }, { text: "b" }]);
+    const server = await serve({ "hello.md": chain }, before);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    const started = await browser.next("run-started");
+    await browser.next("run-ended");
+    await browser.close();
+    // Died after `a` ended and `b` began.
+    await crashed(server, session.id, "cell-started", started.run ?? "");
+
+    const after = createScriptedAgent([{ text: "b at last" }]);
+    const again = await startServer({ port: 0, directory: server.directory, agent: after.create });
+    running.push(again);
+    expect(await stateOf(again, session.id)).toMatchObject({
+      cells: [
+        { id: "a", status: "ok", text: "a" },
+        { id: "b", status: "interrupted", text: "" },
+      ],
+    });
+    await run(again, session.id, { cells: ["b"] });
+    const state = await settled(again, session.id);
+
+    // `a`'s turn ended and left an Anchor in the Agent Session, so the run
+    // that died is what the next one continues, and `b` begins after `a`.
+    expect(after.setups.map((setup) => setup.agentSession)).toEqual([before.agentSession]);
+    expect(after.resumptions).toEqual([before.anchors[0]]);
+    expect(state.cells).toMatchObject([
+      { id: "a", status: "ok", text: "a" },
+      { id: "b", status: "ok", text: "b at last" },
+    ]);
+  });
+
+  it("shows a notebook edited while no server ran as it now is, and tells a browser coming back so", async () => {
+    const server = await serve({ "hello.md": hello });
+    const session = await open(server, "hello.md");
+    await server.close();
+    running.splice(running.indexOf(server), 1);
+    await writeFile(join(server.directory, "hello.md"), hello.replace("Say hello.", "Wave."));
+
+    const again = await startServer({
+      port: 0,
+      directory: server.directory,
+      agent: unusedAgent().create,
+    });
+    running.push(again);
+
+    const now = await stateOf(again, session.id);
+    expect(now.revision).not.toBe(session.revision);
+    expect(now.cells).toMatchObject([{ id: "greet", body: "Wave.\n" }]);
+    // Said as an event, since a browser that adopts the state it last had
+    // would otherwise go on showing the notebook as it was.
+    const back = await watch(again, session.id, session.sequence);
+    const told = await back.next("notebook-changed");
+    expect(told.sequence).toBe(1);
+    expect(told.session).toEqual(now);
+    await back.close();
+  });
+
+  it("finds a notebook that was gone when it started once the notebook is back and opened, as the session it was", async () => {
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    await settled(server, session.id);
+    await server.close();
+    running.splice(running.indexOf(server), 1);
+    await rm(join(server.directory, "hello.md"));
+
+    const again = await startServer({
+      port: 0,
+      directory: server.directory,
+      agent: unusedAgent().create,
+    });
+    running.push(again);
+    expect((await fetch(new URL(`/api/sessions/${session.id}`, again.url))).status).toBe(404);
+
+    await writeFile(join(server.directory, "hello.md"), hello);
+    const response = await post(again, "/api/sessions", { notebook: "hello.md" });
+
+    // The session it was, not a new one beside a journal nobody would read.
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      id: session.id,
+      cells: [{ id: "greet", status: "ok", text: "Hello, world" }],
+    });
+  });
+
+  it("has nothing to find over a directory no server has served", async () => {
+    const server = await serve({ "hello.md": hello });
+
+    expect((await fetch(new URL("/api/notebooks", server.url))).status).toBe(200);
+    expect(await readdir(server.directory)).toEqual(["hello.md"]);
   });
 });
 

@@ -503,10 +503,13 @@ async function handle(
   notFound(response);
 }
 
-export function startServer(options: ServerOptions): Promise<RunningServer> {
+export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const port = options.port ?? DEFAULT_PORT;
   const directory = resolve(options.directory ?? process.cwd());
-  const sessions = createNotebookSessions({ directory, agent: options.agent });
+  // Recovered before anything can be asked for, so that a browser coming back
+  // as the server does finds its session rather than a second one opened
+  // beside it.
+  const sessions = await createNotebookSessions({ directory, agent: options.agent });
   const served: Served = { directory, sessions };
 
   const server = createServer((request, response) => {
@@ -522,7 +525,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   // dependency earns its place over Node's own `http`, which speaks none.
   const sockets = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
-    const { pathname } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
+    const { pathname, searchParams } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
     const matched = SESSION_ROUTE.exec(pathname);
     const session = matched?.[2] === "events" ? sessions.get(matched[1] ?? "") : undefined;
     if (session === undefined) {
@@ -530,15 +533,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       socket.destroy();
       return;
     }
+    // A browser coming back says the number of the last event it heard, and
+    // is told what happened since; one arriving fresh says nothing, and is
+    // told what the Notebook Session stands at now. Anything that is not a
+    // number — an empty `since` included, which `Number` would read as zero —
+    // is a browser that must start over, as the Notebook Session decides.
+    const asked = searchParams.get("since");
+    const since = asked === null ? undefined : asked.trim() === "" ? NaN : Number(asked);
     sockets.handleUpgrade(request, socket, head, (client) => {
       // A socket's failure is the end of that browser's watching and nothing
       // more; unheard, Node would make it the end of the process.
       client.on("error", () => client.terminate());
-      // What the Notebook Session stands at now, before anything that happens next.
-      client.send(JSON.stringify({ type: "notebook-session", session: session.state() }));
       const unsubscribe = session.subscribe((event) => {
         if (client.readyState === client.OPEN) client.send(JSON.stringify(event));
-      });
+      }, since);
       client.on("close", unsubscribe);
     });
   });

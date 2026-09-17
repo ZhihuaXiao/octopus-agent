@@ -31,7 +31,14 @@ import {
   workspaceOf,
 } from "../notebook/notebook.js";
 import { anchorBefore, anchorsAfter } from "./anchor.js";
-import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord, Timing } from "./record.js";
+import type {
+  BashCellRecord,
+  CellRecord,
+  PromptCellRecord,
+  RunEnvironment,
+  RunRecord,
+  Timing,
+} from "./record.js";
 import { runScheduled } from "./schedule.js";
 import { type ShellResult, runShellCommand } from "./shell.js";
 import { artifactsDirectory, listArtifacts, newRunId, writeRunRecord } from "./store.js";
@@ -43,14 +50,26 @@ import { artifactsDirectory, listArtifacts, newRunId, writeRunRecord } from "./s
  * The Run names itself first, once everything that could stop it has settled,
  * with the Cells it is about to run in their order: its id is what the Cells'
  * artifact directories sit under, so a watcher can place what a Cell leaves
- * before the record that names it arrives. A Cell's text and tool calls arrive
- * between its start and its end, and only a Prompt Cell has any: a command's
- * output is not spoken, so it arrives whole with the record. The record in
- * `cell-ended` is the one the Run Record will carry, so a watcher that kept
- * every event holds the same account of the Run as the record does.
+ * before the record that names it arrives. It says then, too, what the record
+ * will otherwise say only at the end — the Environment it found, and the Agent
+ * Session it is speaking into — so a watcher that outlives the Run when the
+ * process does not can conclude the Run it never got to. The Agent Session is
+ * named as the Run is using it, which is before pi need have written it; the
+ * Run Record names one only once an Anchor stands in it, which `concludeRun`
+ * sees to for the Run and the watcher alike. A Cell's text and tool calls arrive between its
+ * start and its end, and only a Prompt Cell has any: a command's output is not
+ * spoken, so it arrives whole with the record. The record in `cell-ended` is
+ * the one the Run Record will carry, so a watcher that kept every event holds
+ * the same account of the Run as the record does.
  */
 export type RunEvent =
-  | { readonly type: "run-started"; readonly run: string; readonly cells: readonly string[] }
+  | {
+      readonly type: "run-started";
+      readonly run: string;
+      readonly cells: readonly string[];
+      readonly environment: RunEnvironment;
+      readonly agentSession?: string;
+    }
   | { readonly type: "cell-started"; readonly cell: string }
   | { readonly type: "cell-text"; readonly cell: string; readonly text: string }
   | { readonly type: "cell-tool-call"; readonly cell: string; readonly call: ToolCall }
@@ -331,7 +350,19 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
   // has to be told where that is before it can put anything there.
   const id = newRunId();
   const startedAt = new Date().toISOString();
-  observe({ type: "run-started", run: id, cells: cleared.order.map((cell) => cell.id) });
+  const environment: RunEnvironment = {
+    workspace,
+    trusted: shared.environment.trusted,
+    piVersion: shared.environment.piVersion,
+    tools: [...shared.environment.tools],
+  };
+  observe({
+    type: "run-started",
+    run: id,
+    cells: cleared.order.map((cell) => cell.id),
+    environment,
+    ...(shared.agentSession !== undefined ? { agentSession: shared.agentSession } : {}),
+  });
 
   let forked = false;
 
@@ -419,11 +450,48 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     })),
   ];
 
+  return concludeRun({
+    id,
+    notebook: path,
+    ...(continues !== undefined ? { continues } : {}),
+    environment,
+    ...(shared.agentSession !== undefined ? { agentSession: shared.agentSession } : {}),
+    startedAt,
+    cells,
+    allCells: cleared.allCells,
+  });
+}
+
+/** What a Run has to say for itself once its Cells are done, for its record to be worked out. */
+export interface Concluded {
+  readonly id: string;
+  /** The Notebook's path, as the record names it. */
+  readonly notebook: string;
+  /** The Run this one carried on from, when it did. */
+  readonly continues?: RunRecord;
+  readonly environment: RunEnvironment;
+  /** The Agent Session the Run spoke into, as the agent names it, when the agent names one. */
+  readonly agentSession?: string;
+  readonly startedAt: string;
+  /** The Cells the Run ran, as recorded, in the order they ended. */
+  readonly cells: readonly CellRecord[];
+  /** Every Cell of the Notebook, since what a Run leaves Stale is a property of the whole Graph. */
+  readonly allCells: readonly Cell[];
+}
+
+/**
+ * Works out what a Run leaves standing and writes its record. Called whenever
+ * the Cells a Run has are the Cells it will have: at the Run's own end, or —
+ * for a Run the process died in — when a Notebook Session finds it left
+ * unfinished in its Journal and ends it as far as it got (ADR-0021).
+ */
+export async function concludeRun(run: Concluded): Promise<RunRecord> {
+  const { continues, cells } = run;
   // Read off the Graph rather than accumulated as the Cells ran, because the
   // Cells left Stale are mostly ones this Run never touched: the question is
   // what the Notebook now stands at, and only the whole Graph answers it.
   const stale = staleAfter({
-    cells: cleared.allCells,
+    cells: run.allCells,
     ran: cells.map((recorded) => recorded.id),
     staleBefore: continues?.stale ?? [],
   });
@@ -433,29 +501,25 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
   const anchored = Object.keys(anchors).length > 0;
 
   const record: RunRecord = {
-    id,
-    notebook: path,
+    id: run.id,
+    notebook: run.notebook,
     // The Run whose results the untouched Cells still hold, and whose Stale set
     // this one's was worked out from.
     ...(continues !== undefined ? { continues: continues.id } : {}),
-    environment: {
-      workspace,
-      trusted: shared.environment.trusted,
-      piVersion: shared.environment.piVersion,
-      tools: [...shared.environment.tools],
-    },
-    // The shared session, and named only when an Anchor stands in it — this
-    // Run's or an earlier one's, since a Run that reopened a session and took
-    // no turn in it still leaves the earlier Anchors where they were — because
-    // an Anchor is the only thing a later Run would reopen a session for.
-    // Nothing anchored a Notebook of Bash Cells, nor one of Isolated Cells whose
-    // sessions are gone, nor one whose every turn failed — and pi does not write
-    // a session file until an assistant message arrives, so naming one on the
-    // strength of having merely tried would point a later Run at nothing.
-    ...(anchored && shared.agentSession !== undefined ? { agentSession: shared.agentSession } : {}),
-    startedAt,
+    environment: run.environment,
+    // The shared Agent Session, and named only when an Anchor stands in it —
+    // this Run's or an earlier one's, since a Run that reopened an Agent
+    // Session and took no turn in it still leaves the earlier Anchors where
+    // they were — because an Anchor is the only thing a later Run would reopen
+    // one for. Nothing anchored a Notebook of Bash Cells, nor one of Isolated
+    // Cells whose Agent Sessions are gone, nor one whose every turn failed —
+    // and pi does not write a session file until an assistant message arrives,
+    // so naming one on the strength of having merely tried would point a later
+    // Run at nothing.
+    ...(anchored && run.agentSession !== undefined ? { agentSession: run.agentSession } : {}),
+    startedAt: run.startedAt,
     endedAt: new Date().toISOString(),
-    cells,
+    cells: [...cells],
     stale: [...stale],
     anchors,
   };

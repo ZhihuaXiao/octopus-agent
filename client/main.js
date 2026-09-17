@@ -12,7 +12,11 @@
  * The Session is the server's. This page asks it to run, to stop, or to save,
  * over HTTP, and hears what happens over a WebSocket; closing the page changes
  * nothing about the work. The Notebook opened is kept in the URL's fragment,
- * so a reload opens the same one again.
+ * so a reload opens the same one again. Every event is numbered, and the page
+ * keeps the number of the last it heard: when the socket drops — the network
+ * went, or the server was restarted — the page reconnects and asks for
+ * everything since, so what happened while it was away arrives as it would
+ * have, and nothing is drawn twice.
  */
 
 /**
@@ -44,6 +48,7 @@
  *   frontmatter?: string,
  *   segments: SegmentView[],
  *   running: boolean,
+ *   sequence: number,
  *   cells: CellView[],
  * }} NotebookSessionState
  * @typedef {{
@@ -56,8 +61,7 @@
  *   artifacts: string[],
  *   error?: string,
  * }} CellRecord
- * @typedef {(
- *   | { type: "notebook-session", session: NotebookSessionState }
+ * @typedef {{ sequence: number } & (
  *   | { type: "run-started", run: string, cells: string[] }
  *   | { type: "cell-started", cell: string }
  *   | { type: "cell-text", cell: string, text: string }
@@ -66,6 +70,10 @@
  *   | { type: "run-ended", record: { id: string, stale: string[] } }
  *   | { type: "run-refused", error: string }
  *   | { type: "notebook-changed", session: NotebookSessionState }
+ * )} NumberedEvent
+ * @typedef {(
+ *   | { type: "notebook-session", session: NotebookSessionState }
+ *   | NumberedEvent
  * )} NotebookSessionEvent
  */
 
@@ -151,11 +159,12 @@ async function showList() {
 
 /**
  * What is being watched right now, so opening another Notebook lets go of it:
- * the state the events keep up to date, the socket they arrive on, and the Run
- * in progress once it has named itself, which is what a Cell that starts is
- * running in.
+ * the state the events keep up to date, the socket they arrive on, the number
+ * of the last event heard — what a reconnection asks for everything since —
+ * and the Run in progress once it has named itself, which is what a Cell that
+ * starts is running in.
  */
-/** @type {{ state: NotebookSessionState, socket: WebSocket, run?: string } | undefined} */
+/** @type {{ state: NotebookSessionState, socket: WebSocket, sequence: number, run?: string } | undefined} */
 let watching;
 
 /** A Timeout as an author would write it, when the milliseconds allow. */
@@ -369,6 +378,8 @@ function apply(event) {
   if (watching === undefined) return;
   const { state } = watching;
   const status = element("session-status");
+  // Where the page now stands, for the next reconnection to pick up from.
+  watching.sequence = "sequence" in event ? event.sequence : event.session.sequence;
 
   switch (event.type) {
     case "notebook-session": {
@@ -893,20 +904,93 @@ async function showSession(notebook) {
   }
   if (asked !== notebook) return;
 
-  const url = new URL(`/api/sessions/${state.id}/events`, location.href);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(url);
-  watching = { state, socket };
+  watching = { state, socket: connect(state.id), sequence: state.sequence };
   status.textContent = "";
   renderSession();
+}
 
+/**
+ * Opens the socket a session's events arrive on: fresh, to be told the state
+ * as it stands; or, given `since`, to be told everything after that event,
+ * which is how the page catches up after a connection was lost.
+ * @param {string} id
+ * @param {number} [since]
+ */
+function connect(id, since) {
+  const url = new URL(`/api/sessions/${id}/events`, location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  if (since !== undefined) url.searchParams.set("since", String(since));
+  const socket = new WebSocket(url);
+  let opened = false;
+
+  socket.addEventListener("open", () => (opened = true));
   socket.addEventListener("message", (message) => {
     if (watching?.socket !== socket) return;
     apply(/** @type {NotebookSessionEvent} */ (JSON.parse(String(message.data))));
   });
   socket.addEventListener("close", () => {
-    if (watching?.socket === socket) status.textContent = "Lost the connection to the server.";
+    if (watching?.socket !== socket) return;
+    element("session-status").textContent = "Lost the connection to the server. Reconnecting…";
+    // A socket that never opened is a server that answers requests but not
+    // sockets — a proxy in the way, say — and is not to be asked every second.
+    void reconnect(socket, opened ? RECONNECT_AFTER : RECONNECT_AT_MOST);
   });
+  return socket;
+}
+
+/** How long to wait before the first try at reconnecting, and the longest. */
+const RECONNECT_AFTER = 1000;
+const RECONNECT_AT_MOST = 10_000;
+
+/**
+ * Gets the session's events back after `lost` dropped, trying until the
+ * server answers: a server being restarted is back in seconds, so the wait
+ * begins short, and grows so that one that is down for longer is not
+ * hammered. The session is asked for by the Notebook's path, as on opening,
+ * which is answered with the same session when the server kept it — as one
+ * restarted does — and the page then asks for everything since the last
+ * event it heard; a different session is one the page has to draw afresh.
+ * @param {WebSocket} lost
+ * @param {number} wait how long to wait before the first try
+ */
+async function reconnect(lost, wait) {
+  for (;;) {
+    await new Promise((tick) => setTimeout(tick, wait));
+    // Moved on meanwhile — another Notebook opened, or the list shown.
+    if (watching?.socket !== lost) return;
+    const { notebook } = watching.state;
+
+    /** @type {Response} */
+    let response;
+    try {
+      response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ notebook }),
+      });
+    } catch {
+      wait = Math.min(wait * 2, RECONNECT_AT_MOST);
+      continue; // The server is not answering yet.
+    }
+    if (watching?.socket !== lost) return;
+    if (!response.ok) {
+      // Answering, and saying no: the Notebook is gone, or no longer opens.
+      const problem = (await response.text()).trim() || `The server answered ${response.status}`;
+      element("session-status").textContent = `Could not reopen the notebook: ${problem}`;
+      return;
+    }
+
+    const state = /** @type {NotebookSessionState} */ (await response.json());
+    if (watching?.socket !== lost) return;
+    if (state.id === watching.state.id) {
+      watching.socket = connect(state.id, watching.sequence);
+    } else {
+      watching = { state, socket: connect(state.id), sequence: state.sequence };
+      renderSession();
+    }
+    element("session-status").textContent = "";
+    return;
+  }
 }
 
 function route() {

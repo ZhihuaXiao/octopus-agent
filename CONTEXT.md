@@ -76,8 +76,16 @@ _Avoid_: context, surroundings, setup, host
 
 **Notebook Session**:
 A Notebook loaded live in the server, with an Agent Session attached and its own execution
-state. Owned by the server, so it outlives any browser that connects to it.
+state. Owned by the server, so it outlives any browser that connects to it; journaled, so
+it outlives the server too, and is found under the same id when the next one starts.
 _Avoid_: session (unqualified), instance, kernel, workspace
+
+**Journal**:
+Every event a Notebook Session has emitted, numbered in order and written to a file of the
+session's own as it happens (ADR-0021). What a browser coming back is told from — everything
+since the last number it heard — and what a server starting makes the session from again.
+Never pi's session file, which is the Agent Session's and pi's to write.
+_Avoid_: log, event log, history, transcript, stream
 
 **Agent Session**:
 Pi's own session object and its message history. Pi's term, kept as pi uses it.
@@ -109,10 +117,10 @@ status of its own beside Errored, and halts the Run like an error.
 _Avoid_: deadline, time limit, budget, hang detection
 
 **Interrupted**:
-The status of a Cell that somebody stopped while it ran — from the browser, through its
-Notebook Session — rather than one that failed or outran its Timeout. A status of its own
-beside Errored and Timed Out because nothing about it wants putting right; it halts the Run
-and leaves its dependents Stale as either of them does.
+The status of a Cell that was stopped while it ran — by somebody, from the browser, through
+its Notebook Session; or by the server going down under it — rather than one that failed or
+outran its Timeout. A status of its own beside Errored and Timed Out because nothing about it
+wants putting right; it halts the Run and leaves its dependents Stale as either of them does.
 _Avoid_: cancelled, aborted, stopped, killed
 
 **Retry**:

@@ -60,13 +60,32 @@ async function main(): Promise<void> {
       process.exitCode = 2;
       return;
     case "web": {
-      // Runs until the process is stopped: the listening socket keeps it alive,
-      // and Ctrl-C ends it as it ends any server.
+      // Runs until the process is stopped: the listening socket keeps it alive.
       const server = await startServer({
         agent: createPiAgent,
         ...(command.port !== undefined ? { port: command.port } : {}),
       });
       process.stdout.write(`Serving the notebooks under ${server.directory}\nOpen ${server.url}\n`);
+
+      // Ctrl-C, or the SIGTERM a deploy sends, closes the server rather than
+      // ending the process where it stands: the Runs in progress are stopped
+      // and their records written, and the sessions' journals flushed, so the
+      // server started next finds every Notebook Session at rest. A second signal while
+      // that is under way ends the process at once, as the first would have.
+      const stop = () => {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        process.stdout.write("Stopping: the runs in progress are being interrupted…\n");
+        server.close().then(
+          () => process.exit(),
+          (cause: unknown) => {
+            process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
+            process.exit(1);
+          },
+        );
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
       return;
     }
     case "run":

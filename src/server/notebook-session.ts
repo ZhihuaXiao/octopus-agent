@@ -15,12 +15,21 @@
  * handed to each Run — would have the runner take a ready-made agent and stop
  * deciding its setup from the Notebook it has just read, which is what lets a
  * Notebook edited between Runs be run as it now stands.
+ *
+ * Nor does a Notebook Session live only in memory. Every event it emits is
+ * numbered and journaled (`journal.ts`), and the journal is what it is made
+ * from again when a server starts: the events heard over, the session stands
+ * where it stood, under the id it had, and a browser that comes back — after
+ * its own connection dropped, or after the server's restart — asks for
+ * everything since the last event it heard and is told exactly that
+ * (ADR-0021). A Run the server died in the middle of is ended here, as far as
+ * it got, since the process that was running it is gone.
  */
 
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
-import type { AgentFactory, ToolCall } from "../agent/agent.js";
+import { type AgentFactory, type ToolCall, emptyResult, noUsage } from "../agent/agent.js";
 import { type NotebookEdit, applyEdit } from "../notebook/edit.js";
 import {
   type Cell,
@@ -32,9 +41,17 @@ import {
   isCellSegment,
   parseNotebook,
 } from "../notebook/notebook.js";
-import type { CellRecord, CellStatus, RunRecord } from "../run/record.js";
-import { type RunEvent, runNotebook } from "../run/runner.js";
-import { runFile } from "../run/store.js";
+import type { CellRecord, CellStatus, RunEnvironment, RunRecord } from "../run/record.js";
+import { type RunEvent, concludeRun, runNotebook } from "../run/runner.js";
+import { listArtifacts, runFile } from "../run/store.js";
+import {
+  type FoundJournal,
+  type Journal,
+  type JournalHeader,
+  type JournalLine,
+  openJournal,
+  readJournals,
+} from "./journal.js";
 import { fileWithin, pathWithin, titleOf } from "./notebooks.js";
 
 /**
@@ -111,6 +128,11 @@ export interface NotebookSessionState {
    * from now on is running in, for a browser that arrives between Cells.
    */
   readonly run?: string;
+  /**
+   * The number of the last event this state reflects, so a browser that holds
+   * it can later ask for everything since. Zero when nothing has happened yet.
+   */
+  readonly sequence: number;
   readonly cells: readonly CellView[];
 }
 
@@ -127,6 +149,23 @@ export type NotebookSessionEvent =
   | { readonly type: "run-refused"; readonly error: string }
   /** The Notebook itself changed — saved from a browser, or found changed on disk — and this is it now. */
   | { readonly type: "notebook-changed"; readonly session: NotebookSessionState };
+
+/**
+ * An event as a listener hears it: numbered in the order the Notebook Session
+ * emitted it, from one, with no gaps. The number is what a browser that went
+ * away comes back with, to be told everything since.
+ */
+export type NumberedEvent = NotebookSessionEvent & { readonly sequence: number };
+
+/**
+ * What a browser is first told when it has no way to catch up: the Notebook
+ * Session as it stands now, to be drawn whole. Its `sequence` is where the
+ * events pick up from.
+ */
+export interface Snapshot {
+  readonly type: "notebook-session";
+  readonly session: NotebookSessionState;
+}
 
 export interface RunRequest {
   /** The Cells to run, by id; absent runs the whole Notebook. */
@@ -169,8 +208,15 @@ export interface NotebookSession {
    * at once when there was none — so that afterwards nothing is running.
    */
   interrupt(): Promise<void>;
-  /** Hears every event from now on; returns the way to stop hearing them. */
-  subscribe(listener: (event: NotebookSessionEvent) => void): () => void;
+  /**
+   * Hears every event from now on, and first whatever it has to catch up on:
+   * given `since` — the number of the last event the listener heard — every
+   * event after it, in order, so that a browser coming back is told what
+   * happened while it was away exactly as it would have heard it; given none,
+   * or a number that names no place in this session's events, the state as it
+   * stands, to be drawn whole. Returns the way to stop hearing.
+   */
+  subscribe(listener: (event: NumberedEvent | Snapshot) => void, since?: number): () => void;
   /**
    * The file at `file` under the directory of this Notebook's Run `run` — an
    * Artifact as a record names one, or the record itself — or nothing when the
@@ -189,6 +235,13 @@ interface NotebookSessionSetup {
   readonly source: string;
   readonly parsed: Notebook;
   readonly agent: AgentFactory;
+  /** Where the session writes what happens to it, for a server after this one. */
+  readonly journal: Journal;
+  /**
+   * What a session before this one journaled, for this one to stand where it
+   * stood: absent for a session being made rather than recovered.
+   */
+  readonly recovered?: FoundJournal;
 }
 
 /** The revision a file's bytes are: enough of their digest to tell two versions apart. */
@@ -211,9 +264,32 @@ function readable<Made extends { readonly ok: true; readonly notebook: Notebook 
   return result;
 }
 
-function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
-  const { id, path, notebook, agent } = setup;
-  const listeners = new Set<(event: NotebookSessionEvent) => void>();
+/** Whether a journal line is an event, as the session wrote it. */
+const isEvent = (line: JournalLine): line is JournalLine & NumberedEvent =>
+  typeof line.sequence === "number" && typeof line.type === "string";
+
+/** A Run that has named itself and not yet ended: what it said of itself, and when. */
+interface InProgress {
+  readonly run: string;
+  readonly startedAt: string;
+  readonly environment: RunEnvironment;
+  readonly agentSession?: string;
+}
+
+/**
+ * Why a Cell the server died under did not finish. Interrupted rather than
+ * errored, since nothing about the Cell wants putting right; what stopped it
+ * was the process going out from under it.
+ */
+const LOST = "The server stopped while this cell was running";
+
+async function createNotebookSession(setup: NotebookSessionSetup): Promise<NotebookSession> {
+  const { id, path, notebook, agent, journal } = setup;
+  const listeners = new Set<(event: NumberedEvent | Snapshot) => void>();
+  /** Every event emitted so far, in order: what a browser coming back is told. */
+  const events: NumberedEvent[] = [];
+  /** The number of the last event emitted. */
+  let sequence = 0;
 
   /** The Notebook as the session holds it: the file's bytes, and what they parse to. */
   let source = setup.source;
@@ -230,25 +306,46 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
   const results = new Map<string, { readonly record: CellRecord; readonly run: string }>();
   /** The Cells the last Run left Stale. */
   let stale = new Set<string>();
-  /** What the Cells in flight have said and done so far. */
-  const speaking = new Map<string, { text: string; readonly calls: ToolCall[] }>();
+  /** What the Cells in flight have said and done so far, and since when. */
+  const speaking = new Map<
+    string,
+    { text: string; readonly calls: ToolCall[]; readonly startedAt: string }
+  >();
   /** The Run before this one, for the next to carry on from. */
   let last: RunRecord | undefined;
-  /** The Run in progress: the way to interrupt it, when it is over, and its id once it has named itself. */
-  let current:
-    | { readonly controller: AbortController; readonly over: Promise<void>; run?: string }
-    | undefined;
+  /**
+   * The Run in progress once it has named itself: what a Cell that starts is
+   * running in, and what the Run said of itself as it started — enough to
+   * write its record should the Run never get to.
+   */
+  let inProgress: InProgress | undefined;
+  /** The Cells the Run in progress has finished with, in the order they ended. */
+  let ended: CellRecord[] = [];
+  /** The Run in progress: the way to interrupt it, and when it is over. */
+  let current: { readonly controller: AbortController; readonly over: Promise<void> } | undefined;
 
-  const emit = (event: NotebookSessionEvent) => {
+  const dispatch = (numbered: NumberedEvent) => {
+    events.push(numbered);
+    journal.append(numbered);
     for (const listener of listeners) {
       // A listener's failure is its own: the events are emitted from inside the
       // Run, and a socket that could not be written to must not stop a Cell.
       try {
-        listener(event);
+        listener(numbered);
       } catch (cause) {
         process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
       }
     }
+  };
+
+  /**
+   * Numbers an event and sends it on. Given a function, the event is made
+   * after the number is taken, for one that carries the state: the state then
+   * stands at the event itself, and a browser that adopts it has heard it.
+   */
+  const emit = (event: NotebookSessionEvent | (() => NotebookSessionEvent)) => {
+    sequence += 1;
+    dispatch({ sequence, ...(typeof event === "function" ? event() : event) });
   };
 
   const viewOf = (cell: Cell): CellView => {
@@ -270,7 +367,7 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
         text: inFlight.text,
         toolCalls: inFlight.calls,
         artifacts: [],
-        ...(current?.run !== undefined ? { run: current.run } : {}),
+        ...(inProgress !== undefined ? { run: inProgress.run } : {}),
       };
     }
 
@@ -291,13 +388,27 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
     };
   };
 
-  const observe = (event: RunEvent) => {
+  /**
+   * Takes in what an event says happened, whether it is happening now or is
+   * being heard over from the journal: the one account of a Run, kept the same
+   * way both times, is what makes a recovered session stand where it stood.
+   * `at` is when it happened, which is now unless the journal says otherwise.
+   */
+  const absorb = (event: NotebookSessionEvent, at = new Date().toISOString()) => {
     switch (event.type) {
-      case "run-started":
-        if (current !== undefined) current.run = event.run;
+      case "run-started": {
+        const { run, environment, agentSession } = event;
+        inProgress = {
+          run,
+          startedAt: at,
+          environment,
+          ...(agentSession !== undefined ? { agentSession } : {}),
+        };
+        ended = [];
         break;
+      }
       case "cell-started":
-        speaking.set(event.cell, { text: "", calls: [] });
+        speaking.set(event.cell, { text: "", calls: [], startedAt: at });
         break;
       case "cell-text": {
         const inFlight = speaking.get(event.cell);
@@ -309,11 +420,30 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
         break;
       case "cell-ended":
         speaking.delete(event.record.id);
+        ended.push(event.record);
         // The Run named itself before any Cell started, so a Cell that ended has
         // a Run to be recorded against; the empty name is never reached.
-        results.set(event.record.id, { record: event.record, run: current?.run ?? "" });
+        results.set(event.record.id, { record: event.record, run: inProgress?.run ?? "" });
+        break;
+      case "run-ended":
+        last = event.record;
+        stale = new Set(event.record.stale);
+        speaking.clear();
+        inProgress = undefined;
+        break;
+      case "run-refused":
+        speaking.clear();
+        inProgress = undefined;
+        break;
+      case "notebook-changed":
+        // The Notebook is read from its file, here and on recovery; the event
+        // carries what it was for whoever was watching, not for the session.
         break;
     }
+  };
+
+  const observe = (event: NotebookSessionEvent) => {
+    absorb(event);
     emit(event);
   };
 
@@ -329,7 +459,8 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
         : { kind: "prose", text: segment.text },
     ),
     running: current !== undefined,
-    ...(current?.run !== undefined ? { run: current.run } : {}),
+    ...(inProgress !== undefined ? { run: inProgress.run } : {}),
+    sequence,
     cells: cellsOf(parsed).map(viewOf),
   });
 
@@ -338,7 +469,7 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
     source = bytes;
     parsed = made;
     revision = revisionOf(bytes);
-    emit({ type: "notebook-changed", session: state() });
+    emit(() => ({ type: "notebook-changed", session: state() }));
   };
 
   const save = async (request: SaveRequest): Promise<Saved> => {
@@ -374,6 +505,89 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
     return { kind: "saved" };
   };
 
+  const interrupt = (): Promise<void> => {
+    if (current === undefined) return Promise.resolve();
+    current.controller.abort();
+    return current.over;
+  };
+
+  /**
+   * Ends a Run the server before this one died in the middle of, as far as it
+   * got: each Cell still in flight is recorded as Interrupted — as one stopped
+   * from the browser is, with nothing of the half-reply kept (ADR-0017) — and
+   * the Run is concluded as the runner would have concluded it, so that the
+   * next Run carries on from it, from the Anchors of the Cells that did end,
+   * rather than from the Run before as if these had never run. What the Cells
+   * in flight had spent is not known and is recorded as nothing, which is the
+   * one figure here that is not what happened. A Run whose record the runner
+   * did write — the process died between writing it and journaling its end —
+   * is concluded with that record, not a second one written over it.
+   */
+  const settle = async (lost: InProgress): Promise<void> => {
+    const written = await runFile(path, lost.run, "record.json");
+    if (written !== undefined) {
+      const record = JSON.parse(await readFile(written, "utf8")) as RunRecord;
+      observe({ type: "run-ended", record });
+      return;
+    }
+
+    const endedAt = new Date().toISOString();
+    const declared = new Map(cellsOf(parsed).map((cell) => [cell.id, cell]));
+    for (const [cellId, said] of speaking) {
+      // A Cell the Notebook no longer declares — removed while no server ran —
+      // has no type to be recorded as, and no place to be shown in.
+      const cell = declared.get(cellId);
+      if (cell === undefined) continue;
+      const interrupted = {
+        id: cellId,
+        status: "interrupted" as const,
+        usage: noUsage,
+        // Whatever it left: half of what it was making is still the only
+        // account there is of how far it got, as after any failure.
+        artifacts: await listArtifacts(path, lost.run, cellId),
+        startedAt: said.startedAt,
+        endedAt,
+        error: LOST,
+      };
+      const record: CellRecord =
+        cell.type === "prompt"
+          ? { ...interrupted, type: "prompt", ...emptyResult }
+          : { ...interrupted, type: "bash", stdout: "", stderr: "", exitCode: null };
+      observe({ type: "cell-ended", record });
+    }
+
+    const record = await concludeRun({
+      id: lost.run,
+      notebook: path,
+      ...(last !== undefined ? { continues: last } : {}),
+      environment: lost.environment,
+      ...(lost.agentSession !== undefined ? { agentSession: lost.agentSession } : {}),
+      startedAt: lost.startedAt,
+      cells: ended,
+      allCells: cellsOf(parsed),
+    });
+    observe({ type: "run-ended", record });
+  };
+
+  // Heard over, to stand where the session before stood. Nothing is emitted
+  // or journaled: these events happened, and are on disk already.
+  let held = setup.recovered?.header.revision;
+  for (const line of setup.recovered?.lines ?? []) {
+    if (!isEvent(line)) continue;
+    const { at, ...event } = line;
+    events.push(event);
+    sequence = event.sequence;
+    absorb(event, at);
+    if (event.type === "notebook-changed") held = event.session.revision;
+  }
+  // A Run the journal leaves in progress is one the server died in: the
+  // process that ran it is gone, so it ends here, and is said to.
+  if (inProgress !== undefined) await settle(inProgress);
+  // The file as it is now is what the session holds, and the browsers that
+  // were watching hold what it was: a Notebook edited while no server ran is
+  // as much a change as one saved from another browser, and is said to be.
+  if (held !== undefined && held !== revision) adopt(source, parsed);
+
   return {
     id,
 
@@ -390,14 +604,6 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
       if (current !== undefined) return false;
       const controller = new AbortController();
 
-      // Whatever was still in flight is over, however the Run ended. Settled
-      // before the end is announced, so a listener that asks for the state on
-      // hearing it finds the session already at rest.
-      const settle = () => {
-        speaking.clear();
-        current = undefined;
-      };
-
       const over = runNotebook(path, {
         agent,
         observe,
@@ -407,14 +613,14 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
         ...(last !== undefined ? { continues: last } : {}),
       }).then(
         (record) => {
-          last = record;
-          stale = new Set(record.stale);
-          settle();
-          emit({ type: "run-ended", record });
+          // Settled before the end is announced, so a listener that asks for
+          // the state on hearing it finds the session already at rest.
+          current = undefined;
+          observe({ type: "run-ended", record });
         },
         (cause: unknown) => {
-          settle();
-          emit({
+          current = undefined;
+          observe({
             type: "run-refused",
             error: cause instanceof Error ? cause.message : String(cause),
           });
@@ -427,13 +633,14 @@ function createNotebookSession(setup: NotebookSessionSetup): NotebookSession {
       return true;
     },
 
-    interrupt() {
-      if (current === undefined) return Promise.resolve();
-      current.controller.abort();
-      return current.over;
-    },
+    interrupt,
 
-    subscribe(listener) {
+    subscribe(listener, since) {
+      // Caught up and subscribed in one breath, with nothing emitted between:
+      // an event that arrived meanwhile would be neither replayed nor heard.
+      if (since !== undefined && Number.isInteger(since) && since >= 0 && since <= sequence) {
+        for (const event of events.slice(since)) listener(event);
+      } else listener({ type: "notebook-session", session: state() });
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
@@ -455,8 +662,9 @@ export interface NotebookSessions {
   open(notebook: string): Promise<Opened>;
   get(id: string): NotebookSession | undefined;
   /**
-   * Interrupts every Run in progress and resolves once each has stopped and
-   * written its record: nothing outlives the server it runs in.
+   * Interrupts every Run in progress and resolves once each has stopped,
+   * written its record and journaled its end: nothing outlives the server it
+   * runs in, and nothing is left half-written for the next one to find.
    */
   close(): Promise<void>;
 }
@@ -472,49 +680,114 @@ export interface NotebookSessionsOptions {
  * The Notebook Sessions the server owns, one per Notebook: a Notebook is one
  * file with one set of Run Records beside it, and two live copies of it would
  * be two Runs writing into one history.
+ *
+ * Those a server before this one left journaled are opened again first, under
+ * the ids it gave out, so that a browser holding one finds its session where
+ * it left it. One whose Notebook cannot be opened now — gone, or broken in an
+ * editor while no server ran — is kept to be opened when it can be, rather
+ * than lost, or made twice.
  */
-export function createNotebookSessions(options: NotebookSessionsOptions): NotebookSessions {
+export async function createNotebookSessions(
+  options: NotebookSessionsOptions,
+): Promise<NotebookSessions> {
   const { directory, agent } = options;
   const byId = new Map<string, NotebookSession>();
   const byPath = new Map<string, NotebookSession>();
+  /** The journaled sessions not yet open, by the Notebook's resolved path. */
+  const journaled = new Map<string, FoundJournal>();
+  /** The Notebooks being opened right now, by resolved path. */
+  const opening = new Map<string, Promise<Opened>>();
+
+  const openFresh = async (path: string): Promise<Opened> => {
+    let source: string;
+    try {
+      source = await readFile(path, "utf8");
+    } catch (cause) {
+      const { code } = cause as NodeJS.ErrnoException;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") return { kind: "absent" };
+      throw cause;
+    }
+
+    const relativePath = pathWithin(directory, path);
+    const found = readable(parseNotebook(source), `Cannot open ${relativePath}`);
+    if (!found.ok) return { kind: "refused", problem: found.problem };
+
+    const before = journaled.get(path);
+    const id = before?.id ?? randomUUID();
+    const journal = openJournal(directory, id);
+    if (before === undefined) {
+      const header: JournalHeader = {
+        type: "opened",
+        notebook: relativePath,
+        revision: revisionOf(source),
+      };
+      journal.append(header);
+    }
+    const session = await createNotebookSession({
+      id,
+      path,
+      notebook: relativePath,
+      source,
+      parsed: found.notebook,
+      agent,
+      journal,
+      ...(before !== undefined ? { recovered: before } : {}),
+    });
+    // Taken up only now: a recovery that failed halfway — the record of a Run
+    // left unfinished could not be written — leaves the Journal to be tried
+    // again, rather than a second one begun beside it.
+    journaled.delete(path);
+    byId.set(session.id, session);
+    byPath.set(path, session);
+    return { kind: "opened", session, created: before === undefined };
+  };
+
+  /**
+   * One opening per Notebook at a time: two requests to open the same one
+   * would otherwise each read it, and each make a session — and a Journal —
+   * for it, where there is to be one.
+   */
+  const openAt = (path: string): Promise<Opened> => {
+    const existing = byPath.get(path);
+    if (existing !== undefined) {
+      return Promise.resolve({ kind: "opened", session: existing, created: false });
+    }
+    let inFlight = opening.get(path);
+    if (inFlight === undefined) {
+      inFlight = openFresh(path).finally(() => opening.delete(path));
+      opening.set(path, inFlight);
+    }
+    return inFlight;
+  };
+
+  for (const journal of await readJournals(directory)) {
+    const path = fileWithin(directory, journal.header.notebook);
+    if (path === undefined) continue;
+    // Two Journals of one Notebook is two servers having served this directory
+    // at once, which nothing yet prevents; the later begun stands, and the
+    // other is left where it is and said so.
+    const other = journaled.get(path);
+    if (other !== undefined) {
+      process.stderr.write(
+        `Two journals of ${journal.header.notebook}, ${other.id} and ${journal.id}; only the latter is recovered.\n`,
+      );
+    }
+    journaled.set(path, journal);
+  }
+  for (const path of [...journaled.keys()]) {
+    const opened = await openAt(path);
+    if (opened.kind !== "opened") {
+      process.stderr.write(
+        `Not recovered until it can be opened: ${pathWithin(directory, path)}${opened.kind === "refused" ? `\n${opened.problem}` : ""}\n`,
+      );
+    }
+  }
 
   return {
     async open(notebook) {
       const path = fileWithin(directory, notebook);
       if (path === undefined) return { kind: "absent" };
-
-      const existing = byPath.get(path);
-      if (existing !== undefined) return { kind: "opened", session: existing, created: false };
-
-      let source: string;
-      try {
-        source = await readFile(path, "utf8");
-      } catch (cause) {
-        const { code } = cause as NodeJS.ErrnoException;
-        if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") return { kind: "absent" };
-        throw cause;
-      }
-
-      const relativePath = pathWithin(directory, path);
-      const found = readable(parseNotebook(source), `Cannot open ${relativePath}`);
-      if (!found.ok) return { kind: "refused", problem: found.problem };
-
-      // Two requests to open the same Notebook may have read it side by side;
-      // whichever finished first has the session, and the other joins it.
-      const raced = byPath.get(path);
-      if (raced !== undefined) return { kind: "opened", session: raced, created: false };
-
-      const session = createNotebookSession({
-        id: randomUUID(),
-        path,
-        notebook: relativePath,
-        source,
-        parsed: found.notebook,
-        agent,
-      });
-      byId.set(session.id, session);
-      byPath.set(path, session);
-      return { kind: "opened", session, created: true };
+      return openAt(path);
     },
 
     get: (id) => byId.get(id),

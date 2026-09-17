@@ -195,6 +195,10 @@ No outputs and no credentials ever appear in the document.
   write them concurrently; reattach through pi's API.
 - Run records carry per-cell status, timings, the model actually used, token usage and
   cost, and pi entry IDs. Artifacts are stored per notebook per run.
+- Each notebook session keeps a journal of the events it emitted, under `.octo/journals/`
+  beside the served directory; it is what a reconnecting browser catches up from and what a
+  restarted server recovers the session from (ADR-0021). Never a substitute for pi's session
+  file or the run records, which stay authoritative for what they hold.
 
 ### Security
 
