@@ -11,13 +11,17 @@
  * from under the Run's directory, so the browser can show a file where the
  * record names it. A save writes the Notebook's file, and only the bytes the
  * edit changed, so a diff of the file shows what the author did and no more.
- * Loopback only, because starting it must never expose the machine by accident
- * (ADR-0006); reaching it from elsewhere is a deliberate act that ticket 19 owns.
+ * Loopback unless told otherwise, because starting it must never expose the
+ * machine by accident (ADR-0006); and everything that does or shows anything
+ * — the API, and the socket the events come over — takes only a request the
+ * account has authenticated (`auth.ts`). The shell itself is served to anyone
+ * who asks, since it is where a browser authenticates and holds nothing.
  */
 
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import { basename, extname, resolve } from "node:path";
+import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { WebSocketServer } from "ws";
@@ -26,6 +30,7 @@ import type { AgentFactory } from "../agent/agent.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
+import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js";
 import { copyNotebook, listNotebooks } from "./notebooks.js";
 import {
   type NotebookSessions,
@@ -52,7 +57,14 @@ export const DEFAULT_PORT = 8008;
 const CLIENT_DIRECTORY = fileURLToPath(new URL("../../client/", import.meta.url));
 const CLIENT_ROUTE = "/client/";
 const SHELL = "index.html";
+/** Everything that does or shows anything, and so takes only an authenticated request. */
+const API_ROUTE = "/api/";
+/** Where the shell presents the password, or a pasted token, to open a Connection; the one thing under the API that needs none. */
+const CONNECT_ROUTE = "/api/connect";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
+/** The query the startup URL carries the token in, and the cookie a browser carries its Connection in. */
+const TOKEN_QUERY = "token";
+const CONNECTION_COOKIE = "octo_connection";
 const SESSIONS_ROUTE = "/api/sessions";
 /** A Notebook Session by id, and what may be asked of it. */
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events))?$/;
@@ -101,10 +113,22 @@ export interface ServerOptions {
    * system for a free one, which is what a test wants and nobody else does.
    */
   readonly port?: number;
+  /**
+   * The address to bind; loopback when absent. Naming one is the deliberate
+   * act ADR-0006 asks for: anyone who reaches the port and authenticates can
+   * run code as the server's user, so nothing binds beyond loopback unasked.
+   */
+  readonly host?: string;
   /** The directory whose Notebooks are served; the working directory when absent. */
   readonly directory?: string;
   /** Makes the agent each Run's Prompt Cells go to: pi's, or a scripted one under test. */
   readonly agent: AgentFactory;
+  /**
+   * The password as `password.ts` stored it — its hash, never the password —
+   * when that is what the account authenticates with; absent, a token is
+   * generated for this start and carried in the URL.
+   */
+  readonly storedPassword?: string;
 }
 
 export interface RunningServer {
@@ -463,6 +487,114 @@ function permitted(
 interface Served {
   readonly directory: string;
   readonly sessions: NotebookSessions;
+  readonly auth: Auth;
+}
+
+/** The value of one cookie among those a request carries, or nothing. */
+function cookie(request: IncomingMessage, name: string): string | undefined {
+  for (const pair of (request.headers.cookie ?? "").split(";")) {
+    const separator = pair.indexOf("=");
+    if (separator !== -1 && pair.slice(0, separator).trim() === name) {
+      return pair.slice(separator + 1).trim();
+    }
+  }
+  return undefined;
+}
+
+/** The bearer a request presents in its Authorization header, or nothing. */
+function bearer(request: IncomingMessage): string | undefined {
+  const matched = /^Bearer\s+(\S+)$/i.exec(request.headers.authorization ?? "");
+  return matched?.[1];
+}
+
+/**
+ * Whether the request is the account's: it carries a Connection the server
+ * opened, or the token itself. A bearer that is not the token is a guess,
+ * and is counted as one; a cookie the server does not know is not, and is
+ * simply refused.
+ */
+async function authenticate(auth: Auth, request: IncomingMessage): Promise<Attempt> {
+  const connection = cookie(request, CONNECTION_COOKIE);
+  if (connection !== undefined && auth.connected(connection)) return { kind: "accepted" };
+  const token = bearer(request);
+  if (token === undefined) return { kind: "refused" };
+  return auth.attempt({ kind: "token", value: token });
+}
+
+/** Refuses a request whose credential was not accepted, as its attempt deserves. */
+function refuse(
+  auth: Auth,
+  attempt: Exclude<Attempt, { kind: "accepted" }>,
+  response: ServerResponse,
+): void {
+  if (attempt.kind === "wait") tooSoon(attempt.seconds, response);
+  else unauthenticated(auth, response);
+}
+
+/** How a Connection is handed to the browser: to be sent back on every request, and to no other site. */
+const connectionCookie = (id: string) =>
+  `${CONNECTION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict`;
+
+/** Refuses an unauthenticated request, saying which credential this server takes. */
+const unauthenticated = (auth: Auth, response: ServerResponse) =>
+  json(response, 401, { authenticate: auth.method });
+
+/** Refuses to look at a credential so soon after a wrong one, saying when to try again. */
+const tooSoon = (seconds: number, response: ServerResponse) =>
+  reply(
+    response,
+    429,
+    `Too soon after a wrong attempt: wait ${seconds} ${seconds === 1 ? "second" : "seconds"} before trying again.\n`,
+    { "retry-after": String(seconds) },
+  );
+
+/**
+ * The browser following the URL the server printed: the token in the query
+ * opens a Connection, and the browser is sent on to the shell, so the token
+ * is out of its address bar and its history. A token that is not this
+ * server's — the URL of a start before this one — sends the browser on with
+ * nothing, and the shell says what to do.
+ */
+async function arriveWithToken(auth: Auth, token: string, response: ServerResponse): Promise<void> {
+  const attempt = await auth.attempt({ kind: "token", value: token });
+  const headers: Record<string, string> = { location: "/" };
+  if (attempt.kind === "accepted") headers["set-cookie"] = connectionCookie(auth.connect());
+  reply(response, 303, "", headers);
+}
+
+/** The credential a body presents — exactly one — or nothing when the body is not one. */
+function credentialOf(body: unknown): Credential | undefined {
+  if (!isRecord(body)) return undefined;
+  for (const kind of ["token", "password"] as const) {
+    if (hasKeys(body, [kind]) && typeof body[kind] === "string") {
+      return { kind, value: body[kind] };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The shell presenting what the account authenticates with: the password, or
+ * a token pasted from the URL. Right, it opens a Connection the browser
+ * carries from here on; wrong, it is refused and the next attempt made to wait.
+ */
+async function openConnection(
+  auth: Auth,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const credential = credentialOf(await readJson(request));
+  if (credential === undefined) {
+    reply(response, 400, "The request must present a password or a token, as JSON.\n");
+    return;
+  }
+  const attempt = await auth.attempt(credential);
+  if (attempt.kind !== "accepted") {
+    refuse(auth, attempt, response);
+    return;
+  }
+  response.writeHead(204, { "set-cookie": connectionCookie(auth.connect()) });
+  response.end();
 }
 
 async function handle(
@@ -470,7 +602,23 @@ async function handle(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  const { pathname } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
+  const { pathname, searchParams } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
+
+  if (pathname === "/" && searchParams.has(TOKEN_QUERY) && READS.includes(request.method ?? "")) {
+    await arriveWithToken(served.auth, searchParams.get(TOKEN_QUERY) ?? "", response);
+    return;
+  }
+  if (pathname === CONNECT_ROUTE) {
+    if (permitted(WRITES, request, response)) await openConnection(served.auth, request, response);
+    return;
+  }
+  if (pathname.startsWith(API_ROUTE)) {
+    const attempt = await authenticate(served.auth, request);
+    if (attempt.kind !== "accepted") {
+      refuse(served.auth, attempt, response);
+      return;
+    }
+  }
 
   const matched = SESSION_ROUTE.exec(pathname);
   if (matched !== null) {
@@ -503,14 +651,38 @@ async function handle(
   notFound(response);
 }
 
+/**
+ * The addresses that mean every interface, which no browser can open: the URL
+ * names this machine's loopback instead, and another machine puts its own name
+ * for this one in its place.
+ */
+const EVERY_INTERFACE: Readonly<Record<string, string>> = { "0.0.0.0": LOOPBACK, "::": "::1" };
+
+/**
+ * Where a browser opens a server bound to `host`, carrying the token when
+ * there is one, so that following the URL is all the authenticating there is.
+ * An IPv6 address goes in brackets, as a URL spells one.
+ */
+function urlOf(host: string, port: number, token: string | undefined): string {
+  const named = EVERY_INTERFACE[host] ?? host;
+  const address = named.includes(":") ? `[${named}]` : named;
+  const url = new URL(`http://${address}:${port}/`);
+  if (token !== undefined) url.searchParams.set(TOKEN_QUERY, token);
+  return url.href;
+}
+
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const port = options.port ?? DEFAULT_PORT;
+  const host = options.host ?? LOOPBACK;
   const directory = resolve(options.directory ?? process.cwd());
   // Recovered before anything can be asked for, so that a browser coming back
   // as the server does finds its session rather than a second one opened
   // beside it.
   const sessions = await createNotebookSessions({ directory, agent: options.agent });
-  const served: Served = { directory, sessions };
+  const auth = createAuth(
+    options.storedPassword !== undefined ? { storedPassword: options.storedPassword } : {},
+  );
+  const served: Served = { directory, sessions, auth };
 
   const server = createServer((request, response) => {
     handle(served, request, response).catch((cause: unknown) => {
@@ -524,13 +696,30 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // The WebSocket is `ws`'s: a framing protocol is the point at which a
   // dependency earns its place over Node's own `http`, which speaks none.
   const sockets = new WebSocketServer({ noServer: true });
+  const refuseUpgrade = (socket: Duplex, status: string, headers: string[] = []) => {
+    socket.write(`HTTP/1.1 ${status}\r\n${["connection: close", ...headers].join("\r\n")}\r\n\r\n`);
+    socket.destroy();
+  };
   server.on("upgrade", (request, socket, head) => {
+    // A socket that fails while being refused is one already gone; unheard,
+    // Node would make it the end of the process.
+    socket.on("error", () => socket.destroy());
+    authenticate(auth, request).then(
+      (attempt) => {
+        if (attempt.kind === "accepted") upgrade(request, socket, head);
+        else if (attempt.kind === "wait")
+          refuseUpgrade(socket, "429 Too Many Requests", [`retry-after: ${attempt.seconds}`]);
+        else refuseUpgrade(socket, "401 Unauthorized");
+      },
+      () => refuseUpgrade(socket, "500 Internal Server Error"),
+    );
+  });
+  const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const { pathname, searchParams } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
     const matched = SESSION_ROUTE.exec(pathname);
     const session = matched?.[2] === "events" ? sessions.get(matched[1] ?? "") : undefined;
     if (session === undefined) {
-      socket.write("HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n");
-      socket.destroy();
+      refuseUpgrade(socket, "404 Not Found");
       return;
     }
     // A browser coming back says the number of the last event it heard, and
@@ -549,7 +738,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }, since);
       client.on("close", unsubscribe);
     });
-  });
+  };
 
   return new Promise((started, failed) => {
     server.once("error", (cause: NodeJS.ErrnoException) => {
@@ -561,11 +750,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           : cause,
       );
     });
-    server.listen(port, LOOPBACK, () => {
+    server.listen(port, host, () => {
       const address = server.address();
       const bound = address !== null && typeof address === "object" ? address.port : port;
       started({
-        url: `http://${LOOPBACK}:${bound}/`,
+        url: urlOf(host, bound, auth.token),
         directory,
         close: async () => {
           // Nothing outlives the server: the Runs in progress are interrupted

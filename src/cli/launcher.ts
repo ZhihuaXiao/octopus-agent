@@ -26,13 +26,22 @@ import { DEFAULT_PORT } from "../server/server.js";
 
 const USAGE = `usage: octo [pi arguments]...
        octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
-       octo --web [--port <number>]
+       octo --web [--port <number>] [--host <address>] [--password]
+       octo password
 
   A bare invocation is pi itself: anything not shown here is handed to the pi
   command as written, and only a request for help stops here instead.
   \`run\` executes a notebook headlessly, giving each declared input its value.
   \`--web\` starts the web interface on loopback, serving the notebooks under
-  the current directory, on the port given or ${DEFAULT_PORT}.`;
+  the current directory, on the port given or ${DEFAULT_PORT}. It prints the URL
+  to open, carrying a token generated for this start; with \`--password\` the
+  browser asks for the password set with \`octo password\` instead.
+  \`--host\` binds to the address given instead of loopback, so that other
+  machines can reach the server. Anyone who reaches that port and
+  authenticates can run arbitrary code as the user running octo: there is
+  one account and no sandbox. To work from another machine, prefer an
+  SSH tunnel to the loopback port and leave this flag out; see docs/remote.md.
+  \`password\` sets the password, asking for it rather than reading it here.`;
 
 export type Command =
   /** Not ours: hand the arguments to pi as written. */
@@ -49,7 +58,16 @@ export type Command =
       readonly kind: "web";
       /** Absent when no port was named, leaving the choice to the server. */
       readonly port?: number;
+      /**
+       * The address to bind, when the server is to be reachable from beyond
+       * loopback; absent, it binds loopback and nothing else (ADR-0006).
+       */
+      readonly host?: string;
+      /** Whether the stored password is what authenticates, rather than a token generated at startup. */
+      readonly password?: true;
     }
+  /** Sets the password `--web --password` asks for. */
+  | { readonly kind: "password" }
   | { readonly kind: "help"; readonly usage: string }
   | { readonly kind: "mistake"; readonly error: string };
 
@@ -57,8 +75,11 @@ const HELP_FLAGS: readonly string[] = ["--help", "-h"];
 /** As a first word only: inside `run`, a bare `help` is a Notebook of that name. */
 const HELP_WORD = "help";
 const RUN_WORD = "run";
+const PASSWORD_WORD = "password";
 const WEB_FLAG = "--web";
 const PORT_FLAG = "--port";
+const HOST_FLAG = "--host";
+const PASSWORD_FLAG = "--password";
 
 const help: Command = { kind: "help", usage: USAGE };
 const mistake = (error: string): Command => ({ kind: "mistake", error: `${error}\n${USAGE}` });
@@ -91,9 +112,28 @@ export function readCommand(argv: readonly string[]): Command {
   if (first === undefined) return { kind: "pi", arguments: [] };
   if (first === HELP_WORD || HELP_FLAGS.includes(first)) return help;
   if (first === RUN_WORD) return readRun(rest);
+  if (first === PASSWORD_WORD) return readPassword(rest);
   const { name } = splitOption(first);
-  if (name === WEB_FLAG || name === PORT_FLAG) return readWeb(argv);
+  if (WEB_FLAGS.includes(name)) return readWeb(argv);
   return { kind: "pi", arguments: argv };
+}
+
+/** The flags that, as a first word, make the command line the web interface's. */
+const WEB_FLAGS: readonly string[] = [WEB_FLAG, PORT_FLAG, HOST_FLAG, PASSWORD_FLAG];
+
+/**
+ * The password is asked for at the terminal, never read from the command
+ * line, where it would sit in the shell's history; so there is nothing here to read.
+ */
+function readPassword(argv: readonly string[]): Command {
+  const [stray] = argv;
+  if (stray === undefined) return { kind: "password" };
+  if (HELP_FLAGS.includes(stray)) return help;
+  return mistake(
+    isOption(stray)
+      ? `Unknown option "${stray}".`
+      : `The password is asked for, not given here, so "${stray}" is a stray argument.`,
+  );
 }
 
 function readRun(argv: readonly string[]): Command {
@@ -153,7 +193,9 @@ function readPort(text: string): number | undefined {
 
 function readWeb(argv: readonly string[]): Command {
   let web = false;
+  let password = false;
   let port: number | undefined;
+  let host: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
@@ -162,27 +204,42 @@ function readWeb(argv: readonly string[]): Command {
 
     const { name, attached } = splitOption(argument);
 
-    if (name === WEB_FLAG) {
-      if (attached !== undefined) return mistake(`Option "${WEB_FLAG}" takes no value.`);
-      web = true;
+    if (name === WEB_FLAG || name === PASSWORD_FLAG) {
+      if (attached !== undefined) return mistake(`Option "${name}" takes no value.`);
+      if (name === WEB_FLAG) web = true;
+      else password = true;
       continue;
     }
-    if (name !== PORT_FLAG) {
+    if (name !== PORT_FLAG && name !== HOST_FLAG) {
       return mistake(
         isOption(argument)
           ? `Unknown option "${argument}".`
           : `The web interface takes no notebook, so "${argument}" is a stray argument.`,
       );
     }
-    if (port !== undefined) return mistake(`Option "${PORT_FLAG}" was given twice.`);
+    const wanted = name === PORT_FLAG ? "a port number" : "an address";
+    if ((name === PORT_FLAG ? port : host) !== undefined) {
+      return mistake(`Option "${name}" was given twice.`);
+    }
 
     const text = valueOf(attached, argv[index + 1]);
-    if (text === undefined) return mistake(`Option "${PORT_FLAG}" needs a port number.`);
-    port = readPort(text);
-    if (port === undefined) return mistake(`"${text}" is not a port number.`);
+    if (text === undefined) return mistake(`Option "${name}" needs ${wanted}.`);
+    if (name === PORT_FLAG) {
+      port = readPort(text);
+      if (port === undefined) return mistake(`"${text}" is not a port number.`);
+    } else host = text;
     if (attached === undefined) index += 1;
   }
 
-  if (!web) return mistake(`Option "${PORT_FLAG}" only means something with "${WEB_FLAG}".`);
-  return { kind: "web", ...(port !== undefined ? { port } : {}) };
+  if (!web) {
+    // Whichever web flag came first is the one most likely typed in place of `--web`.
+    const given = splitOption(argv[0] ?? "").name;
+    return mistake(`Option "${given}" only means something with "${WEB_FLAG}".`);
+  }
+  return {
+    kind: "web",
+    ...(port !== undefined ? { port } : {}),
+    ...(host !== undefined ? { host } : {}),
+    ...(password ? { password: true } : {}),
+  };
 }

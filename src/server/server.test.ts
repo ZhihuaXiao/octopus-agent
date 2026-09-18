@@ -4,10 +4,11 @@ import { createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
-import { type RunningServer, startServer } from "./server.js";
+import { hashPassword } from "./password.js";
+import { type RunningServer, type ServerOptions, startServer } from "./server.js";
 
 const running: RunningServer[] = [];
 
@@ -22,6 +23,7 @@ const unusedAgent = () => createScriptedAgent([]);
 async function serve(
   files: Readonly<Record<string, string>> = {},
   agent: ScriptedAgent = unusedAgent(),
+  options: Omit<ServerOptions, "port" | "directory" | "agent"> = {},
 ): Promise<RunningServer> {
   const directory = await mkdtemp(join(tmpdir(), "octo-serve-"));
   for (const [name, contents] of Object.entries(files)) {
@@ -29,10 +31,25 @@ async function serve(
     await writeFile(join(directory, name), contents, "utf8");
   }
   // Port 0 asks the operating system for a free one, so tests never collide.
-  const server = await startServer({ port: 0, directory, agent: agent.create });
+  const server = await startServer({ ...options, port: 0, directory, agent: agent.create });
   running.push(server);
   return server;
 }
+
+/** The token the server generated at startup, read off the URL it says to open. */
+const tokenOf = (server: RunningServer) => new URL(server.url).searchParams.get("token") ?? "";
+
+/** The headers that make a request the account's: the token, presented as a script would. */
+const authorized = (server: RunningServer): Record<string, string> => ({
+  authorization: `Bearer ${tokenOf(server)}`,
+});
+
+/** A request to one of the server's paths, authenticated as every request of the client's is. */
+const get = (server: RunningServer, path: string, init: RequestInit = {}) =>
+  fetch(new URL(path, server.url), {
+    ...init,
+    headers: { ...authorized(server), ...(init.headers as Record<string, string> | undefined) },
+  });
 
 /** A port nothing is listening on right now. */
 function freePort(): Promise<number> {
@@ -64,13 +81,13 @@ describe("starting the server", () => {
     const server = await startServer({ port, directory: tmpdir(), agent: unusedAgent().create });
     running.push(server);
 
-    expect(server.url).toBe(`http://127.0.0.1:${port}/`);
+    expect(server.url).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${port}/\\?token=[0-9a-f]+$`));
   });
 
   it("answers on loopback", async () => {
     const server = await serve();
 
-    const response = await fetch(server.url);
+    const response = await fetch(new URL("/", server.url));
 
     expect(response.status).toBe(200);
   });
@@ -82,6 +99,55 @@ describe("starting the server", () => {
     await expect(fetch(`http://${externalAddress()}:${port}/`)).rejects.toMatchObject({
       cause: { code: "ECONNREFUSED" },
     });
+  });
+
+  it.skipIf(externalAddress() === undefined)(
+    "binds beyond loopback only when asked to, and then says so in its URL",
+    async () => {
+      const host = externalAddress() ?? "";
+
+      const server = await startServer({
+        port: 0,
+        host,
+        directory: tmpdir(),
+        agent: unusedAgent().create,
+      });
+      running.push(server);
+
+      expect(new URL(server.url).hostname).toBe(host);
+      expect((await fetch(new URL("/", server.url))).status).toBe(200);
+    },
+  );
+
+  it.skipIf(externalAddress() === undefined)(
+    "bound to every interface, names loopback in its URL, since no browser opens 0.0.0.0",
+    async () => {
+      const server = await startServer({
+        port: 0,
+        host: "0.0.0.0",
+        directory: tmpdir(),
+        agent: unusedAgent().create,
+      });
+      running.push(server);
+
+      const { hostname, port } = new URL(server.url);
+      expect(hostname).toBe("127.0.0.1");
+      expect((await fetch(new URL("/", server.url))).status).toBe(200);
+      expect((await fetch(`http://${externalAddress()}:${port}/`)).status).toBe(200);
+    },
+  );
+
+  it("writes an IPv6 address in its URL as a browser reads one", async () => {
+    const server = await startServer({
+      port: 0,
+      host: "::1",
+      directory: tmpdir(),
+      agent: unusedAgent().create,
+    });
+    running.push(server);
+
+    expect(new URL(server.url).host).toMatch(/^\[::1\]:\d+$/);
+    expect((await fetch(new URL("/", server.url))).status).toBe(200);
   });
 
   it("says which directory it serves", async () => {
@@ -107,10 +173,14 @@ function assetsOf(html: string): string[] {
 }
 
 /** A request with the path sent as written, which `fetch` would tidy up first. */
-function rawRequest(url: string, path: string): Promise<number> {
+function rawRequest(
+  url: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<number> {
   const { hostname, port } = new URL(url);
   return new Promise((resolve, reject) => {
-    request({ hostname, port, path, method: "GET" }, (response) => {
+    request({ hostname, port, path, method: "GET", headers }, (response) => {
       response.resume();
       resolve(response.statusCode ?? 0);
     })
@@ -123,7 +193,7 @@ describe("the client shell", () => {
   it("is what a browser loads at the root", async () => {
     const server = await serve();
 
-    const response = await fetch(server.url);
+    const response = await fetch(new URL("/", server.url));
 
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(await response.text()).toContain("<title>");
@@ -131,7 +201,7 @@ describe("the client shell", () => {
 
   it("finds every script and style it refers to", async () => {
     const server = await serve();
-    const assets = assetsOf(await (await fetch(server.url)).text());
+    const assets = assetsOf(await (await fetch(new URL("/", server.url))).text());
 
     expect(assets.length).toBeGreaterThan(0);
     for (const asset of assets) {
@@ -175,7 +245,7 @@ describe("the client shell", () => {
   it("takes nothing but a read", async () => {
     const server = await serve();
 
-    const response = await fetch(server.url, { method: "POST", body: "x" });
+    const response = await fetch(new URL("/", server.url), { method: "POST", body: "x" });
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET, HEAD");
@@ -227,7 +297,7 @@ npm run build
 
 describe("the notebooks the server lists", () => {
   const listed = async (server: RunningServer) => {
-    const response = await fetch(new URL("/api/notebooks", server.url));
+    const response = await get(server, "/api/notebooks");
     expect(response.headers.get("content-type")).toContain("application/json");
     return (await response.json()) as { directory: string; notebooks: unknown[] };
   };
@@ -294,7 +364,7 @@ describe("the notebooks the server lists", () => {
 
 /** A request carrying JSON, as the client sends one. */
 const post = (server: RunningServer, path: string, body?: unknown) =>
-  fetch(new URL(path, server.url), {
+  get(server, path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -342,10 +412,306 @@ async function open(server: RunningServer, notebook: string): Promise<NotebookSe
 }
 
 const stateOf = async (server: RunningServer, id: string): Promise<NotebookSessionState> => {
-  const response = await fetch(new URL(`/api/sessions/${id}`, server.url));
+  const response = await get(server, `/api/sessions/${id}`);
   if (!response.ok) throw new Error(`session ${id} answered ${response.status}`);
   return (await response.json()) as NotebookSessionState;
 };
+
+/** The cookie a browser is given, as the browser would send it back. */
+function cookieOf(response: Response): string {
+  const set = response.headers.get("set-cookie") ?? "";
+  return set.split(";")[0] ?? "";
+}
+
+describe("authenticating with the token", () => {
+  it("is generated for this start, and printed as the URL to open", async () => {
+    const one = await serve();
+    const other = await serve();
+
+    expect(tokenOf(one)).toMatch(/^[0-9a-f]{64}$/);
+    expect(tokenOf(other)).not.toBe(tokenOf(one));
+  });
+
+  it("is what a request to the API must carry: without it, the request is refused", async () => {
+    const server = await serve({ "hello.md": hello });
+
+    const read = await fetch(new URL("/api/notebooks", server.url));
+    const written = await fetch(new URL("/api/sessions", server.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ notebook: "hello.md" }),
+    });
+
+    expect(read.status).toBe(401);
+    // Told how to authenticate, since the shell has to know what to ask for.
+    expect(await read.json()).toEqual({ authenticate: "token" });
+    expect(written.status).toBe(401);
+    // Refused before anything was done, or looked at.
+    expect((await get(server, "/api/sessions/nothing")).status).toBe(404);
+  });
+
+  it("is taken as a bearer, as a script presents it", async () => {
+    const server = await serve({ "hello.md": hello });
+
+    expect((await get(server, "/api/notebooks")).status).toBe(200);
+  });
+
+  it("refuses a token that is not this server's", async () => {
+    const server = await serve();
+    const other = await serve();
+
+    const response = await fetch(new URL("/api/notebooks", server.url), {
+      headers: { authorization: `Bearer ${tokenOf(other)}` },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("opens a connection for the browser that follows the URL, and sends it on to the shell", async () => {
+    const server = await serve({ "hello.md": hello });
+
+    const followed = await fetch(server.url, { redirect: "manual" });
+
+    // The token leaves the address bar, and the browser carries a cookie instead.
+    expect(followed.status).toBe(303);
+    expect(followed.headers.get("location")).toBe("/");
+    expect(followed.headers.get("set-cookie")).toMatch(
+      /^octo_connection=[0-9a-f]{64}; Path=\/; HttpOnly; SameSite=Strict$/,
+    );
+    const asBrowser = await fetch(new URL("/api/notebooks", server.url), {
+      headers: { cookie: cookieOf(followed) },
+    });
+    expect(asBrowser.status).toBe(200);
+  });
+
+  it("sends a browser following an old URL on to the shell with no connection", async () => {
+    const server = await serve();
+    const url = new URL(server.url);
+    url.searchParams.set("token", "0".repeat(64));
+
+    const followed = await fetch(url, { redirect: "manual" });
+
+    expect(followed.status).toBe(303);
+    expect(followed.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("does not make a wrong token hold up the printed URL, nor a bearer that follows", async () => {
+    const server = await serve({ "hello.md": hello });
+    const stale = new URL(server.url);
+    stale.searchParams.set("token", "0".repeat(64));
+    await fetch(stale, { redirect: "manual" });
+    await fetch(new URL("/api/notebooks", server.url), {
+      headers: { authorization: "Bearer wrong" },
+    });
+
+    const followed = await fetch(server.url, { redirect: "manual" });
+    expect(followed.status).toBe(303);
+    expect(followed.headers.get("set-cookie")).toMatch(/^octo_connection=/);
+    expect((await get(server, "/api/notebooks")).status).toBe(200);
+  });
+
+  it("knows no connection it did not open", async () => {
+    const server = await serve();
+
+    const response = await fetch(new URL("/api/notebooks", server.url), {
+      headers: { cookie: `octo_connection=${"0".repeat(64)}` },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("refuses a WebSocket that does not authenticate, and takes one that does", async () => {
+    const server = await serve({ "hello.md": hello });
+    const session = await open(server, "hello.md");
+    const followed = await fetch(server.url, { redirect: "manual" });
+
+    await expect(watch(server, session.id, undefined, {})).rejects.toThrow();
+    await expect(
+      watch(server, session.id, undefined, { authorization: "Bearer wrong" }),
+    ).rejects.toThrow();
+    const browser = await watch(server, session.id, undefined, { cookie: cookieOf(followed) });
+    expect((await browser.next("notebook-session")).session?.id).toBe(session.id);
+    await browser.close();
+  });
+
+  it("opens a connection for a token pasted into the shell", async () => {
+    const server = await serve();
+
+    const response = await connect(server, { token: tokenOf(server) });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toMatch(/^octo_connection=/);
+    expect(
+      (
+        await fetch(new URL("/api/notebooks", server.url), {
+          headers: { cookie: cookieOf(response) },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("serves the shell to anyone, since the shell is where one authenticates, and it holds nothing", async () => {
+    const server = await serve();
+
+    expect((await fetch(new URL("/", server.url))).status).toBe(200);
+    expect((await fetch(new URL("/client/main.js", server.url))).status).toBe(200);
+  });
+
+  it("the shell presents a credential to the route that opens a Connection, naming the panel the page has", async () => {
+    const server = await serve();
+    const [page, script] = await Promise.all([
+      (await fetch(new URL("/", server.url))).text(),
+      (await fetch(new URL("/client/main.js", server.url))).text(),
+    ]);
+
+    expect(page).toContain('id="connect"');
+    expect(page).toContain('id="connect-form"');
+    expect(script).toContain('"/api/connect"');
+    expect(script).toContain('element("connect")');
+    expect(script).toContain('element("connect-form")');
+  });
+});
+
+/** Presents a credential the way the shell's form does. */
+const connect = (server: RunningServer, body: unknown) =>
+  fetch(new URL("/api/connect", server.url), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+describe("authenticating with the password", () => {
+  /** The stored password `secret`, hashed once: a hash is made to take a moment. */
+  let stored: string;
+  beforeAll(async () => {
+    stored = await hashPassword("secret");
+  });
+  const servePassword = () =>
+    serve({ "hello.md": hello }, unusedAgent(), { storedPassword: stored });
+
+  it("prints a URL with no token in it, since the browser asks for the password instead", async () => {
+    const server = await servePassword();
+
+    expect(new URL(server.url).search).toBe("");
+    expect((await fetch(new URL("/api/notebooks", server.url))).status).toBe(401);
+  });
+
+  it("says a password is what to present", async () => {
+    const server = await servePassword();
+
+    const response = await fetch(new URL("/api/notebooks", server.url));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ authenticate: "password" });
+  });
+
+  it("opens a connection for the password, which the browser then carries", async () => {
+    const server = await servePassword();
+
+    const response = await connect(server, { password: "secret" });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toMatch(
+      /^octo_connection=[0-9a-f]{64}; Path=\/; HttpOnly; SameSite=Strict$/,
+    );
+    const cookie = cookieOf(response);
+    const opened = await fetch(new URL("/api/sessions", server.url), {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ notebook: "hello.md" }),
+    });
+    expect(opened.status).toBe(201);
+    const session = (await opened.json()) as NotebookSessionState;
+    const browser = await watch(server, session.id, undefined, { cookie });
+    expect((await browser.next("notebook-session")).session?.id).toBe(session.id);
+    await browser.close();
+  });
+
+  it("refuses a wrong password", async () => {
+    const server = await servePassword();
+
+    const response = await connect(server, { password: "secrat" });
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("takes no token in the password's place", async () => {
+    const server = await servePassword();
+
+    expect((await connect(server, { token: "secret" })).status).toBe(401);
+  });
+
+  it("takes no bearer either", async () => {
+    const server = await servePassword();
+
+    const response = await fetch(new URL("/api/notebooks", server.url), {
+      headers: { authorization: "Bearer secret" },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("makes a wrong guess wait before the next is looked at, and longer each time", async () => {
+    const server = await servePassword();
+
+    expect((await connect(server, { password: "wrong" })).status).toBe(401);
+    const tooSoon = await connect(server, { password: "secret" });
+    expect(tooSoon.status).toBe(429);
+    expect(tooSoon.headers.get("retry-after")).toBe("1");
+    expect(await tooSoon.text()).toMatch(/1 second/);
+
+    await new Promise((tick) => setTimeout(tick, 1100));
+    expect((await connect(server, { password: "wrong again" })).status).toBe(401);
+    const longer = await connect(server, { password: "secret" });
+    expect(longer.status).toBe(429);
+    expect(longer.headers.get("retry-after")).toBe("2");
+  });
+
+  it("looks at a burst of guesses one at a time, so only the first is tried", async () => {
+    const server = await servePassword();
+
+    // Fired inside the moment the first takes to hash; each is refused for
+    // being a guess or for being too soon, never tried.
+    const answers = await Promise.all(
+      ["one", "two", "three", "four", "secret"].map((guess) =>
+        connect(server, { password: guess }),
+      ),
+    );
+
+    expect(answers.map((answer) => answer.status).sort()).toEqual([401, 429, 429, 429, 429]);
+  });
+
+  it("looks at the next attempt once the wait is over, and the right password ends the waiting", async () => {
+    const server = await servePassword();
+    expect((await connect(server, { password: "wrong" })).status).toBe(401);
+    await new Promise((tick) => setTimeout(tick, 1100));
+
+    expect((await connect(server, { password: "secret" })).status).toBe(204);
+
+    // Back to the first wait: the failures before the success are forgotten.
+    expect((await connect(server, { password: "wrong" })).status).toBe(401);
+    expect((await connect(server, { password: "secret" })).headers.get("retry-after")).toBe("1");
+  });
+
+  it("takes only a request presenting the one credential", async () => {
+    const server = await servePassword();
+
+    expect((await connect(server, {})).status).toBe(400);
+    expect((await connect(server, { password: 1 })).status).toBe(400);
+    expect((await connect(server, { password: "secret", token: "x" })).status).toBe(400);
+    expect((await connect(server, { password: "secret", remember: true })).status).toBe(400);
+  });
+
+  it("is asked for, never read", async () => {
+    const server = await servePassword();
+
+    const response = await fetch(new URL("/api/connect", server.url));
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+});
 
 describe("opening a notebook", () => {
   it("creates a notebook session the server owns, with the notebook's cells in it", async () => {
@@ -466,7 +832,7 @@ describe("opening a notebook", () => {
     expect((await post(server, "/api/sessions", { path: "hello.md" })).status).toBe(400);
     expect(
       (
-        await fetch(new URL("/api/sessions", server.url), {
+        await get(server, "/api/sessions", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "not json",
@@ -478,13 +844,13 @@ describe("opening a notebook", () => {
   it("has no session under an id it never gave out", async () => {
     const server = await serve({ "hello.md": hello });
 
-    expect((await fetch(new URL("/api/sessions/nothing", server.url))).status).toBe(404);
+    expect((await get(server, "/api/sessions/nothing")).status).toBe(404);
   });
 
   it("is asked for, never read: opening is a change to what the server holds", async () => {
     const server = await serve({ "hello.md": hello });
 
-    const response = await fetch(new URL("/api/sessions", server.url));
+    const response = await get(server, "/api/sessions");
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");
@@ -521,13 +887,20 @@ interface Watching {
 
 /**
  * Connects to a Notebook Session's events the way the browser does: fresh, or
- * — given `since` — as one reconnecting that has heard everything up to there.
+ * — given `since` — as one reconnecting that has heard everything up to there;
+ * authenticated as the browser is, unless other headers are given.
  */
-function watch(server: RunningServer, id: string, since?: number | string): Promise<Watching> {
+function watch(
+  server: RunningServer,
+  id: string,
+  since?: number | string,
+  headers: Record<string, string> = authorized(server),
+): Promise<Watching> {
   const url = new URL(`/api/sessions/${id}/events`, server.url);
   url.protocol = "ws:";
+  url.search = "";
   if (since !== undefined) url.searchParams.set("since", String(since));
-  const socket = new WebSocket(url);
+  const socket = new WebSocket(url, { headers });
   const events: Event[] = [];
   const waiting: { type: string; settle: (event: Event) => void }[] = [];
   /** How far `next` has read. */
@@ -817,7 +1190,7 @@ describe("running a notebook in its session", () => {
     const server = await serve({ "hello.md": hello });
     const session = await open(server, "hello.md");
 
-    const response = await fetch(new URL(`/api/sessions/${session.id}/events`, server.url));
+    const response = await get(server, `/api/sessions/${session.id}/events`);
 
     expect(response.status).toBe(426);
     expect(response.headers.get("upgrade")).toBe("websocket");
@@ -1320,7 +1693,7 @@ describe("a server that restarts", () => {
       ],
     });
     const record = (await (
-      await fetch(new URL(`/api/sessions/${session.id}/runs/${started.run}/record.json`, again.url))
+      await get(again, `/api/sessions/${session.id}/runs/${started.run}/record.json`)
     ).json()) as { cells: unknown[]; agentSession?: string };
     expect(record.cells).toEqual([
       expect.objectContaining({ id: "greet", type: "prompt", status: "interrupted" }),
@@ -1442,7 +1815,7 @@ describe("a server that restarts", () => {
       agent: unusedAgent().create,
     });
     running.push(again);
-    expect((await fetch(new URL(`/api/sessions/${session.id}`, again.url))).status).toBe(404);
+    expect((await get(again, `/api/sessions/${session.id}`)).status).toBe(404);
 
     await writeFile(join(server.directory, "hello.md"), hello);
     const response = await post(again, "/api/sessions", { notebook: "hello.md" });
@@ -1458,7 +1831,7 @@ describe("a server that restarts", () => {
   it("has nothing to find over a directory no server has served", async () => {
     const server = await serve({ "hello.md": hello });
 
-    expect((await fetch(new URL("/api/notebooks", server.url))).status).toBe(200);
+    expect((await get(server, "/api/notebooks")).status).toBe(200);
     expect(await readdir(server.directory)).toEqual(["hello.md"]);
   });
 });
@@ -1497,9 +1870,9 @@ describe("the files a run leaves", () => {
     return { session, cell, run: ended.record?.id ?? "" };
   };
 
-  /** Where the browser fetches one of a run's files from. */
-  const fileUrl = (server: RunningServer, session: string, run: string, path: string) =>
-    new URL(`/api/sessions/${session}/runs/${run}/${path}`, server.url);
+  /** Fetches one of a run's files from where the browser does. */
+  const runFile = (server: RunningServer, session: string, run: string, path: string) =>
+    get(server, `/api/sessions/${session}/runs/${run}/${path}`);
 
   it("are named against the cell with the run they belong to", async () => {
     const server = await serve({ "leaves.md": leaves });
@@ -1523,7 +1896,7 @@ describe("the files a run leaves", () => {
     const server = await serve({ "leaves.md": leaves });
     const { session, run } = await made(server);
 
-    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/chart.png"));
+    const response = await runFile(server, session.id, run, "artifacts/make/chart.png");
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
@@ -1535,8 +1908,8 @@ describe("the files a run leaves", () => {
     const server = await serve({ "leaves.md": leaves });
     const { session, run } = await made(server);
 
-    const notes = await fetch(fileUrl(server, session.id, run, "artifacts/make/notes.txt"));
-    const record = await fetch(fileUrl(server, session.id, run, "record.json"));
+    const notes = await runFile(server, session.id, run, "artifacts/make/notes.txt");
+    const record = await runFile(server, session.id, run, "record.json");
 
     expect(notes.headers.get("content-type")).toContain("text/plain");
     expect(await notes.text()).toBe("noted");
@@ -1548,7 +1921,7 @@ describe("the files a run leaves", () => {
     const server = await serve({ "leaves.md": leaves });
     const { session, run } = await made(server);
 
-    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/page.html"));
+    const response = await runFile(server, session.id, run, "artifacts/make/page.html");
 
     // The client and the files a run leaves share an origin, so a page served
     // as a page could read whatever the client holds.
@@ -1563,7 +1936,7 @@ describe("the files a run leaves", () => {
     const server = await serve({ "leaves.md": leaves });
     const { session, run } = await made(server);
 
-    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/页面.html"));
+    const response = await runFile(server, session.id, run, "artifacts/make/页面.html");
 
     // The header itself is Latin-1; the name goes encoded, with a fallback the
     // header can spell, rather than the response failing to be written at all.
@@ -1578,7 +1951,7 @@ describe("the files a run leaves", () => {
     const { session, run } = await made(server);
 
     // `away` points at the workspace, where `hello.md` is.
-    const response = await fetch(fileUrl(server, session.id, run, "artifacts/make/away/hello.md"));
+    const response = await runFile(server, session.id, run, "artifacts/make/away/hello.md");
 
     expect(response.status).toBe(404);
   });
@@ -1590,19 +1963,14 @@ describe("the files a run leaves", () => {
 
     // A climb the URL parser does not fold away, spelt with encoded slashes,
     // in the run's name and in the file's; `hello.md` is there to be reached.
-    expect(await rawRequest(server.url, `${runs}/..%2F..%2F..%2F..%2Fhello.md/record.json`)).toBe(
-      404,
-    );
-    expect(await rawRequest(server.url, `${runs}/${run}/..%2F..%2F..%2F..%2Fhello.md`)).toBe(404);
-    expect(await rawRequest(server.url, `${runs}/${run}/%00record.json`)).toBe(404);
-    expect((await fetch(fileUrl(server, session.id, "no-such-run", "record.json"))).status).toBe(
-      404,
-    );
-    expect(
-      (await fetch(fileUrl(server, session.id, run, "artifacts/make/absent.png"))).status,
-    ).toBe(404);
+    const raw = (path: string) => rawRequest(server.url, path, authorized(server));
+    expect(await raw(`${runs}/..%2F..%2F..%2F..%2Fhello.md/record.json`)).toBe(404);
+    expect(await raw(`${runs}/${run}/..%2F..%2F..%2F..%2Fhello.md`)).toBe(404);
+    expect(await raw(`${runs}/${run}/%00record.json`)).toBe(404);
+    expect((await runFile(server, session.id, "no-such-run", "record.json")).status).toBe(404);
+    expect((await runFile(server, session.id, run, "artifacts/make/absent.png")).status).toBe(404);
     // A directory is not a file to serve.
-    expect((await fetch(fileUrl(server, session.id, run, "artifacts"))).status).toBe(404);
+    expect((await runFile(server, session.id, run, "artifacts")).status).toBe(404);
   });
 
   it("are read, never written", async () => {
@@ -2039,7 +2407,7 @@ describe("editing a notebook in its session", () => {
     const server = await serve({ "essay.md": essay });
     const session = await open(server, "essay.md");
 
-    const response = await fetch(new URL(`/api/sessions/${session.id}/save`, server.url));
+    const response = await get(server, `/api/sessions/${session.id}/save`);
 
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");
@@ -2058,7 +2426,7 @@ describe("duplicating a notebook", () => {
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ path: "drafts/essay-copy.md", title: "Essay" });
     expect(await readFile(join(server.directory, "drafts/essay-copy.md"), "utf8")).toBe(essay);
-    const listed = (await (await fetch(new URL("/api/notebooks", server.url))).json()) as {
+    const listed = (await (await get(server, "/api/notebooks")).json()) as {
       notebooks: unknown[];
     };
     expect(listed.notebooks).toEqual([

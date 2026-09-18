@@ -152,7 +152,11 @@ For people who do not write prompts.
 _Avoid_: run mode, form mode, simple mode, user mode
 
 **Connection**:
-An authenticated client attachment to the server.
+An authenticated client attachment to the server. Opened by presenting the one account's
+credential — the token generated when the server started, or the stored password — and
+held by the server until it stops; a browser carries it as a cookie, so the token leaves
+the address bar once used and the password travels once. Never a security boundary between
+users, since there is one user (ADR-0006).
 _Avoid_: session, login, client session
 
 **Revision**:

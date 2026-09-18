@@ -338,6 +338,40 @@ button:disabled {
   opacity: 0.7;
 }
 
+/* Authenticating: shown over whatever was being done, until a Connection is open. */
+.connect {
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 0.3rem;
+  margin-bottom: 1.5rem;
+  padding: 0.8rem 1rem;
+}
+
+.connect p {
+  margin: 0 0 0.6rem;
+}
+
+.connect label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.connect input {
+  font: inherit;
+  color: inherit;
+  flex: 1;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.5rem;
+  font-family: ui-monospace, monospace;
+}
+
+.connect .status {
+  margin: 0.6rem 0 0;
+}
+
 /* Editing: the document as a form, one card per segment, saved whole. */
 .editor-controls {
   display: flex;

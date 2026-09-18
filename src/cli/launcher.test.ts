@@ -206,4 +206,62 @@ describe("the web flags", () => {
   it("answer a request for help rather than starting anything", () => {
     expect(command(["--web", "--help"], "help").usage).toContain("--port");
   });
+
+  describe("binding beyond loopback", () => {
+    it("is not asked for unless the host flag is given", () => {
+      expect(command(["--web"], "web")).not.toHaveProperty("host");
+    });
+
+    it("binds to the address given", () => {
+      expect(command(["--web", "--host", "0.0.0.0"], "web").host).toBe("0.0.0.0");
+      expect(command(["--web", "--host=::"], "web").host).toBe("::");
+    });
+
+    it("states the consequence in the help text, in so many words", () => {
+      const { usage } = command(["--web", "--help"], "help");
+
+      expect(usage).toContain("--host");
+      expect(usage).toMatch(/arbitrary code/);
+      expect(usage).toMatch(/as the user running octo/);
+      expect(usage).toMatch(/SSH tunnel/);
+    });
+
+    it("reports a host with no address after it", () => {
+      expect(rejected(["--web", "--host"])).toContain('"--host" needs an address');
+      expect(rejected(["--web", "--host", "--port", "80"])).toContain('"--host" needs an address');
+    });
+
+    it("reports a host given twice", () => {
+      expect(rejected(["--web", "--host=a", "--host=b"])).toContain("twice");
+    });
+  });
+
+  describe("authenticating with the stored password", () => {
+    it("is not asked for unless the password flag is given, leaving a token to be generated", () => {
+      expect(command(["--web"], "web").password).toBeUndefined();
+    });
+
+    it("is asked for with the password flag", () => {
+      expect(command(["--web", "--password"], "web").password).toBe(true);
+    });
+
+    it("reports a value given to the flag, which takes none", () => {
+      expect(rejected(["--web", "--password=hunter2"])).toContain('"--password" takes no value');
+    });
+  });
+});
+
+describe("the password subcommand", () => {
+  it("sets the password", () => {
+    expect(readCommand(["password"])).toEqual({ kind: "password" });
+  });
+
+  it("takes nothing else: the password is asked for, never written on the command line", () => {
+    expect(rejected(["password", "hunter2"])).toContain('"hunter2"');
+    expect(rejected(["password", "--force"])).toContain('"--force"');
+  });
+
+  it("answers a request for help rather than asking for anything", () => {
+    expect(command(["password", "--help"], "help").usage).toContain("octo password");
+  });
 });

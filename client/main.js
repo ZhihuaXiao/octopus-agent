@@ -17,6 +17,16 @@
  * went, or the server was restarted — the page reconnects and asks for
  * everything since, so what happened while it was away arrives as it would
  * have, and nothing is drawn twice.
+ *
+ * Every request goes through `request`, which handles the one answer that is
+ * about the page rather than what it asked: a `401`, meaning the browser has
+ * no Connection — none yet, or one the server no longer knows, as after a
+ * restart. The connect panel is shown and the request waits; the password, or
+ * the token pasted from the URL the server printed, is presented to
+ * `/api/connect`, which answers with the cookie every request from then on
+ * carries, and the request is made again. The socket needs nothing of its own:
+ * the browser sends the cookie with the upgrade, and a socket refused for want
+ * of one closes and is reconnected through the same path.
  */
 
 /**
@@ -104,13 +114,99 @@ function make(tag, className, text) {
 /** @param {unknown} cause */
 const describe = (cause) => (cause instanceof Error ? cause.message : String(cause));
 
+/** @typedef {"token" | "password"} Method */
+
+/** What the panel says for each way of authenticating: what to present, and where it comes from. */
+const CONNECT_MESSAGES = {
+  token:
+    "This server takes the token it printed when it started. Open the URL it printed, or paste the token from that URL here.",
+  password: "This server takes the password set with `octo password`.",
+};
+
+/**
+ * The connect under way, when the panel is shown, so that every request refused
+ * meanwhile waits on the one panel rather than each showing a panel of its own.
+ * @type {Promise<void> | undefined}
+ */
+let asking;
+
+/**
+ * Shows the connect panel and resolves once a Connection has been opened.
+ * @param {Method} method
+ * @returns {Promise<void>}
+ */
+function askToConnect(method) {
+  if (asking !== undefined) return asking;
+  const panel = element("connect");
+  const form = /** @type {HTMLFormElement} */ (element("connect-form"));
+  const secret = /** @type {HTMLInputElement} */ (element("secret"));
+  const status = element("connect-status");
+  element("connect-message").textContent = CONNECT_MESSAGES[method];
+  element("connect-label").textContent = method === "token" ? "Token" : "Password";
+  secret.value = "";
+  status.textContent = "";
+  panel.hidden = false;
+  secret.focus();
+
+  asking = new Promise((connected) => {
+    /** @param {SubmitEvent} event */
+    const submit = async (event) => {
+      event.preventDefault();
+      status.textContent = "";
+      /** @type {Response} */
+      let response;
+      try {
+        response = await fetch("/api/connect", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ [method]: secret.value }),
+        });
+      } catch (cause) {
+        status.textContent = `Could not reach the server: ${describe(cause)}`;
+        return;
+      }
+      if (response.ok) {
+        form.removeEventListener("submit", submit);
+        panel.hidden = true;
+        asking = undefined;
+        connected();
+        return;
+      }
+      status.textContent =
+        response.status === 401
+          ? `That is not the ${method}.`
+          : (await response.text()).trim() || `The server answered ${response.status}`;
+      secret.select();
+    };
+    form.addEventListener("submit", submit);
+  });
+  return asking;
+}
+
+/**
+ * A request to the server, made again once a Connection has been opened
+ * when the answer was that it must.
+ * @param {string} path
+ * @param {RequestInit} [init]
+ * @returns {Promise<Response>}
+ */
+async function request(path, init) {
+  for (;;) {
+    const response = await fetch(path, init);
+    if (response.status !== 401) return response;
+    /** @type {{ authenticate?: Method }} */
+    const told = await response.json().catch(() => ({}));
+    await askToConnect(told.authenticate ?? "password");
+  }
+}
+
 /**
  * @param {string} path
  * @param {unknown} [body]
  * @returns {Promise<Response>}
  */
 async function post(path, body) {
-  const response = await fetch(path, {
+  const response = await request(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -122,7 +218,7 @@ async function post(path, body) {
 
 /** @returns {Promise<NotebookList>} */
 async function fetchNotebooks() {
-  const response = await fetch("/api/notebooks");
+  const response = await request("/api/notebooks");
   if (!response.ok) throw new Error(`The server answered ${response.status}`);
   return response.json();
 }
@@ -821,7 +917,7 @@ async function saveDraft() {
   edited.saving = true;
   /** @type {HTMLButtonElement} */ (element("save")).disabled = true;
   try {
-    const response = await fetch(`/api/sessions/${state.id}/save`, {
+    const response = await request(`/api/sessions/${state.id}/save`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(saveRequestOf(edited)),
@@ -837,7 +933,7 @@ async function saveDraft() {
     if (response.status === 409) {
       // The session holds something newer; the next save is based on that,
       // so saving again is a choice to write over it, made knowingly.
-      const now = await fetch(`/api/sessions/${state.id}`);
+      const now = await request(`/api/sessions/${state.id}`);
       if (now.ok && draft === edited) {
         watching.state = /** @type {NotebookSessionState} */ (await now.json());
         edited.base = watching.state.revision;
@@ -963,7 +1059,9 @@ async function reconnect(lost, wait) {
     /** @type {Response} */
     let response;
     try {
-      response = await fetch("/api/sessions", {
+      // A server restarted may no longer know this browser's Connection, in
+      // which case this waits on the connect panel before it asks again.
+      response = await request("/api/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ notebook }),
