@@ -397,6 +397,7 @@ interface NotebookSessionState {
   title: string;
   revision: string;
   frontmatter?: string;
+  inputs: { name: string; type: string; description?: string; default?: unknown }[];
   segments: SegmentView[];
   running: boolean;
   run?: string;
@@ -727,6 +728,7 @@ describe("opening a notebook", () => {
       title: "Hello",
       revision: expect.any(String),
       frontmatter: "title: Hello\n",
+      inputs: [],
       segments: [
         { kind: "prose", text: "\n" },
         { kind: "cell", id: "greet" },
@@ -797,6 +799,39 @@ describe("opening a notebook", () => {
 
     expect(response.status).toBe(200);
     expect(((await response.json()) as NotebookSessionState).id).toBe(first.id);
+  });
+
+  it("says which inputs the notebook declares, so the run view can draw its form", async () => {
+    const server = await serve({
+      "report.md": [
+        "---",
+        "inputs:",
+        "  - name: target",
+        "    type: string",
+        "    default: src",
+        "    description: The directory to report on",
+        "  - name: depth",
+        "    default: 3",
+        "  - name: verbose",
+        "    type: boolean",
+        "---",
+        "",
+        "```bash id=count",
+        "find {{target}} -maxdepth {{depth}} | wc -l",
+        "```",
+        "",
+      ].join("\n"),
+    });
+
+    const session = await open(server, "report.md");
+
+    // As declared, the type read off the default where none is written, and no
+    // default where the notebook gives none: that is what makes an input required.
+    expect(session.inputs).toEqual([
+      { name: "target", type: "string", default: "src", description: "The directory to report on" },
+      { name: "depth", type: "number", default: 3 },
+      { name: "verbose", type: "boolean" },
+    ]);
   });
 
   it("gives each notebook a session of its own", async () => {
@@ -874,6 +909,7 @@ interface Event {
     cells?: { id: string; status: string }[];
   };
   error?: string;
+  refusal?: { kind: string; problems: string[] };
 }
 
 /** A browser's view of a Notebook Session: the events, as they arrive. */
@@ -1165,6 +1201,54 @@ describe("running a notebook in its session", () => {
     await browser.close();
   });
 
+  it("says what kind of thing a refusal was about, and each problem apart, so the run view can explain it", async () => {
+    const server = await serve({ "greet.md": greet });
+    const session = await open(server, "greet.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id, { inputs: { nam: "Ada" } });
+    const refused = await browser.next("run-refused");
+
+    // Everything wrong at once, as the runner reports it, and the message the
+    // author view shows as before: the problems under the notebook's path.
+    expect(refused.refusal).toEqual({
+      kind: "inputs",
+      problems: [
+        'No input named "nam" is declared by this notebook, which declares "name".',
+        'No value for the required input "name" (string).',
+      ],
+    });
+    expect(refused.error).toBe(
+      `Cannot run ${join(server.directory, "greet.md")}:\n${refused.refusal?.problems.join("\n")}`,
+    );
+    await browser.close();
+  });
+
+  it("refuses a run whose declared skill is missing rather than running degraded, and says so", async () => {
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+    const server = await serve(
+      {
+        "review.md": "---\nskills:\n  - review\n---\n\n```prompt id=go\nReview.\n```\n",
+      },
+      agent,
+    );
+    const session = await open(server, "review.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    const refused = await browser.next("run-refused");
+
+    expect(refused.refusal).toEqual({
+      kind: "environment",
+      problems: ['This notebook declares the skill "review", which is not available here.'],
+    });
+    // Nothing ran: no run named itself, and the agent was asked nothing.
+    expect(browser.events.map((event) => event.type)).toEqual(["notebook-session", "run-refused"]);
+    expect(agent.prompts).toEqual([]);
+    expect((await stateOf(server, session.id)).cells).toMatchObject([{ id: "go", status: "idle" }]);
+    await browser.close();
+  });
+
   it("takes the values a run needs for the notebook's inputs", async () => {
     const agent = createScriptedAgent([{ text: "Hi, Ada" }]);
     const server = await serve({ "greet.md": greet }, agent);
@@ -1175,6 +1259,37 @@ describe("running a notebook in its session", () => {
     await browser.next("run-ended");
 
     expect(agent.prompts).toEqual(["Greet Ada."]);
+    await browser.close();
+  });
+
+  it("reads a number and a yes or no as a form types them", async () => {
+    const agent = createScriptedAgent([{ text: "Done" }]);
+    const server = await serve(
+      {
+        "form.md": [
+          "---",
+          "inputs:",
+          "  - name: depth",
+          "    type: number",
+          "  - name: verbose",
+          "    type: boolean",
+          "---",
+          "",
+          "```prompt id=go",
+          "Go {{depth}} deep, verbose {{verbose}}.",
+          "```",
+          "",
+        ].join("\n"),
+      },
+      agent,
+    );
+    const session = await open(server, "form.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id, { inputs: { depth: "3", verbose: "false" } });
+    await browser.next("run-ended");
+
+    expect(agent.prompts).toEqual(["Go 3 deep, verbose false."]);
     await browser.close();
   });
 

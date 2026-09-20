@@ -528,6 +528,35 @@ export async function concludeRun(run: Concluded): Promise<RunRecord> {
 }
 
 /**
+ * Which of the things a Run settles before its first Cell was not settled:
+ * the Notebook could not be read; the Inputs had no value or the wrong kind;
+ * the Cells named to run are not there; the Workspace is not a directory; the
+ * agent could not be set up; or the Declared Environment is not the one here.
+ * What a watcher says about a refusal turns on this — the Inputs are the
+ * person at the form's to put right, the Environment is not — so it is named
+ * rather than left to be read off the message.
+ */
+export type RefusalKind = "notebook" | "inputs" | "cells" | "workspace" | "agent" | "environment";
+
+/**
+ * A Run that never started. The message reads as it always has — "Cannot run
+ * <path>:" and the problems, one to a line — for a terminal to print; the kind
+ * and the problems apart are for whoever has to explain it.
+ */
+export class RunRefusal extends Error {
+  readonly kind: RefusalKind;
+  /** Everything wrong, each said once; a refusal reports all of it at once. */
+  readonly problems: readonly string[];
+
+  constructor(path: string, kind: RefusalKind, problems: readonly string[]) {
+    super(`Cannot run ${path}:\n${problems.join("\n")}`);
+    this.name = "RunRefusal";
+    this.kind = kind;
+    this.problems = problems;
+  }
+}
+
+/**
  * The Cells this Run executes, in the Graph's order.
  *
  * The Graph's order rather than the document's, so a Cell that another one uses
@@ -544,7 +573,7 @@ function orderToRun(notebook: Notebook, named: readonly string[] | undefined) {
   if (absent.length > 0) {
     return {
       ok: false as const,
-      problem: absent.map((id) => `No cell named "${id}" in this notebook.`).join("\n"),
+      problems: absent.map((id) => `No cell named "${id}" in this notebook.`),
     };
   }
 
@@ -563,21 +592,22 @@ function orderToRun(notebook: Notebook, named: readonly string[] | undefined) {
  * and half-applied their changes to the Workspace.
  */
 export async function runNotebook(path: string, options: RunOptions): Promise<RunRecord> {
-  const refuse = (why: string) => new Error(`Cannot run ${path}:\n${why}`);
+  const refuse = (kind: RefusalKind, problems: string | readonly string[]) =>
+    new RunRefusal(path, kind, typeof problems === "string" ? [problems] : problems);
 
   const parsed = parseNotebook(await readFile(path, "utf8"));
-  if (!parsed.ok) throw refuse(formatDiagnostics(parsed.errors));
+  if (!parsed.ok) throw refuse("notebook", formatDiagnostics(parsed.errors));
 
   const { metadata } = parsed.notebook;
   const inputs = resolveInputs(metadata.inputs ?? [], options.inputs ?? {});
-  if (!inputs.ok) throw refuse(inputs.errors.join("\n"));
+  if (!inputs.ok) throw refuse("inputs", inputs.errors);
 
   const scheduled = orderToRun(parsed.notebook, options.cells);
-  if (!scheduled.ok) throw refuse(scheduled.problem);
+  if (!scheduled.ok) throw refuse("cells", scheduled.problems);
 
   const workspace = workspaceOf(parsed.notebook, path);
   if (!(await isDirectory(workspace))) {
-    throw refuse(`Its workspace ${workspace} is not a directory.`);
+    throw refuse("workspace", `Its workspace ${workspace} is not a directory.`);
   }
 
   // What every agent this Run makes is set up with, the shared one and each
@@ -606,12 +636,12 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
     // run, so it reads as one — an undecided Workspace should not arrive
     // looking different from a missing skill.
     .catch((cause: unknown) => {
-      throw refuse(cause instanceof Error ? cause.message : String(cause));
+      throw refuse("agent", cause instanceof Error ? cause.message : String(cause));
     });
 
   try {
     const problems = checkEnvironment(metadata, shared.environment);
-    if (problems.length > 0) throw refuse(problems.join("\n"));
+    if (problems.length > 0) throw refuse("environment", problems);
 
     return await runCells({
       path,

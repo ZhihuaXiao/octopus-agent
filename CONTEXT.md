@@ -148,7 +148,8 @@ _Avoid_: edit mode, editor, developer mode
 
 **Run View**:
 The same Notebook shown as a form of its Inputs and a single button, with the Cells hidden.
-For people who do not write prompts.
+For people who do not write prompts — not people who may not: it is opened with the same
+Connection the Author View is, and a value typed into it reaches a Cell as typed (ADR-0006).
 _Avoid_: run mode, form mode, simple mode, user mode
 
 **Connection**:

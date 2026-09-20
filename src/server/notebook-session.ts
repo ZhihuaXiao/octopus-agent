@@ -35,6 +35,7 @@ import {
   type Cell,
   type CellType,
   type Diagnostic,
+  type Input,
   type Notebook,
   cellsOf,
   formatDiagnostics,
@@ -42,7 +43,13 @@ import {
   parseNotebook,
 } from "../notebook/notebook.js";
 import type { CellRecord, CellStatus, RunEnvironment, RunRecord } from "../run/record.js";
-import { type RunEvent, concludeRun, runNotebook } from "../run/runner.js";
+import {
+  type RefusalKind,
+  type RunEvent,
+  RunRefusal,
+  concludeRun,
+  runNotebook,
+} from "../run/runner.js";
 import { listArtifacts, runFile } from "../run/store.js";
 import {
   type FoundJournal,
@@ -106,6 +113,17 @@ export type SegmentView =
   | { readonly kind: "prose"; readonly text: string }
   | { readonly kind: "cell"; readonly id: string };
 
+/**
+ * Why the runner would not start a Run, as it said: which kind of thing was
+ * wrong, and everything wrong of that kind, one problem to a line. Absent
+ * from a refusal the runner did not make — something failing that should not
+ * have — which has only its message.
+ */
+export interface Refusal {
+  readonly kind: RefusalKind;
+  readonly problems: readonly string[];
+}
+
 /** What a Notebook Session says of itself: enough to draw it, and to edit it. */
 export interface NotebookSessionState {
   readonly id: string;
@@ -121,6 +139,13 @@ export interface NotebookSessionState {
   readonly revision: string;
   /** The YAML between the frontmatter's delimiters, as written; absent when there is none. */
   readonly frontmatter?: string;
+  /**
+   * The Inputs the Notebook declares, each with its type, its description and
+   * its default when it has one — an Input without a default being one a Run
+   * must be given a value for. What the Run View draws as its form, so that a
+   * browser need not read the frontmatter's YAML for itself.
+   */
+  readonly inputs: readonly Input[];
   readonly segments: readonly SegmentView[];
   readonly running: boolean;
   /**
@@ -141,12 +166,14 @@ export interface NotebookSessionState {
  * pass through as they are — the Run naming itself first, once it is cleared
  * to run — and the Notebook Session adds the Run's end; a Run the runner
  * refused to start — a missing Input, an undecided Workspace — never names
- * itself, and ends with the refusal instead.
+ * itself, and ends with the refusal instead: the message whole, and, when the
+ * runner said which of the things it settles first was wrong, that and the
+ * problems apart, so a browser can say what to do about it.
  */
 export type NotebookSessionEvent =
   | RunEvent
   | { readonly type: "run-ended"; readonly record: RunRecord }
-  | { readonly type: "run-refused"; readonly error: string }
+  | { readonly type: "run-refused"; readonly error: string; readonly refusal?: Refusal }
   /** The Notebook itself changed — saved from a browser, or found changed on disk — and this is it now. */
   | { readonly type: "notebook-changed"; readonly session: NotebookSessionState };
 
@@ -453,6 +480,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     title: titleOf(parsed, path),
     revision,
     ...(parsed.frontmatter !== undefined ? { frontmatter: parsed.frontmatter.text } : {}),
+    inputs: parsed.metadata.inputs ?? [],
     segments: parsed.segments.map((segment) =>
       isCellSegment(segment)
         ? { kind: "cell", id: segment.cell.id }
@@ -623,6 +651,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
           observe({
             type: "run-refused",
             error: cause instanceof Error ? cause.message : String(cause),
+            ...(cause instanceof RunRefusal
+              ? { refusal: { kind: cause.kind, problems: cause.problems } }
+              : {}),
           });
         },
       );

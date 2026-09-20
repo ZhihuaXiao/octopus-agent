@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentFactory } from "../agent/agent.js";
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import type { CellRecord, RunRecord } from "./record.js";
-import { type RunEvent, runNotebook } from "./runner.js";
+import { type RunEvent, RunRefusal, runNotebook } from "./runner.js";
 import { recordPath, runDirectory } from "./store.js";
 
 async function notebookFile(contents: string): Promise<string> {
@@ -588,6 +588,77 @@ const notebookOf = (...cells: readonly string[]) => notebookFile(cells.join("\n"
 
 /** Enough scripted turns for any of these notebooks, since none of them fail. */
 const readyAgent = () => createScriptedAgent(Array.from({ length: 8 }, () => ({ text: "done" })));
+
+describe("what a refusal says of itself", () => {
+  /** The refusal a run ends in, for asserting on beyond its message. */
+  async function refusalOf(run: Promise<RunRecord>): Promise<RunRefusal> {
+    try {
+      await run;
+    } catch (cause) {
+      if (cause instanceof RunRefusal) return cause;
+      throw new Error(`Expected a refusal, got ${String(cause)}`);
+    }
+    throw new Error("Expected the run to be refused");
+  }
+
+  it("names the inputs, with everything wrong with them one to a line", async () => {
+    const path = await notebookFile(
+      withInputs(
+        "  - name: target\n  - name: retries\n    default: 3\n",
+        "Audit {{target}} {{retries}} times.",
+      ),
+    );
+
+    const refusal = await refusalOf(
+      runNotebook(path, { agent: unusedAgent().create, inputs: { retries: "many" } }),
+    );
+
+    expect(refusal.kind).toBe("inputs");
+    expect(refusal.problems).toEqual([
+      'No value for the required input "target" (string).',
+      'Input "retries" expects a number, but was given "many".',
+    ]);
+    // The message a terminal prints is the problems under the path, as before.
+    expect(refusal.message).toBe(`Cannot run ${path}:\n${refusal.problems.join("\n")}`);
+  });
+
+  it("names the environment when a declared skill, package or tool is missing", async () => {
+    const path = await notebookFile(declaring("skills:\n  - review\ntools:\n  - grep\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }], { tools: [] });
+
+    const refusal = await refusalOf(runNotebook(path, { agent: agent.create }));
+
+    expect(refusal.kind).toBe("environment");
+    expect(refusal.problems).toEqual([
+      'This notebook declares the tool "grep", which is not available here.',
+      'This notebook declares the skill "review", which is not available here.',
+    ]);
+  });
+
+  it("names the notebook, the cells, the workspace and the agent in their turn", async () => {
+    const broken = await notebookFile("```prompt id=go\nnever closed\n");
+    expect((await refusalOf(runNotebook(broken, { agent: unusedAgent().create }))).kind).toBe(
+      "notebook",
+    );
+
+    const sound = await notebookFile(oneCell);
+    const cells = await refusalOf(
+      runNotebook(sound, { agent: unusedAgent().create, cells: ["gret"] }),
+    );
+    expect(cells.kind).toBe("cells");
+    expect(cells.problems).toEqual(['No cell named "gret" in this notebook.']);
+
+    const elsewhere = await notebookFile(declaring("workspace: absent\n"));
+    expect((await refusalOf(runNotebook(elsewhere, { agent: unusedAgent().create }))).kind).toBe(
+      "workspace",
+    );
+
+    const undecided = () => Promise.reject(new Error("nothing has decided whether to trust it"));
+    const agent = await refusalOf(runNotebook(sound, { agent: undecided }));
+    expect(agent.kind).toBe("agent");
+    expect(agent.problems).toEqual(["nothing has decided whether to trust it"]);
+  });
+});
 
 describe("dependency graph", () => {
   it("runs a cell before the cell that uses it, though it is written second", async () => {

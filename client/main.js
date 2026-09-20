@@ -9,14 +9,22 @@
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
  * saved whole, based on the revision it was drawn from.
  *
+ * The same Session is shown a second way, as the Run View: the Cells hidden,
+ * the Notebook's declared Inputs as a form, one button, and, as it runs, how
+ * far it has got and what each Cell says and leaves; a Run that could not
+ * start or did not finish is explained in words that say whether running it
+ * again will help or somebody has to be asked. For whoever is handed a
+ * Notebook and not its prompts.
+ *
  * The Session is the server's. This page asks it to run, to stop, or to save,
  * over HTTP, and hears what happens over a WebSocket; closing the page changes
- * nothing about the work. The Notebook opened is kept in the URL's fragment,
- * so a reload opens the same one again. Every event is numbered, and the page
- * keeps the number of the last it heard: when the socket drops — the network
- * went, or the server was restarted — the page reconnects and asks for
- * everything since, so what happened while it was away arrives as it would
- * have, and nothing is drawn twice.
+ * nothing about the work. The Notebook opened is kept in the URL's fragment —
+ * `#run/` before it for the Run View — so a reload opens the same one again
+ * and a link opens it the same way for whoever it is sent to. Every event is
+ * numbered, and the page keeps the number of the last it heard: when the
+ * socket drops — the network went, or the server was restarted — the page
+ * reconnects and asks for everything since, so what happened while it was
+ * away arrives as it would have, and nothing is drawn twice.
  *
  * Every request goes through `request`, which handles the one answer that is
  * about the page rather than what it asked: a `401`, meaning the browser has
@@ -50,17 +58,27 @@
  *   error?: string,
  * }} CellView
  * @typedef {{ kind: "prose", text: string } | { kind: "cell", id: string }} SegmentView
+ * @typedef {"string" | "number" | "boolean"} InputType
+ * @typedef {{
+ *   name: string,
+ *   type: InputType,
+ *   description?: string,
+ *   default?: string | number | boolean,
+ * }} InputView
  * @typedef {{
  *   id: string,
  *   notebook: string,
  *   title: string,
  *   revision: string,
  *   frontmatter?: string,
+ *   inputs: InputView[],
  *   segments: SegmentView[],
  *   running: boolean,
  *   sequence: number,
  *   cells: CellView[],
  * }} NotebookSessionState
+ * @typedef {"notebook" | "inputs" | "cells" | "workspace" | "agent" | "environment"} RefusalKind
+ * @typedef {{ kind: RefusalKind, problems: string[] }} Refusal
  * @typedef {{
  *   id: string,
  *   type: "prompt" | "bash",
@@ -78,7 +96,7 @@
  *   | { type: "cell-tool-call", cell: string, call: ToolCall }
  *   | { type: "cell-ended", record: CellRecord }
  *   | { type: "run-ended", record: { id: string, stale: string[] } }
- *   | { type: "run-refused", error: string }
+ *   | { type: "run-refused", error: string, refusal?: Refusal }
  *   | { type: "notebook-changed", session: NotebookSessionState }
  * )} NumberedEvent
  * @typedef {(
@@ -230,9 +248,12 @@ async function fetchNotebooks() {
 function renderEntry(entry) {
   const item = document.createElement("li");
   const link = document.createElement("a");
-  link.href = `#${encodeURIComponent(entry.path)}`;
+  link.href = hashFor(entry.path, "author");
   link.append(make("span", "title", entry.title), make("span", "path", entry.path));
-  item.append(link);
+  // The other way in, for whoever is here to run it rather than read it.
+  const run = make("a", "run-link", "Run view");
+  run.href = hashFor(entry.path, "run");
+  item.append(link, run);
   return item;
 }
 
@@ -258,10 +279,38 @@ async function showList() {
  * the state the events keep up to date, the socket they arrive on, the number
  * of the last event heard — what a reconnection asks for everything since —
  * and the Run in progress once it has named itself, which is what a Cell that
- * starts is running in.
+ * starts is running in — or, when the last Run asked for never started, why
+ * not, for the Run View to explain until the next one starts.
  */
-/** @type {{ state: NotebookSessionState, socket: WebSocket, sequence: number, run?: string } | undefined} */
+/**
+ * @type {{
+ *   state: NotebookSessionState,
+ *   socket: WebSocket,
+ *   sequence: number,
+ *   run?: string,
+ *   refused?: { error: string, refusal?: Refusal },
+ * } | undefined}
+ */
 let watching;
+
+/**
+ * Which way the Notebook is shown: as its Cells, for whoever writes them, or
+ * as the Run View. Read off the URL, so a link says which.
+ * @typedef {"author" | "run"} View
+ */
+/** @type {View} */
+let view = "author";
+
+/** What the fragment begins with when it names the Run View; a Notebook's own path is encoded, so it never does. */
+const RUN_VIEW_PREFIX = "run/";
+
+/**
+ * The fragment that opens `notebook` in the view named.
+ * @param {string} notebook
+ * @param {View} shown
+ */
+const hashFor = (notebook, shown) =>
+  `#${shown === "run" ? RUN_VIEW_PREFIX : ""}${encodeURIComponent(notebook)}`;
 
 /** A Timeout as an author would write it, when the milliseconds allow. */
 /** @param {number} ms */
@@ -401,7 +450,7 @@ function renderCell(cell, session, running) {
   const body = make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
   const calls = make("ol", "tool-calls");
   calls.append(...cell.toolCalls.map(renderToolCall));
-  const output = make("pre", "cell-output", cell.text);
+  const output = make("pre", "cell-output streamed", cell.text);
 
   item.append(heading, body, calls, output);
   if (cell.error !== undefined) item.append(make("p", "cell-error", cell.error));
@@ -431,6 +480,21 @@ function renderSession() {
   const { state } = watching;
   element("title").textContent = state.title;
   element("notebook").textContent = state.notebook;
+  const authoring = view === "author";
+  element("author-controls").hidden = !authoring;
+  element("run-controls").hidden = authoring;
+  /** @type {HTMLAnchorElement} */ (element("to-run-view")).href = hashFor(state.notebook, "run");
+  /** @type {HTMLAnchorElement} */ (element("to-author-view")).href = hashFor(
+    state.notebook,
+    "author",
+  );
+  element("run-view").hidden = authoring;
+  if (!authoring) {
+    element("segments").hidden = true;
+    element("editor").hidden = true;
+    renderRunView(state);
+    return;
+  }
   /** @type {HTMLButtonElement} */ (element("run-all")).disabled = state.running;
   /** @type {HTMLButtonElement} */ (element("interrupt")).disabled = !state.running;
   element("edit").hidden = draft !== undefined;
@@ -443,12 +507,14 @@ function renderSession() {
 
 /**
  * Appends to one Cell's output without redrawing the rest, since text arrives
- * a fragment at a time and a redraw per fragment would flicker.
+ * a fragment at a time and a redraw per fragment would flicker. Whichever view
+ * is drawn has the Cell's output somewhere on the page.
  * @param {string} id
  * @param {string} text
  */
 function appendText(id, text) {
-  const output = element("segments").querySelector(`[data-cell="${id}"] .cell-output`);
+  const list = view === "author" ? "segments" : "run-steps";
+  const output = element(list).querySelector(`[data-cell="${id}"] .streamed`);
   if (output !== null) output.textContent += text;
 }
 
@@ -489,6 +555,7 @@ function apply(event) {
     case "run-started":
       state.running = true;
       watching.run = event.run;
+      delete watching.refused;
       status.textContent = "";
       renderSession();
       return;
@@ -539,7 +606,13 @@ function apply(event) {
     case "run-refused":
       state.running = false;
       delete watching.run;
-      status.textContent = event.error;
+      // The Author View shows the runner's words as they are; the Run View
+      // says what they mean, and keeps them until the next Run starts.
+      watching.refused = {
+        error: event.error,
+        ...(event.refusal !== undefined ? { refusal: event.refusal } : {}),
+      };
+      status.textContent = view === "author" ? event.error : "";
       renderSession();
       return;
     case "notebook-changed":
@@ -561,14 +634,28 @@ function apply(event) {
  * from the Run before. The session says it is running as soon as it has taken
  * the request, and the page says so with it: the Run names itself over the
  * socket only once the agent is set up, which with a real one is a moment.
+ * The answer and the socket are two connections, though, and a Run short
+ * enough may have begun and ended over the socket before the answer arrives;
+ * the answer says which event the session stood at, and is taken at its word
+ * only when the page has heard nothing since. The Inputs' values are given as
+ * typed; the server reads them, and refuses the Run with what is wrong with
+ * them when something is.
  * @param {string[]} [cells]
+ * @param {Record<string, string>} [inputs]
  */
-async function startRun(cells) {
+async function startRun(cells, inputs) {
   if (watching === undefined) return;
   const { state } = watching;
   try {
-    await post(`/api/sessions/${state.id}/run`, cells !== undefined ? { cells } : {});
-    if (watching?.state === state) {
+    const answered = /** @type {NotebookSessionState} */ (
+      await (
+        await post(`/api/sessions/${state.id}/run`, {
+          ...(cells !== undefined ? { cells } : {}),
+          ...(inputs !== undefined ? { inputs } : {}),
+        })
+      ).json()
+    );
+    if (watching?.state === state && watching.sequence === answered.sequence) {
       state.running = true;
       renderSession();
     }
@@ -959,10 +1046,334 @@ async function duplicate() {
     const made = /** @type {NotebookEntry} */ (
       await (await post("/api/notebooks", { from: notebook, to: to.trim() })).json()
     );
-    location.hash = `#${encodeURIComponent(made.path)}`;
+    location.hash = hashFor(made.path, "author");
   } catch (cause) {
     element("session-status").textContent = `Could not duplicate: ${describe(cause)}`;
   }
+}
+
+/*
+ * The Run View: the Notebook for whoever is handed it and not its prompts.
+ * The Inputs are a form and the Cells are a list of names with how each is
+ * getting on; what a Cell says and leaves is shown under its name, and a Run
+ * that could not start or did not finish is explained in plain words that say
+ * whether to try again or to ask somebody.
+ *
+ * The values typed here reach a Cell's body as they are typed, a Bash Cell's
+ * command included. That is not a boundary being crossed: there is one account
+ * (ADR-0006), the Run View is opened with the same credential the Author View
+ * is, and whoever is at this form could edit the Cells with a click. The form
+ * is for people who do not write prompts, not for people who may not.
+ */
+
+/**
+ * The declared Inputs the form on the page was drawn for, and for which
+ * session. The form is drawn again only when they change: everything else on
+ * the page is redrawn as events arrive, and a redraw would empty the fields
+ * while somebody is typing into them.
+ * @type {string | undefined}
+ */
+let formDrawnFor;
+
+/**
+ * One Input as a field: a text field for a string, a number field for a
+ * number, a choice of yes or no for a boolean; the default filled in where
+ * there is one, and the field required where there is not, or where an empty
+ * field could not be read as the Input's type.
+ * @param {InputView} input
+ */
+function renderInputField(input) {
+  const wrapper = make("label", `run-input ${input.type}`);
+  wrapper.append(make("span", "run-input-name", input.name));
+  if (input.description !== undefined) {
+    wrapper.append(make("span", "run-input-description", input.description));
+  }
+
+  /** @type {HTMLInputElement | HTMLSelectElement} */
+  let field;
+  if (input.type === "boolean") {
+    const select = document.createElement("select");
+    // A blank choice first when there is no default, so that not choosing is
+    // not mistaken for choosing whichever came first.
+    const choices = [
+      ...(input.default === undefined ? [{ value: "", label: "Choose…" }] : []),
+      { value: "true", label: "yes" },
+      { value: "false", label: "no" },
+    ];
+    for (const { value, label } of choices) {
+      const choice = document.createElement("option");
+      choice.value = value;
+      choice.textContent = label;
+      choice.selected = input.default !== undefined && value === String(input.default);
+      select.append(choice);
+    }
+    field = select;
+  } else {
+    const typed = document.createElement("input");
+    typed.type = input.type === "number" ? "number" : "text";
+    if (input.type === "number") typed.step = "any";
+    if (input.default !== undefined) typed.value = String(input.default);
+    field = typed;
+  }
+  field.name = input.name;
+  // Nothing typed is a string, and is not a number or a yes or no.
+  field.required = input.default === undefined || input.type !== "string";
+  wrapper.append(field);
+  return wrapper;
+}
+
+/**
+ * Draws the form for the Inputs the Notebook declares, when it is not already
+ * drawn for them.
+ * @param {NotebookSessionState} state
+ */
+function renderRunForm(state) {
+  const declared = `${state.id}\n${JSON.stringify(state.inputs)}`;
+  if (formDrawnFor === declared) return;
+  formDrawnFor = declared;
+  element("run-inputs").replaceChildren(
+    ...(state.inputs.length === 0
+      ? [make("p", "run-no-inputs", "This notebook needs nothing filled in.")]
+      : state.inputs.map(renderInputField)),
+  );
+}
+
+/** The values in the form, each as typed, by the Input's name. */
+function valuesTyped() {
+  /** @type {Record<string, string>} */
+  const values = {};
+  for (const field of Array.from(/** @type {HTMLFormElement} */ (element("run-form")).elements)) {
+    if (
+      (field instanceof HTMLInputElement || field instanceof HTMLSelectElement) &&
+      field.name !== ""
+    ) {
+      values[field.name] = field.value;
+    }
+  }
+  return values;
+}
+
+/** What each state of a Cell is called where nobody is reading the Cells. */
+/** @type {Record<CellState, string>} */
+const STATE_WORDS = {
+  idle: "not run yet",
+  running: "running…",
+  ok: "done",
+  error: "failed",
+  timeout: "took too long",
+  interrupted: "stopped",
+  stale: "needs running again",
+};
+
+/**
+ * One Cell as the Run View shows it: its name and how it is getting on, what
+ * it has said, and the files it left. Its body, and what the agent invoked
+ * to do it, are what this view is for hiding.
+ * @param {CellView} cell
+ * @param {string} session
+ */
+function renderStep(cell, session) {
+  const item = make("li", `run-step ${cell.status}`);
+  item.dataset.cell = cell.id;
+  const heading = make("div", "run-step-header");
+  heading.append(
+    make("span", "run-step-name", cell.id),
+    make("span", "run-step-state", STATE_WORDS[cell.status]),
+  );
+  item.append(heading, make("pre", "run-step-output streamed", cell.text));
+  if (cell.artifacts.length > 0 && cell.run !== undefined) {
+    const run = cell.run;
+    const artifacts = make("ul", "artifacts");
+    artifacts.append(...cell.artifacts.map((path) => renderArtifact(session, run, path)));
+    item.append(artifacts);
+  }
+  return item;
+}
+
+/**
+ * What the Run View says of a Run that is over or never began: what happened,
+ * in a sentence; the details as the server gave them, for passing on; and
+ * what to do — try again, or ask somebody, since one of those is always the
+ * answer and the difference is the one thing the reader needs to know.
+ * A Run somebody stopped has its own tone, as an Interrupted Cell has its own
+ * colour: nothing about it wants putting right.
+ * @typedef {{
+ *   tone: "done" | "failed" | "stopped",
+ *   heading: string,
+ *   details: string[],
+ *   advice: string,
+ * }} Outcome
+ */
+
+const ASK_WHO_SET_UP = "ask whoever set this notebook up on this computer.";
+const ASK_WHO_WROTE = "ask whoever wrote this notebook";
+const PASS_ON = "and pass on what it says here.";
+
+/**
+ * Why nothing ran, by what the runner said was wrong. The values are the
+ * reader's own to put right; everything else is somebody else's, and running
+ * again will not change it.
+ * @type {Record<RefusalKind, { heading: string, advice: string }>}
+ */
+const REFUSALS = {
+  inputs: {
+    heading: "The run could not start because of the values given.",
+    advice: "Correct them and press Run again.",
+  },
+  environment: {
+    heading: "This computer is missing something the notebook needs, so nothing was run.",
+    advice: `Running again will not help until it is installed: ${ASK_WHO_SET_UP}`,
+  },
+  workspace: {
+    heading: "The folder this notebook works on is not on this computer, so nothing was run.",
+    advice: `Running again will not help: ${ASK_WHO_SET_UP}`,
+  },
+  notebook: {
+    heading: "The notebook itself could not be read, so nothing was run.",
+    advice: `Running again will not help: ${ASK_WHO_WROTE} to look at it.`,
+  },
+  agent: {
+    heading: "The agent could not be started, so nothing was run.",
+    advice: `Try once more. If it fails again, ${ASK_WHO_SET_UP}`,
+  },
+  cells: {
+    heading: "The run asked for a part of the notebook that is not there, so nothing was run.",
+    advice: `Running again will not help: ${ASK_WHO_WROTE} to look at it.`,
+  },
+};
+
+/**
+ * @param {{ error: string, refusal?: Refusal }} refused
+ * @returns {Outcome}
+ */
+function refusalOutcome(refused) {
+  if (refused.refusal === undefined) {
+    return {
+      tone: "failed",
+      heading: "Something went wrong before the run could start.",
+      details: [refused.error],
+      advice: `Try once more. If it fails again, ask for help ${PASS_ON}`,
+    };
+  }
+  const { kind, problems } = refused.refusal;
+  return { tone: "failed", ...REFUSALS[kind], details: problems };
+}
+
+/**
+ * Why the Run stopped, from the Cells that did not succeed: the first says
+ * what happened, since the Run halts at the first, and every one is listed.
+ * @param {CellView[]} failed
+ * @returns {Outcome}
+ */
+function failureOutcome(failed) {
+  const [first] = failed;
+  const details = failed.map((cell) => `${cell.id}: ${cell.error ?? STATE_WORDS[cell.status]}`);
+  if (first === undefined) throw new Error("No cell failed");
+  const name = `"${first.id}"`;
+  switch (first.status) {
+    case "timeout":
+      return {
+        tone: "failed",
+        heading: `${name} took longer than the notebook allows, so the run stopped there.`,
+        details,
+        advice: `Try running it again. If it happens again, ${ASK_WHO_WROTE}.`,
+      };
+    case "interrupted":
+      return {
+        tone: "stopped",
+        heading: `The run was stopped at ${name} before it finished.`,
+        details,
+        advice: "Press Run to start it again when you are ready.",
+      };
+    default:
+      // A command does the same thing each time it is run, so failing twice the
+      // same way is the notebook's to fix; a turn with the model fails for
+      // reasons that pass, and a second try is worth making first.
+      return first.type === "bash"
+        ? {
+            tone: "failed",
+            heading: `${name} failed, so the run stopped there.`,
+            details,
+            advice: `Try once more. If it fails the same way, running again will not fix it: ${ASK_WHO_WROTE} ${PASS_ON}`,
+          }
+        : {
+            tone: "failed",
+            heading: `The agent could not finish ${name}, so the run stopped there.`,
+            details,
+            advice: `This is often a passing problem reaching the model. Try again in a minute; if it keeps failing, ask for help ${PASS_ON}`,
+          };
+  }
+}
+
+/**
+ * What to say of the Notebook as it stands: nothing while it runs, or before
+ * anything has; why it did not run, or where it stopped; or that it finished.
+ * @param {NotebookSessionState} state
+ * @param {{ error: string, refusal?: Refusal } | undefined} refused
+ * @returns {Outcome | undefined}
+ */
+function outcomeOf(state, refused) {
+  if (state.running) return undefined;
+  if (refused !== undefined) return refusalOutcome(refused);
+  const failed = state.cells.filter(
+    (cell) => cell.status === "error" || cell.status === "timeout" || cell.status === "interrupted",
+  );
+  if (failed.length > 0) return failureOutcome(failed);
+  if (state.cells.length > 0 && state.cells.every((cell) => cell.status === "ok")) {
+    return {
+      tone: "done",
+      heading: "Finished.",
+      details: [],
+      advice: "Everything ran; what it produced is below.",
+    };
+  }
+  return undefined;
+}
+
+/**
+ * How far the Run has got, while it runs: the Cells done of those there are,
+ * counted against the Run in progress once it has named itself.
+ * @param {NotebookSessionState} state
+ * @param {string | undefined} run
+ */
+function progressOf(state, run) {
+  if (!state.running) return "";
+  if (run === undefined) return "Starting…";
+  const done = state.cells.filter((cell) => cell.run === run && cell.status !== "running").length;
+  return `Running… ${done} of ${state.cells.length} done`;
+}
+
+/** Empties the Run View, for a Notebook that could not be opened to be shown with nothing of the last one's. */
+function clearRunView() {
+  formDrawnFor = undefined;
+  element("run-inputs").replaceChildren();
+  element("run-steps").replaceChildren();
+  element("run-outcome").hidden = true;
+  element("run-progress").textContent = "";
+}
+
+/** @param {NotebookSessionState} state */
+function renderRunView(state) {
+  if (watching === undefined) return;
+  renderRunForm(state);
+  /** @type {HTMLButtonElement} */ (element("run-start")).disabled = state.running;
+  element("run-stop").hidden = !state.running;
+  element("run-progress").textContent = progressOf(state, watching.run);
+
+  const panel = element("run-outcome");
+  const outcome = outcomeOf(state, watching.refused);
+  panel.hidden = outcome === undefined;
+  panel.replaceChildren();
+  if (outcome !== undefined) {
+    panel.className = `run-outcome ${outcome.tone}`;
+    panel.append(make("p", "run-outcome-heading", outcome.heading));
+    if (outcome.details.length > 0) {
+      panel.append(make("pre", "run-outcome-details", outcome.details.join("\n")));
+    }
+    panel.append(make("p", "run-outcome-advice", outcome.advice));
+  }
+
+  element("run-steps").replaceChildren(...state.cells.map((cell) => renderStep(cell, state.id)));
 }
 
 /**
@@ -974,16 +1385,26 @@ let asked = "";
 
 /** @param {string} notebook */
 async function showSession(notebook) {
-  watching?.socket.close();
-  watching = undefined;
   draft = undefined;
   element("draft").replaceChildren();
   element("editor").hidden = true;
-  element("segments").hidden = false;
+  element("segments").hidden = view !== "author";
+  element("author-controls").hidden = view !== "author";
+  element("run-controls").hidden = view === "author";
+  // Drawn once the Notebook is open; a Run button with no form yet says nothing.
+  element("run-view").hidden = true;
   element("list").hidden = true;
-  const view = element("session");
-  view.hidden = false;
+  element("session").hidden = false;
   const status = element("session-status");
+  // The same Notebook shown the other way: the session is the one being
+  // watched, and only the page changes.
+  if (watching?.state.notebook === notebook) {
+    status.textContent = "";
+    renderSession();
+    return;
+  }
+  watching?.socket.close();
+  watching = undefined;
   status.textContent = `Opening ${notebook}…`;
 
   /** @type {NotebookSessionState} */
@@ -995,6 +1416,7 @@ async function showSession(notebook) {
     element("title").textContent = notebook;
     element("notebook").textContent = "";
     element("segments").replaceChildren();
+    clearRunView();
     status.textContent = `Could not open the notebook: ${describe(cause)}`;
     return;
   }
@@ -1092,7 +1514,9 @@ async function reconnect(lost, wait) {
 }
 
 function route() {
-  asked = decodeURIComponent(location.hash.slice(1));
+  const hash = location.hash.slice(1);
+  view = hash.startsWith(RUN_VIEW_PREFIX) ? "run" : "author";
+  asked = decodeURIComponent(view === "run" ? hash.slice(RUN_VIEW_PREFIX.length) : hash);
   if (asked === "") {
     watching?.socket.close();
     watching = undefined;
@@ -1102,6 +1526,11 @@ function route() {
 
 element("run-all").addEventListener("click", () => void startRun());
 element("interrupt").addEventListener("click", () => void interrupt());
+element("run-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  void startRun(undefined, valuesTyped());
+});
+element("run-stop").addEventListener("click", () => void interrupt());
 element("edit").addEventListener("click", beginEditing);
 element("duplicate").addEventListener("click", () => void duplicate());
 element("cancel").addEventListener("click", stopEditing);

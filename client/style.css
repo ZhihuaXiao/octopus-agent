@@ -14,6 +14,11 @@ body {
   padding: 2rem 1.5rem;
 }
 
+/* What the page hides stays hidden, whatever display a rule below gives it when shown. */
+[hidden] {
+  display: none !important;
+}
+
 header {
   display: flex;
   align-items: baseline;
@@ -51,8 +56,23 @@ h2 {
 }
 
 .notebooks li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
   padding: 0.6rem 0;
   border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.notebooks .run-link {
+  flex: none;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.notebooks .run-link:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .notebooks .title {
@@ -98,7 +118,8 @@ h1 a {
   gap: 0.5rem;
 }
 
-button {
+button,
+a.button {
   font: inherit;
   padding: 0.3rem 0.8rem;
   border-radius: 0.3rem;
@@ -106,6 +127,13 @@ button {
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+
+/* A link between the two views, dressed as the buttons beside it. */
+a.button {
+  display: inline-block;
+  text-decoration: none;
+  line-height: 1.5;
 }
 
 button:disabled {
@@ -476,4 +504,185 @@ button:disabled {
   align-items: center;
   font-size: 0.8rem;
   opacity: 0.85;
+}
+
+/* The Run View: the inputs as a form, one button, and the cells as a list of names. */
+.run-form {
+  margin-top: 1rem;
+}
+
+.run-inputs {
+  display: grid;
+  gap: 1rem;
+}
+
+.run-no-inputs {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.run-input {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.run-input-name {
+  font-weight: 600;
+}
+
+.run-input-description {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.run-input input,
+.run-input select {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.4rem 0.6rem;
+  max-width: 28rem;
+}
+
+.run-input select {
+  width: fit-content;
+}
+
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 1.2rem;
+}
+
+#run-start {
+  font-weight: 600;
+  padding: 0.5rem 1.4rem;
+}
+
+.run-progress {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+/* Where the run stands, said in a sentence: green when it finished, red when it could not, amber when it was stopped. */
+.run-outcome {
+  margin-top: 1.5rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-left-width: 4px;
+  border-radius: 0.3rem;
+}
+
+.run-outcome.done {
+  border-left-color: #22c55e;
+}
+
+.run-outcome.failed {
+  border-left-color: #ef4444;
+}
+
+/* Somebody stopped it; nothing went wrong that wants putting right. */
+.run-outcome.stopped {
+  border-left-color: #f59e0b;
+}
+
+.run-outcome p {
+  margin: 0;
+}
+
+.run-outcome-heading {
+  font-weight: 600;
+}
+
+.run-outcome-details {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.run-outcome .run-outcome-advice {
+  margin-top: 0.4rem;
+}
+
+.run-steps {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+}
+
+.run-step {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-left-width: 4px;
+  border-radius: 0.3rem;
+  margin-bottom: 0.8rem;
+  padding: 0.6rem 0.8rem;
+}
+
+.run-step.running {
+  border-left-color: #3b82f6;
+}
+.run-step.ok {
+  border-left-color: #22c55e;
+}
+.run-step.error,
+.run-step.timeout {
+  border-left-color: #ef4444;
+}
+.run-step.interrupted {
+  border-left-color: #f59e0b;
+}
+.run-step.stale {
+  border-left-color: #a855f7;
+}
+
+.run-step-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.run-step-name {
+  font-weight: 600;
+}
+
+.run-step-state {
+  margin-left: auto;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.run-step.running .run-step-state {
+  opacity: 1;
+  color: #3b82f6;
+}
+.run-step.error .run-step-state,
+.run-step.timeout .run-step-state {
+  opacity: 1;
+  color: #ef4444;
+}
+.run-step.interrupted .run-step-state {
+  opacity: 1;
+  color: #f59e0b;
+}
+.run-step.stale .run-step-state {
+  opacity: 1;
+  color: #a855f7;
+}
+
+.run-step-output {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
+.run-step-output:empty {
+  display: none;
 }
