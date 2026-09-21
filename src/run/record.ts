@@ -81,11 +81,14 @@ export type CellRecord = PromptCellRecord | BashCellRecord;
 export interface RunEnvironment {
   /** The Workspace the Cells ran in. */
   workspace: string;
-  /** Whether pi loaded the Workspace's own settings, skills and extensions. */
+  /**
+   * Whether pi loaded the Workspace's own settings, skills and extensions.
+   * False for an imported Run, whose Chat's file does not say.
+   */
   trusted: boolean;
-  /** The version of pi that ran. */
+  /** The version of pi that ran. Empty for an imported Run, whose Chat's file does not say. */
   piVersion: string;
-  /** The tools the agent was given. */
+  /** The tools the agent was given — or, for an imported Run, the tools its Chat is seen to have called. */
   tools: string[];
 }
 
@@ -103,6 +106,15 @@ export interface RunRecord {
    * one's is relative to — are found by following this back through the chain.
    */
   continues?: string;
+  /**
+   * The pi session file this Run was read from rather than run — a Chat had at
+   * the terminal, imported as a Notebook with this record of what it did
+   * (ADR-0022). Absent for a Run that ran. Named for the reader's account of
+   * where the results came from; the file itself is pi's, and `agentSession`
+   * names the copy the import took, which is the one a later Run may carry on
+   * from.
+   */
+  imported?: string;
   environment: RunEnvironment;
   /**
    * The Agent Session the Prompt Cells ran in, which is what makes the Anchors

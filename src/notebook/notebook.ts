@@ -30,7 +30,13 @@ export type { Input, InputType, InputValue, InputValues } from "./inputs.js";
 export { formatDiagnostics } from "./diagnostic.js";
 export { formatDuration } from "./duration.js";
 export { runOrder, staleAfter } from "./graph.js";
-export { ARTIFACTS_REFERENCE, interpolate, referencesIn, resolveInputs } from "./inputs.js";
+export {
+  ARTIFACTS_REFERENCE,
+  escapeReferences,
+  interpolate,
+  referencesIn,
+  resolveInputs,
+} from "./inputs.js";
 
 export type CellType = "prompt" | "bash";
 

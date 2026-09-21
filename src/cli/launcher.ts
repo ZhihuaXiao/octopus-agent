@@ -26,12 +26,17 @@ import { DEFAULT_PORT } from "../server/server.js";
 
 const USAGE = `usage: octo [pi arguments]...
        octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
+       octo import <session.jsonl> <notebook.md>
        octo --web [--port <number>] [--host <address>] [--password]
        octo password
 
   A bare invocation is pi itself: anything not shown here is handed to the pi
   command as written, and only a request for help stops here instead.
   \`run\` executes a notebook headlessly, giving each declared input its value.
+  \`import\` makes a notebook of a chat had with pi at the terminal — a prompt
+  cell for each message you sent, a bash cell for each command you ran with
+  \`!\` — and a run record of what it did. Pi's session file is read and
+  copied, never written; pi keeps them under ~/.pi/agent/sessions.
   \`--web\` starts the web interface on loopback, serving the notebooks under
   the current directory, on the port given or ${DEFAULT_PORT}. It prints the URL
   to open, carrying a token generated for this start; with \`--password\` the
@@ -68,6 +73,8 @@ export type Command =
     }
   /** Sets the password `--web --password` asks for. */
   | { readonly kind: "password" }
+  /** Makes a Notebook of a Chat, given pi's session file, with a Run Record of what it did. */
+  | { readonly kind: "import"; readonly session: string; readonly notebook: string }
   | { readonly kind: "help"; readonly usage: string }
   | { readonly kind: "mistake"; readonly error: string };
 
@@ -76,6 +83,7 @@ const HELP_FLAGS: readonly string[] = ["--help", "-h"];
 const HELP_WORD = "help";
 const RUN_WORD = "run";
 const PASSWORD_WORD = "password";
+const IMPORT_WORD = "import";
 const WEB_FLAG = "--web";
 const PORT_FLAG = "--port";
 const HOST_FLAG = "--host";
@@ -113,6 +121,7 @@ export function readCommand(argv: readonly string[]): Command {
   if (first === HELP_WORD || HELP_FLAGS.includes(first)) return help;
   if (first === RUN_WORD) return readRun(rest);
   if (first === PASSWORD_WORD) return readPassword(rest);
+  if (first === IMPORT_WORD) return readImport(rest);
   const { name } = splitOption(first);
   if (WEB_FLAGS.includes(name)) return readWeb(argv);
   return { kind: "pi", arguments: argv };
@@ -134,6 +143,25 @@ function readPassword(argv: readonly string[]): Command {
       ? `Unknown option "${stray}".`
       : `The password is asked for, not given here, so "${stray}" is a stray argument.`,
   );
+}
+
+/**
+ * Two files and nothing else: the session to read and the Notebook to write,
+ * in that order, as `cp` takes them. A `--help` anywhere among them asks for
+ * the usage; any other option is not one this takes.
+ */
+function readImport(argv: readonly string[]): Command {
+  if (argv.some((argument) => HELP_FLAGS.includes(argument))) return help;
+  const option = argv.find(isOption);
+  if (option !== undefined) return mistake(`Unknown option "${option}".`);
+
+  const [session, notebook, stray] = argv;
+  if (session === undefined) return mistake("A pi session file to import is needed.");
+  if (notebook === undefined) return mistake("A notebook to write the session to is needed.");
+  if (stray !== undefined) {
+    return mistake(`One session is imported into one notebook, so "${stray}" is a stray argument.`);
+  }
+  return { kind: "import", session, notebook };
 }
 
 function readRun(argv: readonly string[]): Command {

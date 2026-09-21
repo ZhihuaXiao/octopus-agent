@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, duplicate — are HTTP requests, each
+ * Commands — open, run, interrupt, save, duplicate, promote — are HTTP requests, each
  * with an answer; what a Run produces is a stream, and goes to the browser
  * over a WebSocket; what a Run leaves — its Artifacts, its record — is served
  * from under the Run's directory, so the browser can show a file where the
@@ -31,6 +31,7 @@ import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
 import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js";
+import { type ChatsOptions, listChats, promoteChat } from "./chats.js";
 import { copyNotebook, listNotebooks } from "./notebooks.js";
 import {
   type NotebookSessions,
@@ -66,6 +67,10 @@ const NOTEBOOKS_ROUTE = "/api/notebooks";
 const TOKEN_QUERY = "token";
 const CONNECTION_COOKIE = "octo_connection";
 const SESSIONS_ROUTE = "/api/sessions";
+/** The chats pi has had in the served directory. */
+const CHATS_ROUTE = "/api/chats";
+/** One of them, to be promoted into a Notebook. */
+const PROMOTE_ROUTE = /^\/api\/chats\/([^/]+)\/promote$/;
 /** A Notebook Session by id, and what may be asked of it. */
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events))?$/;
 /** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
@@ -129,6 +134,12 @@ export interface ServerOptions {
    * generated for this start and carried in the URL.
    */
   readonly storedPassword?: string;
+  /**
+   * Where pi keeps the served directory's chats, for promoting one into a
+   * Notebook. Pi's own place for them when absent; named by a test, so that
+   * none reads what pi has on the machine it runs on.
+   */
+  readonly chatDirectory?: string;
 }
 
 export interface RunningServer {
@@ -226,6 +237,43 @@ async function duplicateNotebook(
       return;
     case "copied":
       json(response, 201, copied.entry);
+      return;
+  }
+}
+
+/** The chats pi has had in the served directory, for the browser to offer promoting. */
+async function serveChats(served: Served, response: ServerResponse): Promise<void> {
+  json(response, 200, { chats: await listChats(served.directory, served.chats) });
+}
+
+/** Promotes a chat into a Notebook under a new name, so ad-hoc work becomes repeatable after the fact. */
+async function promote(
+  served: Served,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!permitted(WRITES, request, response)) return;
+  const id = decoded(matched[1] ?? "");
+  const body = await readJson(request);
+  if (!isRecord(body) || !hasKeys(body, ["to"]) || typeof body.to !== "string") {
+    reply(response, 400, "The request must name the notebook to write the chat to, as JSON.\n");
+    return;
+  }
+
+  const promoted = await promoteChat(served.directory, id ?? "", body.to, served.chats);
+  switch (promoted.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "invalid":
+      reply(response, 400, `${promoted.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${body.to}.\n`);
+      return;
+    case "promoted":
+      json(response, 201, promoted.entry);
       return;
   }
 }
@@ -488,6 +536,8 @@ interface Served {
   readonly directory: string;
   readonly sessions: NotebookSessions;
   readonly auth: Auth;
+  /** Where the served directory's chats are, when not where pi keeps them. */
+  readonly chats: ChatsOptions;
 }
 
 /** The value of one cookie among those a request carries, or nothing. */
@@ -642,6 +692,15 @@ async function handle(
     } else await serveNotebooks(served.directory, response);
     return;
   }
+  if (pathname === CHATS_ROUTE) {
+    if (permitted(READS, request, response)) await serveChats(served, response);
+    return;
+  }
+  const promoting = PROMOTE_ROUTE.exec(pathname);
+  if (promoting !== null) {
+    await promote(served, promoting, request, response);
+    return;
+  }
 
   if (!permitted(READS, request, response)) return;
   if (pathname === "/" || pathname.startsWith(CLIENT_ROUTE)) {
@@ -682,7 +741,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const auth = createAuth(
     options.storedPassword !== undefined ? { storedPassword: options.storedPassword } : {},
   );
-  const served: Served = { directory, sessions, auth };
+  const served: Served = {
+    directory,
+    sessions,
+    auth,
+    chats: options.chatDirectory !== undefined ? { chatDirectory: options.chatDirectory } : {},
+  };
 
   const server = createServer((request, response) => {
     handle(served, request, response).catch((cause: unknown) => {

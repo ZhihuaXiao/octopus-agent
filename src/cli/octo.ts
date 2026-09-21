@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
 import { createPiAgent } from "../agent/pi.js";
+import { importSession } from "../import/pi-session.js";
 import { handToPi } from "../pi/command.js";
 import { recordPath } from "../run/store.js";
 import { runNotebook } from "../run/runner.js";
@@ -46,6 +47,32 @@ async function run(command: Extract<Command, { kind: "run" }>): Promise<void> {
     if (cell.type === "bash" && cell.stderr !== "") process.stderr.write(cell.stderr);
   }
   if (failed.length > 0) process.exitCode = 1;
+}
+
+/**
+ * Makes a Notebook of a Chat, reporting what was made or why nothing was. A
+ * refusal is a sentence to act on, and exits 1 as a Run's refusal does.
+ */
+async function importChat(command: Extract<Command, { kind: "import" }>): Promise<void> {
+  const session = resolve(command.session);
+  const notebook = resolve(command.notebook);
+  const imported = await importSession({ session, notebook });
+  switch (imported.kind) {
+    case "absent":
+      throw new Error(`There is no file at ${session} to import.`);
+    case "invalid":
+      throw new Error(imported.problem);
+    case "exists":
+      throw new Error(`There is already a file at ${notebook}; choose another name.`);
+    case "imported": {
+      const { record } = imported;
+      const cells = record.cells.length === 1 ? "1 cell" : `${record.cells.length} cells`;
+      process.stdout.write(
+        `Imported ${cells} into ${notebook}\nRun ${record.id} → ${recordPath(notebook, record.id)}\n`,
+      );
+      return;
+    }
+  }
 }
 
 /**
@@ -177,6 +204,9 @@ async function main(): Promise<void> {
       return;
     case "run":
       await run(command);
+      return;
+    case "import":
+      await importChat(command);
       return;
   }
 }

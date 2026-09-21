@@ -90,6 +90,24 @@ export function fileWithin(directory: string, name: string): string | undefined 
   return within(directory, file) ? file : undefined;
 }
 
+/**
+ * The file a new Notebook is to be written to, given the name asked for: a
+ * Markdown file under the served directory, or the problem with the name.
+ * What copying and promoting both check before they write anything.
+ */
+export function notebookTarget(
+  directory: string,
+  to: string,
+): { readonly file: string } | { readonly problem: string } {
+  const target = fileWithin(directory, to);
+  if (target === undefined || extname(target) !== NOTEBOOK_EXTENSION) {
+    return {
+      problem: `The new name must be a Markdown file (${NOTEBOOK_EXTENSION}) under ${directory}.`,
+    };
+  }
+  return { file: target };
+}
+
 /** How copying a Notebook went. */
 export type Copied =
   | { readonly kind: "copied"; readonly entry: NotebookEntry }
@@ -114,13 +132,9 @@ export type Copied =
 export async function copyNotebook(directory: string, from: string, to: string): Promise<Copied> {
   const source = fileWithin(directory, from);
   if (source === undefined) return { kind: "absent" };
-  const target = fileWithin(directory, to);
-  if (target === undefined || extname(target) !== NOTEBOOK_EXTENSION) {
-    return {
-      kind: "invalid",
-      problem: `The new name must be a Markdown file (${NOTEBOOK_EXTENSION}) under ${directory}.`,
-    };
-  }
+  const named = notebookTarget(directory, to);
+  if ("problem" in named) return { kind: "invalid", problem: named.problem };
+  const target = named.file;
 
   let entry: NotebookEntry | undefined;
   try {

@@ -14,16 +14,14 @@ import {
 
 import { createAssistantTextStream } from "../pi/streaming.js";
 import { decideTrust } from "../pi/trust.js";
-import { isRecord } from "../util/guards.js";
+import { failureOf, summariseTurn } from "../pi/turn.js";
 import {
   type Agent,
   type AgentSetup,
   type CellResult,
   type Retry,
-  type ToolCall,
   TurnFailure,
   type TurnOptions,
-  type Usage,
 } from "./agent.js";
 import type { Environment } from "./environment.js";
 
@@ -60,75 +58,6 @@ function settingsForRun(workspace: string, agentDir: string): SettingsManager {
 /** Whether two models are the same one, by the pair that names a model. */
 const sameModel = (a: Model | undefined, b: Model | undefined) =>
   a !== undefined && b !== undefined && a.provider === b.provider && a.id === b.id;
-
-/**
- * Reads what one turn cost and did.
- *
- * A turn is several messages, not one: pi appends an assistant message per
- * provider request and a `toolResult` between them, so the tool calls and most
- * of the tokens are in messages *before* the closing one. Fields are narrowed
- * here rather than typed against pi's own union, matching `pi/streaming.ts`;
- * the live suite is what proves these names still hold.
- */
-function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text" | "retries"> {
-  const assistantMessages = turn.filter(isRecord).filter((message) => message.role === "assistant");
-
-  const usage: Usage = { inputTokens: 0, outputTokens: 0, cost: 0 };
-  const toolCalls: ToolCall[] = [];
-
-  for (const message of assistantMessages) {
-    if (isRecord(message.usage)) {
-      const { input, output, cost } = message.usage;
-      if (typeof input === "number") usage.inputTokens += input;
-      if (typeof output === "number") usage.outputTokens += output;
-      // Pi's total for the message, which is its input and output priced at the
-      // model's rates, cache reads and writes included.
-      if (isRecord(cost) && typeof cost.total === "number") usage.cost += cost.total;
-    }
-
-    if (!Array.isArray(message.content)) continue;
-    for (const block of (message.content as unknown[]).filter(isRecord)) {
-      if (block.type !== "toolCall") continue;
-      toolCalls.push({
-        name: typeof block.name === "string" ? block.name : "",
-        input: block.arguments ?? null,
-      });
-    }
-  }
-
-  // `responseModel` is what the provider actually served, which is the point:
-  // providers rotate versions under a stable name. Named with its provider, as a
-  // Notebook names the model it asks for, so the two read side by side.
-  const last = assistantMessages.at(-1);
-  const responseModel = last?.responseModel ?? last?.model;
-  const served = typeof responseModel === "string" ? responseModel : "";
-  const provider = typeof last?.provider === "string" ? last.provider : "";
-  const model = served === "" ? "" : provider === "" ? served : `${provider}/${served}`;
-
-  return { toolCalls, usage, model };
-}
-
-/**
- * Why the turn failed, or undefined when it did not.
- *
- * Pi does not throw when a provider fails: `prompt` resolves and the turn's
- * last assistant message says `stopReason: "error"`, after pi's own retries
- * are spent. Left unread, a Cell whose provider was down would be recorded as
- * having succeeded with nothing to say.
- */
-function failureOf(turn: readonly unknown[]): string | undefined {
-  const ended = turn
-    .filter(isRecord)
-    .filter((message) => message.role === "assistant")
-    .at(-1);
-  if (ended === undefined) return "The turn produced no reply";
-
-  if (ended.stopReason === "aborted") return "The turn was aborted";
-  if (ended.stopReason !== "error") return undefined;
-  return typeof ended.errorMessage === "string" && ended.errorMessage !== ""
-    ? ended.errorMessage
-    : "The provider returned an error";
-}
 
 /**
  * The agent boundary over pi's SDK, embedded in-process per ADR-0001.

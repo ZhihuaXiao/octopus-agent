@@ -40,6 +40,15 @@
 /**
  * @typedef {{ path: string, title: string }} NotebookEntry
  * @typedef {{ directory: string, notebooks: NotebookEntry[] }} NotebookList
+ * @typedef {{
+ *   id: string,
+ *   name?: string,
+ *   firstMessage: string,
+ *   messages: number,
+ *   created: string,
+ *   modified: string,
+ * }} ChatEntry
+ * @typedef {{ chats: ChatEntry[] }} ChatList
  * @typedef {{ name: string, input: unknown }} ToolCall
  * @typedef {"idle" | "running" | "ok" | "error" | "timeout" | "interrupted" | "stale"} CellState
  * @typedef {{
@@ -271,6 +280,80 @@ async function showList() {
       found.notebooks.length === 0 ? "No notebooks found in this directory." : "";
   } catch (cause) {
     status.textContent = `Could not list the notebooks: ${describe(cause)}`;
+  }
+  await showChats();
+}
+
+/**
+ * The chats pi has had in this directory, each with a way to promote it.
+ * Shown under the Notebooks and only when there are any: a directory pi has
+ * never been run in has nothing to promote, and need not say so.
+ */
+async function showChats() {
+  const section = element("chats-section");
+  const status = element("chats-status");
+  try {
+    const found = await fetchChats();
+    section.hidden = found.chats.length === 0;
+    element("chats").replaceChildren(...found.chats.map(renderChat));
+    status.textContent = "";
+  } catch (cause) {
+    section.hidden = false;
+    status.textContent = `Could not list the chats: ${describe(cause)}`;
+  }
+}
+
+/** @returns {Promise<ChatList>} */
+async function fetchChats() {
+  const response = await request("/api/chats");
+  if (!response.ok) throw new Error(`The server answered ${response.status}`);
+  return response.json();
+}
+
+/**
+ * @param {ChatEntry} chat
+ * @returns {HTMLLIElement}
+ */
+function renderChat(chat) {
+  const item = document.createElement("li");
+  const about = document.createElement("div");
+  const messages = chat.messages === 1 ? "1 message" : `${chat.messages} messages`;
+  about.append(
+    make("span", "said", chat.name ?? chat.firstMessage),
+    make("span", "when", `${new Date(chat.modified).toLocaleString()} · ${messages}`),
+  );
+  const button = make("button", "", "Promote");
+  button.type = "button";
+  button.addEventListener("click", () => void promote(chat, button));
+  item.append(about, button);
+  return item;
+}
+
+/**
+ * Makes a Notebook of the chat under a name the reader gives, and opens it.
+ * @param {ChatEntry} chat
+ * @param {HTMLButtonElement} button
+ */
+async function promote(chat, button) {
+  const suggested = `${(chat.name ?? chat.firstMessage)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40)}.md`;
+  const to = window.prompt("Save this chat as a notebook named:", suggested);
+  if (to === null || to.trim() === "") return;
+  button.disabled = true;
+  try {
+    const made = /** @type {NotebookEntry} */ (
+      await (
+        await post(`/api/chats/${encodeURIComponent(chat.id)}/promote`, { to: to.trim() })
+      ).json()
+    );
+    location.hash = hashFor(made.path, "author");
+  } catch (cause) {
+    element("chats-status").textContent = `Could not promote: ${describe(cause)}`;
+  } finally {
+    button.disabled = false;
   }
 }
 

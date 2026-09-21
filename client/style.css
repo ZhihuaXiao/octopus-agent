@@ -88,6 +88,39 @@ h2 {
   text-decoration: underline;
 }
 
+.chats-section {
+  margin-top: 2.5rem;
+}
+
+.hint {
+  opacity: 0.8;
+  font-size: 0.9rem;
+}
+
+.chats li > div {
+  /* Lets the line below shrink, which a flex child otherwise refuses to do. */
+  min-width: 0;
+}
+
+.chats .said {
+  display: block;
+  font-weight: 600;
+  /* One line of what was said, however long the message ran. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chats .when {
+  display: block;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.chats button {
+  flex: none;
+}
+
 .notebooks .path,
 .path {
   display: block;

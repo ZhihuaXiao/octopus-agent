@@ -133,6 +133,19 @@ export function referencesIn(body: string): readonly Reference[] {
 }
 
 /**
+ * Escapes every reference in text that was never meant as one, so that it
+ * reads as itself once the Cell runs: what somebody typed at a chat that
+ * happened to hold `{{braces}}` is text, and an import must keep it so.
+ * Escaped references are left as they are, since escaping them again would
+ * read as something else.
+ */
+export function escapeReferences(text: string): string {
+  return text.replace(REFERENCE, (reference: string, escape: string) =>
+    escape === "" ? `\\${reference}` : reference,
+  );
+}
+
+/**
  * Replaces every reference in a Cell body with its value.
  *
  * A reference to a name with no value is left as it was written, because the

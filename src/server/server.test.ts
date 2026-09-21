@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import { hashPassword } from "./password.js";
 import { type RunningServer, type ServerOptions, startServer } from "./server.js";
@@ -2590,5 +2592,148 @@ describe("duplicating a notebook", () => {
     expect((await copy({ from: "essay.md" })).status).toBe(400);
     expect((await copy({ from: "essay.md", to: "copy.md", title: "x" })).status).toBe(400);
     expect(await readdir(server.directory)).toEqual(["essay.md"]);
+  });
+});
+
+// Derived from pi's own signature rather than imported: the message types live
+// in @earendil-works/pi-ai, which is pi's dependency and not ours to pin.
+type AppendableMessage = Parameters<SessionManager["appendMessage"]>[0];
+
+/** A chat as pi records one at the terminal: a question, and an answer to it. */
+function chat(question: string, answer: string): AppendableMessage[] {
+  return [
+    { role: "user", content: question, timestamp: Date.now() },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: answer }],
+      timestamp: Date.now(),
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+    },
+  ];
+}
+
+/**
+ * A pi session had in the served directory, kept where the server was told pi
+ * keeps them; its id, which is what the server lists it under, and its file.
+ */
+function chatIn(
+  server: RunningServer,
+  chatDirectory: string,
+  messages: readonly AppendableMessage[],
+  name?: string,
+): { id: string; file: string } {
+  const manager = SessionManager.create(server.directory, chatDirectory);
+  if (name !== undefined) manager.appendSessionInfo(name);
+  for (const message of messages) manager.appendMessage(message);
+  return { id: manager.getSessionId(), file: manager.getSessionFile() ?? "" };
+}
+
+/** A server whose chats are kept in a directory of the test's own, so pi's are never read. */
+async function serveWithChats(files: Readonly<Record<string, string>> = {}) {
+  const chatDirectory = await mkdtemp(join(tmpdir(), "octo-chats-"));
+  const server = await serve(files, unusedAgent(), { chatDirectory });
+  return { server, chatDirectory };
+}
+
+describe("promoting a chat", () => {
+  it("lists the chats pi had in the served directory, the latest first", async () => {
+    const { server, chatDirectory } = await serveWithChats();
+    const earlier = chatIn(server, chatDirectory, chat("Count the files.", "Three."));
+    await new Promise((done) => setTimeout(done, 20));
+    const later = chatIn(server, chatDirectory, chat("Audit it.", "Audited."), "Weekly audit");
+
+    const response = await get(server, "/api/chats");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      chats: [
+        {
+          id: later.id,
+          name: "Weekly audit",
+          firstMessage: "Audit it.",
+          messages: 2,
+          created: expect.any(String),
+          modified: expect.any(String),
+        },
+        {
+          id: earlier.id,
+          firstMessage: "Count the files.",
+          messages: 2,
+          created: expect.any(String),
+          modified: expect.any(String),
+        },
+      ],
+    });
+  });
+
+  it("lists none when pi has had no chat here", async () => {
+    const { server } = await serveWithChats();
+
+    expect(await (await get(server, "/api/chats")).json()).toEqual({ chats: [] });
+  });
+
+  it("makes a notebook of the chat, which is then a notebook like any other", async () => {
+    const { server, chatDirectory } = await serveWithChats();
+    const { id, file } = chatIn(server, chatDirectory, chat("Audit it.", "Audited."), "Audit");
+
+    const response = await post(server, `/api/chats/${id}/promote`, { to: "chats/audit.md" });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ path: "chats/audit.md", title: "Audit" });
+    const listed = (await (await get(server, "/api/notebooks")).json()) as { notebooks: unknown[] };
+    expect(listed.notebooks).toEqual([{ path: "chats/audit.md", title: "Audit" }]);
+
+    // Opened into a session of its own, its Cells the chat's messages.
+    const opened = await open(server, "chats/audit.md");
+    expect(opened.cells).toEqual([
+      expect.objectContaining({ id: "cell-1", type: "prompt", body: "Audit it.\n" }),
+    ]);
+
+    // With a Run Record of what the chat did beside it, and pi's file untouched.
+    const runs = await readdir(join(server.directory, "chats/.octo/runs/audit"));
+    expect(runs).toHaveLength(1);
+    const record = JSON.parse(
+      await readFile(
+        join(server.directory, "chats/.octo/runs/audit", runs[0] ?? "", "record.json"),
+        "utf8",
+      ),
+    ) as { imported: string; cells: { text: string }[] };
+    expect(record.imported).toBe(file);
+    expect(record.cells).toEqual([expect.objectContaining({ text: "Audited." })]);
+  });
+
+  it("promotes only a chat that is there, to a Markdown name under the served directory, and never over a notebook", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const { id } = chatIn(server, chatDirectory, chat("Audit it.", "Audited."));
+    const promote = (chatId: string, body: unknown) =>
+      post(server, `/api/chats/${chatId}/promote`, body);
+
+    expect((await promote("no-such-chat", { to: "audit.md" })).status).toBe(404);
+    expect((await promote(id, { to: "../audit.md" })).status).toBe(400);
+    expect((await promote(id, { to: "audit.txt" })).status).toBe(400);
+    expect((await promote(id, {})).status).toBe(400);
+    expect((await promote(id, { to: "audit.md", title: "x" })).status).toBe(400);
+    expect((await promote(id, { to: "hello.md" })).status).toBe(409);
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+    expect(await readdir(server.directory)).toEqual(["hello.md"]);
+  });
+
+  it("takes only a write to promote, and only a read to list", async () => {
+    const { server, chatDirectory } = await serveWithChats();
+    const { id } = chatIn(server, chatDirectory, chat("Audit it.", "Audited."));
+
+    expect((await get(server, `/api/chats/${id}/promote`)).status).toBe(405);
+    expect((await post(server, "/api/chats", {})).status).toBe(405);
   });
 });

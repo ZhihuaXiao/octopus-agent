@@ -140,6 +140,25 @@ The pi entry id a Cell's turn ended on, recorded so a re-run can fork the Agent 
 where that Cell began. Only ever meaningful inside the Agent Session that produced it.
 _Avoid_: checkpoint, marker, cursor, pointer
 
+**Chat**:
+An Agent Session pi had at the terminal, in the file pi wrote it to: work done once, in
+conversation, that no Notebook yet describes. Named as what it is to a Notebook — the thing
+an Import is made from — and never a thing the server runs or shows live.
+_Avoid_: conversation, transcript, terminal session, pi session (unqualified)
+
+**Import**:
+Making a Notebook, and a Run Record of what already happened, from a Chat: a Prompt Cell for
+each message the user sent, a Bash Cell for each command they ran at pi's prompt, and the
+turns' results read off pi's messages as a live Run's are. One-way by design (ADR-0022): the
+Chat's file is read and copied, never written, and nothing syncs back to it.
+_Avoid_: convert, migrate, sync, export (which goes the other way, ticket 22)
+
+**Promote**:
+An Import of a Chat chosen from pi's own list of the Workspace's Chats, in the browser,
+rather than named by its path at the command line. The same implementation as Import, with
+a different way of saying which Chat.
+_Avoid_: upgrade, save as notebook, convert
+
 ### The interfaces
 
 **Author View**:

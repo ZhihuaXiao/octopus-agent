@@ -265,3 +265,27 @@ describe("the password subcommand", () => {
     expect(command(["password", "--help"], "help").usage).toContain("octo password");
   });
 });
+
+describe("the import subcommand", () => {
+  it("reads the chat's session file to import and the notebook to write", () => {
+    expect(readCommand(["import", "chat.jsonl", "chat.md"])).toEqual({
+      kind: "import",
+      session: "chat.jsonl",
+      notebook: "chat.md",
+    });
+  });
+
+  it("reports a session with no notebook to write, and no session at all", () => {
+    expect(rejected(["import", "chat.jsonl"])).toContain("notebook");
+    expect(rejected(["import"])).toContain("session");
+  });
+
+  it("reports a stray argument, and an option it does not know", () => {
+    expect(rejected(["import", "chat.jsonl", "chat.md", "other.md"])).toContain('"other.md"');
+    expect(rejected(["import", "chat.jsonl", "chat.md", "--force"])).toContain('"--force"');
+  });
+
+  it("answers a request for help, which the usage says how to import in", () => {
+    expect(command(["import", "--help"], "help").usage).toContain("octo import");
+  });
+});
