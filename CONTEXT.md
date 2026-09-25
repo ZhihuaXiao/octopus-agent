@@ -151,13 +151,20 @@ Making a Notebook, and a Run Record of what already happened, from a Chat: a Pro
 each message the user sent, a Bash Cell for each command they ran at pi's prompt, and the
 turns' results read off pi's messages as a live Run's are. One-way by design (ADR-0022): the
 Chat's file is read and copied, never written, and nothing syncs back to it.
-_Avoid_: convert, migrate, sync, export (which goes the other way, ticket 22)
+_Avoid_: convert, migrate, sync
 
 **Promote**:
 An Import of a Chat chosen from pi's own list of the Workspace's Chats, in the browser,
 rather than named by its path at the command line. The same implementation as Import, with
 a different way of saying which Chat.
 _Avoid_: upgrade, save as notebook, convert
+
+**Export**:
+A Notebook and one of its Runs made into a single HTML document that stands
+alone, so someone who will never run it can still read the answer. The Notebook
+is unchanged; the credentials the machine holds are struck out of the document
+(ADR-0023).
+_Avoid_: share, publish, snapshot, archive
 
 ### The interfaces
 

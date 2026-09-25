@@ -1,12 +1,15 @@
 #!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
 import { createPiAgent } from "../agent/pi.js";
+import { thisMachine } from "../export/credentials.js";
+import { exportNotebook } from "../export/html.js";
 import { importSession } from "../import/pi-session.js";
 import { handToPi } from "../pi/command.js";
-import { recordPath } from "../run/store.js";
+import { recordPath, runsDirectory } from "../run/store.js";
 import { runNotebook } from "../run/runner.js";
 import { passwordFile, readStoredPassword, storePassword } from "../server/password.js";
 import { startServer } from "../server/server.js";
@@ -72,6 +75,44 @@ async function importChat(command: Extract<Command, { kind: "import" }>): Promis
       );
       return;
     }
+  }
+}
+
+/**
+ * Writes a Notebook and one of its Runs as a single document, never over a
+ * file that is there — a mistyped name should not cost somebody a file. Each
+ * refusal is a sentence to act on, and exits 1 as a Run's refusal does.
+ */
+async function exportDocument(command: Extract<Command, { kind: "export" }>): Promise<void> {
+  const notebook = resolve(command.notebook);
+  const document = resolve(command.document);
+  const exported = await exportNotebook({
+    notebook,
+    ...(command.run !== undefined ? { run: command.run } : {}),
+    ...thisMachine(),
+  });
+  switch (exported.kind) {
+    case "absent":
+      throw new Error(`There is no notebook at ${notebook} to export.`);
+    case "invalid":
+      throw new Error(exported.problem);
+    case "no-run":
+      throw new Error(
+        command.run === undefined
+          ? `${notebook} has never been run, so there are no results to export; run it first.`
+          : `${notebook} has no run "${command.run}"; its runs are under ${runsDirectory(notebook)}.`,
+      );
+    case "exported":
+      try {
+        await writeFile(document, exported.document, { encoding: "utf8", flag: "wx" });
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error(`There is already a file at ${document}; choose another name.`);
+        }
+        throw cause;
+      }
+      process.stdout.write(`Exported run ${exported.run} of ${notebook} to ${document}\n`);
+      return;
   }
 }
 
@@ -207,6 +248,9 @@ async function main(): Promise<void> {
       return;
     case "import":
       await importChat(command);
+      return;
+    case "export":
+      await exportDocument(command);
       return;
   }
 }

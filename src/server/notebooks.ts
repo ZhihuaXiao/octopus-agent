@@ -12,9 +12,9 @@
 
 import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
-import { type Notebook, cellsOf, parseNotebook } from "../notebook/notebook.js";
+import { cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
 import { within } from "../util/paths.js";
 
 export interface NotebookEntry {
@@ -36,10 +36,6 @@ const isSkipped = (name: string) => name === "node_modules" || name.startsWith("
 /** A Notebook's path as the server names it: relative to the served directory, forward slashes. */
 export const pathWithin = (directory: string, file: string) =>
   relative(directory, file).split(sep).join("/");
-
-/** A Notebook's declared title, or its file's name when it declares none. */
-export const titleOf = (notebook: Notebook, file: string) =>
-  notebook.metadata.title ?? basename(file, NOTEBOOK_EXTENSION);
 
 async function readEntry(directory: string, file: string): Promise<NotebookEntry | undefined> {
   const parsed = parseNotebook(await readFile(file, "utf8"));

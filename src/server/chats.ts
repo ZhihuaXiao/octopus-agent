@@ -13,7 +13,8 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { importSession } from "../import/pi-session.js";
-import { type NotebookEntry, notebookTarget, pathWithin, titleOf } from "./notebooks.js";
+import { titleOf } from "../notebook/notebook.js";
+import { type NotebookEntry, notebookTarget, pathWithin } from "./notebooks.js";
 
 /** One Chat as the browser lists it: enough to tell it from the others. */
 export interface ChatEntry {

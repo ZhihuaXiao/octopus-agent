@@ -1,5 +1,5 @@
 /**
- * The command line: one command with three behaviours.
+ * The command line: one command with a few behaviours of its own.
  *
  * Invoked bare it is pi — whatever was said is handed to the real `pi`, flags
  * and all, so the terminal experience stays pi's own rather than a copy of it
@@ -9,7 +9,7 @@
  * of pi's flags kept here would be one more thing to keep in step with a
  * package that ships breaking changes in one release in six.
  *
- * Within our own two, a mistake is reported rather than guessed at. A stray
+ * Within our own, a mistake is reported rather than guessed at. A stray
  * argument silently ignored is a run against the wrong values, and a mistyped
  * flag that fell through to pi would start an interactive session where a
  * server was wanted.
@@ -27,6 +27,7 @@ import { DEFAULT_PORT } from "../server/server.js";
 const USAGE = `usage: octo [pi arguments]...
        octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
        octo import <session.jsonl> <notebook.md>
+       octo export <notebook.md> <document.html> [--run <id>]
        octo --web [--port <number>] [--host <address>] [--password]
        octo password
 
@@ -37,6 +38,11 @@ const USAGE = `usage: octo [pi arguments]...
   cell for each message you sent, a bash cell for each command you ran with
   \`!\` — and a run record of what it did. Pi's session file is read and
   copied, never written; pi keeps them under ~/.pi/agent/sessions.
+  \`export\` writes a notebook and the results of one of its runs — the latest,
+  or the one \`--run\` names — as a single HTML document with the files the
+  run left embedded in it, to send to someone who will not run it. The
+  credentials this machine holds are struck out of it; the notebook itself is
+  left as it is.
   \`--web\` starts the web interface on loopback, serving the notebooks under
   the current directory, on the port given or ${DEFAULT_PORT}. It prints the URL
   to open, carrying a token generated for this start; with \`--password\` the
@@ -75,6 +81,15 @@ export type Command =
   | { readonly kind: "password" }
   /** Makes a Notebook of a Chat, given pi's session file, with a Run Record of what it did. */
   | { readonly kind: "import"; readonly session: string; readonly notebook: string }
+  /** Writes a Notebook and one of its Runs as a single document. */
+  | {
+      readonly kind: "export";
+      readonly notebook: string;
+      /** Where the document is written. */
+      readonly document: string;
+      /** The Run to export, by id; absent, the latest. */
+      readonly run?: string;
+    }
   | { readonly kind: "help"; readonly usage: string }
   | { readonly kind: "mistake"; readonly error: string };
 
@@ -84,6 +99,8 @@ const HELP_WORD = "help";
 const RUN_WORD = "run";
 const PASSWORD_WORD = "password";
 const IMPORT_WORD = "import";
+const EXPORT_WORD = "export";
+const RUN_FLAG = "--run";
 const WEB_FLAG = "--web";
 const PORT_FLAG = "--port";
 const HOST_FLAG = "--host";
@@ -122,6 +139,7 @@ export function readCommand(argv: readonly string[]): Command {
   if (first === RUN_WORD) return readRun(rest);
   if (first === PASSWORD_WORD) return readPassword(rest);
   if (first === IMPORT_WORD) return readImport(rest);
+  if (first === EXPORT_WORD) return readExport(rest);
   const { name } = splitOption(first);
   if (WEB_FLAGS.includes(name)) return readWeb(argv);
   return { kind: "pi", arguments: argv };
@@ -162,6 +180,41 @@ function readImport(argv: readonly string[]): Command {
     return mistake(`One session is imported into one notebook, so "${stray}" is a stray argument.`);
   }
   return { kind: "import", session, notebook };
+}
+
+/**
+ * Two files and, at most, which Run: the Notebook to read and the document to
+ * write, in that order as `import` takes its two, and `--run` naming a Run
+ * other than the latest. Anything else is a mistake, as everywhere here.
+ */
+function readExport(argv: readonly string[]): Command {
+  const files: string[] = [];
+  let run: string | undefined;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index] ?? "";
+    if (HELP_FLAGS.includes(argument)) return help;
+    if (!isOption(argument)) {
+      files.push(argument);
+      continue;
+    }
+    const { name, attached } = splitOption(argument);
+    if (name !== RUN_FLAG) return mistake(`Unknown option "${argument}".`);
+    if (run !== undefined) return mistake(`Option "${RUN_FLAG}" was given twice.`);
+    run = valueOf(attached, argv[index + 1]);
+    if (run === undefined) return mistake(`Option "${RUN_FLAG}" needs a run id.`);
+    if (attached === undefined) index += 1;
+  }
+
+  const [notebook, document, stray] = files;
+  if (notebook === undefined) return mistake("A notebook to export is needed.");
+  if (document === undefined) return mistake("A document to write the export to is needed.");
+  if (stray !== undefined) {
+    return mistake(
+      `One notebook is exported into one document, so "${stray}" is a stray argument.`,
+    );
+  }
+  return { kind: "export", notebook, document, ...(run !== undefined ? { run } : {}) };
 }
 
 function readRun(argv: readonly string[]): Command {

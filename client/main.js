@@ -16,9 +16,9 @@
  * again will help or somebody has to be asked. For whoever is handed a
  * Notebook and not its prompts.
  *
- * The Session is the server's. This page asks it to run, to stop, or to save,
- * over HTTP, and hears what happens over a WebSocket; closing the page changes
- * nothing about the work. The Notebook opened is kept in the URL's fragment —
+ * The Session is the server's. This page asks it to run, to stop, to save, or
+ * for an Export of a finished Run, over HTTP, and hears what happens over a
+ * WebSocket; closing the page changes nothing about the work. The Notebook opened is kept in the URL's fragment —
  * `#run/` before it for the Run View — so a reload opens the same one again
  * and a link opens it the same way for whoever it is sent to. Every event is
  * numbered, and the page keeps the number of the last it heard: when the
@@ -1118,6 +1118,49 @@ async function saveDraft() {
   }
 }
 
+/**
+ * The filename a download was offered under, read off Content-Disposition —
+ * `filename*` when it is there, else `filename`. Nothing when the header names
+ * none, which is the caller's to fill in.
+ * @param {Response} response
+ */
+function filenameOf(response) {
+  const header = response.headers.get("content-disposition") ?? "";
+  const encoded = /filename\*=UTF-8''([^;]+)/.exec(header);
+  if (encoded?.[1] !== undefined) return decodeURIComponent(encoded[1]);
+  const quoted = /filename="([^"]+)"/.exec(header);
+  return quoted?.[1];
+}
+
+/**
+ * Downloads the Export of the Notebook and its latest finished Run, the same
+ * document `octo export` writes. A Notebook that has never been run has
+ * nothing to export, and the server says so.
+ */
+async function exportRun() {
+  if (watching === undefined) return;
+  const { id } = watching.state;
+  const status = element("session-status");
+  try {
+    const response = await request(`/api/sessions/${encodeURIComponent(id)}/export`);
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    const href = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = filenameOf(response) ?? "notebook.html";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    // Not at once: some browsers are still reading the blob when `click` returns.
+    setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    status.textContent = "";
+  } catch (cause) {
+    status.textContent = `Could not export: ${describe(cause)}`;
+  }
+}
+
 /** Copies the Notebook under a name the author gives, and opens the copy. */
 async function duplicate() {
   if (watching === undefined) return;
@@ -1616,6 +1659,7 @@ element("run-form").addEventListener("submit", (event) => {
 element("run-stop").addEventListener("click", () => void interrupt());
 element("edit").addEventListener("click", beginEditing);
 element("duplicate").addEventListener("click", () => void duplicate());
+element("export").addEventListener("click", () => void exportRun());
 element("cancel").addEventListener("click", stopEditing);
 element("editor").addEventListener("submit", (event) => {
   event.preventDefault();

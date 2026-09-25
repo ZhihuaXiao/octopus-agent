@@ -1,4 +1,4 @@
-import { mkdir, readdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -60,6 +60,37 @@ export async function runFile(
 }
 
 /**
+ * What a file a Run left is taken to be, by its name, wherever it is shown. An
+ * image is an image, so it is drawn; plain text and the record are text, so
+ * they are shown; anything else — HTML and SVG among it — is bytes to be
+ * offered as a download and never a page, because nothing an agent wrote is
+ * ever run by whatever shows it (ticket 16). One table, so the server and an
+ * Export cannot disagree about what a file is.
+ */
+const RUN_FILE_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain; charset=utf-8",
+  ".md": "text/plain; charset=utf-8",
+  ".csv": "text/plain; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+};
+
+/** What a file of a Run is offered as when it is not to be shown at all. */
+export const DOWNLOAD = "application/octet-stream";
+
+/** The media type a file a Run left is shown as, `DOWNLOAD` when it is not shown. */
+export const runFileType = (file: string): string =>
+  RUN_FILE_TYPES[extname(file).toLowerCase()] ?? DOWNLOAD;
+
+export const isImage = (type: string) => type.startsWith("image/");
+export const isText = (type: string) => type !== DOWNLOAD && !isImage(type);
+
+/**
  * Where one Cell of a Run puts its Artifacts: a directory of its own under the
  * Run's, so two Cells writing the same name cannot collide and nothing has to
  * work out afterwards which Cell left which file.
@@ -109,4 +140,41 @@ export async function writeRunRecord(record: RunRecord): Promise<string> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   return path;
+}
+
+/**
+ * The record of the Notebook's Run `runId`, or nothing when there is none —
+ * no such Run, one still under way, or a name that climbs out of the Runs'
+ * directory, which is refused as `runFile` refuses it.
+ */
+export async function readRunRecord(
+  notebookPath: string,
+  runId: string,
+): Promise<RunRecord | undefined> {
+  const file = await runFile(notebookPath, runId, "record.json");
+  if (file === undefined) return undefined;
+  return JSON.parse(await readFile(file, "utf8")) as RunRecord;
+}
+
+/**
+ * The id of the Notebook's latest Run to have written its record, or nothing
+ * when none has. By name, since Run ids sort in the order the Runs began; a
+ * Run under way has no record yet, and is passed over for the one before it.
+ */
+export async function latestRunId(notebookPath: string): Promise<string | undefined> {
+  const entries = await readdir(runsDirectory(notebookPath), { withFileTypes: true }).catch(
+    (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return [];
+      throw cause;
+    },
+  );
+  const runs = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+  for (const run of runs) {
+    if ((await runFile(notebookPath, run, "record.json")) !== undefined) return run;
+  }
+  return undefined;
 }

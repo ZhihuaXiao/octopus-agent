@@ -15,7 +15,7 @@
  * two views can never drift apart.
  */
 
-import { dirname, resolve } from "node:path";
+import { basename, dirname, extname, resolve } from "node:path";
 
 import { type Diagnostic, lineOffset } from "./diagnostic.js";
 import { DURATION_RULE, parseDuration } from "./duration.js";
@@ -136,6 +136,11 @@ export function bodyOf(cell: Cell): string {
  */
 export function workspaceOf(notebook: Notebook, notebookPath: string): string {
   return resolve(dirname(notebookPath), notebook.metadata.workspace ?? ".");
+}
+
+/** A Notebook's declared title, or its file's name when it declares none. */
+export function titleOf(notebook: Notebook, notebookPath: string): string {
+  return notebook.metadata.title ?? basename(notebookPath, extname(notebookPath));
 }
 
 /**

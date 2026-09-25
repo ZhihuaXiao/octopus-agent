@@ -5,12 +5,14 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, duplicate, promote — are HTTP requests, each
- * with an answer; what a Run produces is a stream, and goes to the browser
- * over a WebSocket; what a Run leaves — its Artifacts, its record — is served
- * from under the Run's directory, so the browser can show a file where the
- * record names it. A save writes the Notebook's file, and only the bytes the
- * edit changed, so a diff of the file shows what the author did and no more.
+ * Commands — open, run, interrupt, save, duplicate, promote, export — are HTTP
+ * requests, each with an answer; what a Run produces is a stream, and goes to
+ * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
+ * — is served from under the Run's directory, so the browser can show a file
+ * where the record names it. An Export is the Notebook and a Run as one
+ * document to download and send on. A save writes the Notebook's file, and only
+ * the bytes the edit changed, so a diff of the file shows what the author did
+ * and no more.
  * Loopback unless told otherwise, because starting it must never expose the
  * machine by accident (ADR-0006); and everything that does or shows anything
  * — the API, and the socket the events come over — takes only a request the
@@ -28,6 +30,7 @@ import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
+import { DOWNLOAD, runFileType } from "../run/store.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
 import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js";
@@ -72,7 +75,9 @@ const CHATS_ROUTE = "/api/chats";
 /** One of them, to be promoted into a Notebook. */
 const PROMOTE_ROUTE = /^\/api\/chats\/([^/]+)\/promote$/;
 /** A Notebook Session by id, and what may be asked of it. */
-const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events))?$/;
+const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export))?$/;
+/** The query naming which Run an export is of, when not the latest. */
+const RUN_QUERY = "run";
 /** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
 const RUN_FILE_ROUTE = /^\/api\/sessions\/([^/]+)\/runs\/([^/]+)\/(.+)$/;
 
@@ -82,28 +87,6 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
 };
-
-/**
- * What a file a Run left is served as. An image is served as the image it is,
- * so the browser draws it; plain text and the record as text, so the browser
- * shows them. Anything else is a download, HTML and SVG among it: the files a
- * Run leaves share an origin with the client, and a page or a script served
- * as one could read whatever the client holds, so nothing an agent wrote is
- * ever run.
- */
-const RUN_FILE_TYPES: Readonly<Record<string, string>> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".txt": "text/plain; charset=utf-8",
-  ".md": "text/plain; charset=utf-8",
-  ".csv": "text/plain; charset=utf-8",
-  ".log": "text/plain; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-};
-const DOWNLOAD = "application/octet-stream";
 
 /** What a browser fetches a page and its assets with; Node itself leaves a HEAD's body out. */
 const READS: readonly string[] = ["GET", "HEAD"];
@@ -399,10 +382,12 @@ async function serveSession(
   matched: RegExpExecArray,
   request: IncomingMessage,
   response: ServerResponse,
+  searchParams: URLSearchParams,
 ): Promise<void> {
   const [, id = "", action] = matched;
-  // The state and the events are read; a run and an interrupt change things.
-  const allowed = action === undefined || action === "events" ? READS : WRITES;
+  // The state, the events and an export are read; a run and an interrupt change things.
+  const allowed =
+    action === undefined || action === "events" || action === "export" ? READS : WRITES;
   if (!permitted(allowed, request, response)) return;
 
   const session = sessions.get(id);
@@ -463,6 +448,42 @@ async function serveSession(
       // never arrives here, so whoever did is told what to connect with.
       reply(response, 426, "Connect to the events with a WebSocket.\n", { upgrade: "websocket" });
       return;
+    case "export": {
+      const asked = searchParams.get(RUN_QUERY);
+      const run = asked === null || asked === "" ? undefined : asked;
+      const exported = await session.export(run);
+      switch (exported.kind) {
+        case "absent":
+          notFound(response);
+          return;
+        case "invalid":
+          reply(response, 422, `${exported.problem}\n`);
+          return;
+        case "no-run":
+          reply(
+            response,
+            404,
+            run === undefined
+              ? "This notebook has no finished run to export; run it first.\n"
+              : `This notebook has no run "${run}".\n`,
+          );
+          return;
+        case "exported": {
+          // A download under the Notebook's name and the Run's, so two exports
+          // of one Notebook do not land on each other; as HTML, since it is one,
+          // and never run in this origin, which `attachment` sees to.
+          const { notebook } = session.state();
+          const name = `${basename(notebook, extname(notebook))}-${exported.run}.html`;
+          response.writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+            "x-content-type-options": "nosniff",
+            "content-disposition": attachment(name),
+          });
+          response.end(exported.document);
+          return;
+        }
+      }
+    }
   }
 }
 
@@ -500,7 +521,11 @@ async function serveRunFile(
     return;
   }
 
-  const type = RUN_FILE_TYPES[extname(file).toLowerCase()] ?? DOWNLOAD;
+  // What a file is served as is what `store.ts` says it is: an image drawn, text
+  // shown, anything else a download, since the files a Run leaves share an
+  // origin with the client and a page served as one could read whatever the
+  // client holds.
+  const type = runFileType(file);
   response.writeHead(200, {
     "content-type": type,
     // Served as what its name says and nothing else, whatever its bytes look like.
@@ -672,7 +697,7 @@ async function handle(
 
   const matched = SESSION_ROUTE.exec(pathname);
   if (matched !== null) {
-    await serveSession(served.sessions, matched, request, response);
+    await serveSession(served.sessions, matched, request, response, searchParams);
     return;
   }
   const runFile = RUN_FILE_ROUTE.exec(pathname);

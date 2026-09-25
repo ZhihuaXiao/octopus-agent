@@ -30,6 +30,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
 import { type AgentFactory, type ToolCall, emptyResult, noUsage } from "../agent/agent.js";
+import { thisMachine } from "../export/credentials.js";
+import { type Exported, exportNotebook } from "../export/html.js";
 import { type NotebookEdit, applyEdit } from "../notebook/edit.js";
 import {
   type Cell,
@@ -41,6 +43,7 @@ import {
   formatDiagnostics,
   isCellSegment,
   parseNotebook,
+  titleOf,
 } from "../notebook/notebook.js";
 import type { CellRecord, CellStatus, RunEnvironment, RunRecord } from "../run/record.js";
 import {
@@ -50,7 +53,7 @@ import {
   concludeRun,
   runNotebook,
 } from "../run/runner.js";
-import { listArtifacts, runFile } from "../run/store.js";
+import { listArtifacts, readRunRecord, runFile } from "../run/store.js";
 import {
   type FoundJournal,
   type Journal,
@@ -59,7 +62,7 @@ import {
   openJournal,
   readJournals,
 } from "./journal.js";
-import { fileWithin, pathWithin, titleOf } from "./notebooks.js";
+import { fileWithin, pathWithin } from "./notebooks.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -250,6 +253,13 @@ export interface NotebookSession {
    * pair names no file there, a climb out of the Run's directory included.
    */
   runFile(run: string, file: string): Promise<string | undefined>;
+  /**
+   * The Notebook and the results of one of its Runs — `run`, or the latest to
+   * have finished — as one document to be handed to someone who will never
+   * run it; see `export/html.ts`. Read off the disk, as a Run's files are,
+   * so a Run under way is not in it until it has written its record.
+   */
+  export(run?: string): Promise<Exported>;
 }
 
 interface NotebookSessionSetup {
@@ -552,10 +562,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
    * is concluded with that record, not a second one written over it.
    */
   const settle = async (lost: InProgress): Promise<void> => {
-    const written = await runFile(path, lost.run, "record.json");
+    const written = await readRunRecord(path, lost.run);
     if (written !== undefined) {
-      const record = JSON.parse(await readFile(written, "utf8")) as RunRecord;
-      observe({ type: "run-ended", record });
+      observe({ type: "run-ended", record: written });
       return;
     }
 
@@ -677,6 +686,13 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     },
 
     runFile: (run, file) => runFile(path, run, file),
+
+    export: (run) =>
+      exportNotebook({
+        notebook: path,
+        ...(run !== undefined ? { run } : {}),
+        ...thisMachine(),
+      }),
   };
 }
 
