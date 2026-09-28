@@ -71,6 +71,10 @@ export interface AgentSetup {
   readonly workspace: string;
   /** The only tools the agent may use. Absent leaves pi's own default set. */
   readonly tools?: readonly string[];
+  /** The system prompt, in place of pi's own. Absent leaves pi's. */
+  readonly systemPrompt?: string;
+  /** The only Skills the agent is given, by name. Absent gives it every Skill pi loads. */
+  readonly skills?: readonly string[];
   /** What the Run was told about trusting the Workspace, when it was told anything. */
   readonly trust?: boolean;
   /**

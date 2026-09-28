@@ -11,6 +11,7 @@ import {
   noUsage,
 } from "../agent/agent.js";
 import { checkEnvironment } from "../agent/environment.js";
+import { type Mode, resolveMode, userModesDirectory } from "../mode/mode.js";
 import {
   ARTIFACTS_REFERENCE,
   type Cell,
@@ -126,6 +127,13 @@ export interface RunOptions {
    * and forked at the Anchor its records name; see `anchor.ts`.
    */
   continues?: RunRecord;
+  /**
+   * Where the user's own Modes are found. `~/.octo/modes` unless said
+   * otherwise, which only a test has reason to. Not a way to choose the Mode:
+   * that is the Notebook's to say, and a Run that could say otherwise would run
+   * a Notebook nobody reading it could predict.
+   */
+  userModesDirectory?: string;
 }
 
 /**
@@ -315,6 +323,8 @@ interface Cleared {
   readonly path: string;
   readonly workspace: string;
   readonly values: InputValues;
+  /** The Mode the Notebook runs in, when it declares one. */
+  readonly mode?: Mode;
   /** The Notebook's shared context, which every Cell not marked Isolated speaks into. */
   readonly shared: Agent;
   /** Makes the fresh context an Isolated Cell runs in, one per such Cell. */
@@ -344,7 +354,7 @@ interface Cleared {
 
 /** Runs the Cells of a Notebook that has already been cleared to run. */
 async function runCells(cleared: Cleared): Promise<RunRecord> {
-  const { path, workspace, shared, continues, observe, interrupt } = cleared;
+  const { path, workspace, mode, shared, continues, observe, interrupt } = cleared;
   // Named before the first Cell runs rather than when the record is written,
   // because the Cells' artifact directories are under this Run's own and a Cell
   // has to be told where that is before it can put anything there.
@@ -355,6 +365,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     trusted: shared.environment.trusted,
     piVersion: shared.environment.piVersion,
     tools: [...shared.environment.tools],
+    ...(mode !== undefined ? { mode: mode.name } : {}),
   };
   observe({
     type: "run-started",
@@ -605,6 +616,16 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
   const scheduled = orderToRun(parsed.notebook, options.cells);
   if (!scheduled.ok) throw refuse("cells", scheduled.problems);
 
+  let mode: Mode | undefined;
+  if (metadata.mode !== undefined) {
+    const resolved = await resolveMode(
+      metadata.mode,
+      options.userModesDirectory ?? userModesDirectory(),
+    );
+    if (!resolved.ok) throw refuse("environment", resolved.problems);
+    mode = resolved.mode;
+  }
+
   const workspace = workspaceOf(parsed.notebook, path);
   if (!(await isDirectory(workspace))) {
     throw refuse("workspace", `Its workspace ${workspace} is not a directory.`);
@@ -613,9 +634,20 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
   // What every agent this Run makes is set up with, the shared one and each
   // Isolated Cell's alike: the same Workspace and the same declared environment,
   // since isolation is about the shared context and not about running elsewhere.
+  // The Notebook's own declarations stand in place of its Mode's, which are
+  // only the defaults a Notebook written in that Mode starts from.
+  // The Skills are the exception, being needs rather than a choice: a Skill the
+  // Notebook declares is one it cannot run without, whatever its Mode offers.
+  const tools = metadata.tools ?? mode?.tools;
+  const skills =
+    mode?.skills !== undefined
+      ? [...new Set([...mode.skills, ...(metadata.skills ?? [])])]
+      : undefined;
   const setup: AgentSetup = {
     workspace,
-    ...(metadata.tools !== undefined ? { tools: metadata.tools } : {}),
+    ...(tools !== undefined ? { tools } : {}),
+    ...(skills !== undefined ? { skills } : {}),
+    ...(mode?.prompt !== undefined ? { systemPrompt: mode.prompt } : {}),
     ...(options.trust !== undefined ? { trust: options.trust } : {}),
   };
 
@@ -640,13 +672,14 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
     });
 
   try {
-    const problems = checkEnvironment(metadata, shared.environment);
+    const problems = checkEnvironment(metadata, shared.environment, mode);
     if (problems.length > 0) throw refuse("environment", problems);
 
     return await runCells({
       path,
       workspace,
       values: inputs.values,
+      ...(mode !== undefined ? { mode } : {}),
       shared,
       // No session named, which is what makes it fresh. The environment is not
       // checked a second time: it was checked against this same setup, and a
@@ -656,7 +689,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       order: scheduled.order,
       allCells: cellsOf(parsed.notebook),
       timeoutOf: (cell) => timeoutOf(parsed.notebook, cell),
-      modelOf: (cell) => modelOf(parsed.notebook, cell),
+      modelOf: (cell) => modelOf(parsed.notebook, cell) ?? mode?.model,
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
       observe: options.observe ?? (() => undefined),
       ...(options.signal !== undefined ? { interrupt: options.signal } : {}),

@@ -55,7 +55,9 @@ _Avoid_: independent, standalone, stateless, pure
 
 **Mode**:
 A named preset bundling a system prompt, a tool allowlist, a skill set, and a default
-model. Code Mode and Work Mode ship first; a Notebook records its Mode at creation.
+model, kept as a file of its own (ADR-0024). Code Mode and Work Mode ship with octo; a user
+adds their own beside them. A Notebook records its Mode at creation, and no Run can choose
+another.
 _Avoid_: profile, persona, preset, agent type, run mode
 
 **Workspace**:

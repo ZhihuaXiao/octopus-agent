@@ -1940,6 +1940,211 @@ describe("a cell's model", () => {
   });
 });
 
+/** A directory of the user's own modes, holding each file given by name. */
+async function modesDirectory(files: Readonly<Record<string, string>> = {}): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "octo-modes-"));
+  for (const [name, contents] of Object.entries(files)) {
+    await writeFile(join(dir, name), contents, "utf8");
+  }
+  return dir;
+}
+
+/** The tools pi has of its own, which is every tool there is without an extension. */
+const PI_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+
+describe("modes", () => {
+  it("runs a notebook in Code mode as pi is: pi's own prompt, tools, skills and model", async () => {
+    const path = await notebookFile(declaring("mode: code\n"));
+    const agent = createScriptedAgent([{ text: "done" }], { tools: PI_TOOLS });
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: await modesDirectory() });
+
+    // No tools named, since naming any is an allowlist to pi: it would shut out
+    // the tools of the machine's extensions and its own configured defaults.
+    expect(agent.setup?.systemPrompt).toBeUndefined();
+    expect(agent.setup?.tools).toBeUndefined();
+    expect(agent.setup?.skills).toBeUndefined();
+    expect(agent.turns[0]?.model).toBeUndefined();
+  });
+
+  it("runs a notebook in Work mode on a prompt and model of its own, with no connectors", async () => {
+    const path = await notebookFile(declaring("mode: work\nskills:\n  - review\n"));
+    const agent = createScriptedAgent([{ text: "done" }], { tools: PI_TOOLS, skills: ["review"] });
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: await modesDirectory() });
+
+    expect(agent.setup?.systemPrompt).toMatch(/office and knowledge work/);
+    expect(agent.turns[0]?.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(agent.setup?.skills).toEqual(["review"]);
+    // A connector would be a tool beyond pi's own, which is what Work mode has none of.
+    expect(agent.setup?.tools?.every((tool) => PI_TOOLS.includes(tool))).toBe(true);
+  });
+
+  it("records the mode the notebook ran in with the rest of its environment", async () => {
+    const path = await notebookFile(declaring("mode: work\n"));
+    const agent = createScriptedAgent([{ text: "done" }], { tools: PI_TOOLS });
+
+    const record = await runNotebook(path, {
+      agent: agent.create,
+      userModesDirectory: await modesDirectory(),
+    });
+
+    expect(record.environment.mode).toBe("work");
+  });
+
+  it("runs a notebook in a mode the user defined, on that mode's default model", async () => {
+    const modes = await modesDirectory({ "design.md": "---\nmodel: openai/gpt-5\n---\n" });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.turns[0]?.model).toBe("openai/gpt-5");
+  });
+
+  it("sets the agent up with the mode's system prompt, which is the body of its file", async () => {
+    const modes = await modesDirectory({
+      "design.md": "---\nmodel: openai/gpt-5\n---\n\nYou are a careful visual designer.\n",
+    });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.setup?.systemPrompt).toBe("You are a careful visual designer.");
+  });
+
+  it("gives the agent only the tools the mode allows", async () => {
+    const modes = await modesDirectory({ "design.md": "---\ntools:\n  - read\n  - write\n---\n" });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "done" }], { tools: ["read", "write"] });
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.setup?.tools).toEqual(["read", "write"]);
+  });
+
+  it("stops before any cell runs when a tool the mode allows is not on offer, naming the mode", async () => {
+    const modes = await modesDirectory({ "design.md": "---\ntools:\n  - read\n  - reed\n---\n" });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }], { tools: ["read"] });
+
+    await expect(
+      runNotebook(path, { agent: agent.create, userModesDirectory: modes }),
+    ).rejects.toThrow('The mode "design" declares the tool "reed", which is not available here.');
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("lets the notebook's own model and tools stand in place of the mode's", async () => {
+    const modes = await modesDirectory({
+      "design.md": "---\nmodel: openai/gpt-5\ntools:\n  - read\n  - write\n---\n",
+    });
+    const path = await notebookFile(
+      declaring("mode: design\nmodel: anthropic/claude-haiku-4-5\ntools:\n  - bash\n"),
+    );
+    const agent = createScriptedAgent([{ text: "done" }], { tools: ["bash"] });
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.turns[0]?.model).toBe("anthropic/claude-haiku-4-5");
+    expect(agent.setup?.tools).toEqual(["bash"]);
+  });
+
+  it("gives the agent only the mode's skills, and the skills the notebook declares besides", async () => {
+    const modes = await modesDirectory({ "design.md": "---\nskills:\n  - brand\n---\n" });
+    const path = await notebookFile(declaring("mode: design\nskills:\n  - review\n"));
+    const agent = createScriptedAgent([{ text: "done" }], { skills: ["brand", "review", "tdd"] });
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.setup?.skills).toEqual(["brand", "review"]);
+  });
+
+  it("leaves the skills alone when the mode names none", async () => {
+    const modes = await modesDirectory({ "design.md": "---\nmodel: openai/gpt-5\n---\n" });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.setup?.skills).toBeUndefined();
+  });
+
+  it("stops before any cell runs when a skill the mode names is missing, naming the mode", async () => {
+    const modes = await modesDirectory({ "design.md": "---\nskills:\n  - brand\n---\n" });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(
+      runNotebook(path, { agent: agent.create, userModesDirectory: modes }),
+    ).rejects.toThrow('The mode "design" declares the skill "brand", which is not available here.');
+    expect(agent.prompts).toEqual([]);
+  });
+
+  it("refuses a mode this machine does not have, naming the modes it does", async () => {
+    const modes = await modesDirectory({ "design.md": "" });
+    const path = await notebookFile(declaring("mode: review\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    const refusal = await runNotebook(path, {
+      agent: agent.create,
+      userModesDirectory: modes,
+    }).catch((cause: unknown) => cause);
+
+    expect(refusal).toBeInstanceOf(RunRefusal);
+    expect((refusal as RunRefusal).kind).toBe("environment");
+    expect((refusal as RunRefusal).problems).toEqual([
+      `This notebook declares the mode "review", which is not available here. The modes here are code, design and work; your own are ${join(modes, "<name>.md")}.`,
+    ]);
+    expect(agent.setup, "no agent is set up for a mode that is not there").toBeUndefined();
+  });
+
+  it("refuses a mode of the user's own that takes the name of one octo ships", async () => {
+    const modes = await modesDirectory({ "code.md": "You are something else entirely.\n" });
+    const path = await notebookFile(declaring("mode: code\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(
+      runNotebook(path, { agent: agent.create, userModesDirectory: modes }),
+    ).rejects.toThrow(
+      `${join(modes, "code.md")} has the name of a mode octo ships, so "code" would not mean the same on every machine. Rename it.`,
+    );
+    expect(agent.setup).toBeUndefined();
+  });
+
+  it("refuses a mode whose file is malformed, naming every problem against its line", async () => {
+    const modes = await modesDirectory({
+      "design.md": "---\nmodel:\n  - openai/gpt-5\ntool:\n  - read\nskills:\n  - 3\n---\nDesign.\n",
+    });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+    const file = join(modes, "design.md");
+
+    const refusal = await runNotebook(path, {
+      agent: agent.create,
+      userModesDirectory: modes,
+    }).catch((cause: unknown) => cause);
+
+    expect((refusal as RunRefusal).kind).toBe("environment");
+    expect((refusal as RunRefusal).problems).toEqual([
+      `${file}, line 2: Mode field "model" must be a string`,
+      `${file}, line 4: Unknown mode field "tool". Expected one of model, tools, skills`,
+      `${file}, line 7: Every entry in "skills" must be a string`,
+    ]);
+    expect(agent.setup).toBeUndefined();
+  });
+
+  it("refuses a mode file whose frontmatter is never closed", async () => {
+    const modes = await modesDirectory({ "design.md": "---\nmodel: openai/gpt-5\n\nDesign.\n" });
+    const path = await notebookFile(declaring("mode: design\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(
+      runNotebook(path, { agent: agent.create, userModesDirectory: modes }),
+    ).rejects.toThrow(`${join(modes, "design.md")}, line 1: Frontmatter is never closed`);
+  });
+});
+
 /** Where a run keeps the artifacts of one of its cells. */
 const artifactsDirectory = (path: string, record: RunRecord, cellId: string) =>
   join(runDirectory(path, record.id), "artifacts", cellId);

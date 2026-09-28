@@ -90,6 +90,8 @@ export interface RunEnvironment {
   piVersion: string;
   /** The tools the agent was given — or, for an imported Run, the tools its Chat is seen to have called. */
   tools: string[];
+  /** The Mode the Notebook declared and the Run resolved, absent when it declared none. */
+  mode?: string;
 }
 
 export interface RunRecord {

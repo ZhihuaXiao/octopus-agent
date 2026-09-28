@@ -93,7 +93,25 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
   if (!decision.ok) throw new Error(decision.problem);
   if (decision.record) trustStore.set(workspace, decision.trusted);
 
-  const resourceLoader = new DefaultResourceLoader({ cwd: workspace, agentDir, settingsManager });
+  const { systemPrompt, skills } = options;
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: workspace,
+    agentDir,
+    settingsManager,
+    // In place of whatever pi would have found, `SYSTEM.md` included; pi still
+    // adds the Workspace's context files and its Skills after it.
+    ...(systemPrompt !== undefined ? { systemPromptOverride: () => systemPrompt } : {}),
+    // Filtered from what pi loaded, so a Skill in the set that pi never found
+    // is absent from the Environment below and reported missing as it should be.
+    ...(skills !== undefined
+      ? {
+          skillsOverride: (loaded) => ({
+            ...loaded,
+            skills: loaded.skills.filter((skill) => skills.includes(skill.name)),
+          }),
+        }
+      : {}),
+  });
   await resourceLoader.reload({ resolveProjectTrust: async () => decision.trusted });
 
   const { session } = await createAgentSession({

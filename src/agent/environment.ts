@@ -13,6 +13,7 @@
  * would only be a second opinion to keep in step with pi's own.
  */
 
+import type { Mode } from "../mode/mode.js";
 import type { Metadata } from "../notebook/notebook.js";
 
 /**
@@ -25,7 +26,7 @@ import type { Metadata } from "../notebook/notebook.js";
 export interface Environment {
   /** The version of pi this Run embeds, which a Notebook may pin. */
   readonly piVersion: string;
-  /** The tools the agent may use, which is the Notebook's own list when it declares one. */
+  /** The tools the agent may use: the Notebook's own list when it declares one, else its Mode's. */
   readonly tools: readonly string[];
   /** The Skills pi loaded, by name. */
   readonly skills: readonly string[];
@@ -37,13 +38,18 @@ export interface Environment {
 
 /**
  * Reports everything the Notebook declares that this environment does not
- * provide, in the order the frontmatter declares it.
+ * provide, in the order the frontmatter declares it, and then everything its
+ * Mode asks for that is not here either.
  *
  * Every problem at once rather than the first: the author is about to go and
  * install what is missing, and one round trip per missing skill wastes their
  * afternoon.
  */
-export function checkEnvironment(declared: Metadata, provided: Environment): readonly string[] {
+export function checkEnvironment(
+  declared: Metadata,
+  provided: Environment,
+  mode?: Mode,
+): readonly string[] {
   const problems: string[] = [];
 
   if (declared.piVersion !== undefined && declared.piVersion !== provided.piVersion) {
@@ -60,8 +66,8 @@ export function checkEnvironment(declared: Metadata, provided: Environment): rea
     ? ""
     : " The workspace is not trusted, so pi loaded none of the resources it declares of its own.";
 
-  const missing = (kind: string, name: string, hint = "") =>
-    `This notebook declares the ${kind} "${name}", which is not available here.${hint}`;
+  const missing = (kind: string, name: string, hint = "", by = "This notebook") =>
+    `${by} declares the ${kind} "${name}", which is not available here.${hint}`;
 
   for (const tool of declared.tools ?? []) {
     if (!provided.tools.includes(tool)) problems.push(missing("tool", tool));
@@ -71,6 +77,23 @@ export function checkEnvironment(declared: Metadata, provided: Environment): rea
   }
   for (const source of declared.packages ?? []) {
     if (!provided.packages.includes(source)) problems.push(missing("package", source, untrusted));
+  }
+
+  if (mode !== undefined) {
+    // Named after the Mode rather than the Notebook, since the Mode's file is
+    // where somebody has to go to see why it was asked for.
+    const by = `The mode "${mode.name}"`;
+    // Only when the Notebook lists no tools of its own, which is when the
+    // Mode's are the ones the agent was asked to have.
+    if (declared.tools === undefined) {
+      for (const tool of mode.tools ?? []) {
+        if (!provided.tools.includes(tool)) problems.push(missing("tool", tool, "", by));
+      }
+    }
+    for (const skill of mode.skills ?? []) {
+      if (provided.skills.includes(skill) || declared.skills?.includes(skill)) continue;
+      problems.push(missing("skill", skill, untrusted, by));
+    }
   }
 
   return problems;
