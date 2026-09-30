@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { networkInterfaces, userInfo } from "node:os";
 import { resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
@@ -175,6 +175,26 @@ async function setPassword(): Promise<void> {
   );
 }
 
+/**
+ * The URLs another machine opens a server bound to every interface by: the
+ * printed one names loopback, which is this machine only, so each of this
+ * machine's network addresses stands in for it.
+ */
+function reachableAt(host: string | undefined, url: string): string[] {
+  if (host !== "0.0.0.0" && host !== "::") return [];
+  const urls: string[] = [];
+  for (const address of Object.values(networkInterfaces()).flat()) {
+    if (address === undefined || address.internal) continue;
+    // A link-local IPv6 address needs its interface named to be reached, which a URL cannot say.
+    const ipv6 = address.family === "IPv6";
+    if (ipv6 && (host !== "::" || address.address.startsWith("fe80:"))) continue;
+    const reached = new URL(url);
+    reached.hostname = ipv6 ? `[${address.address}]` : address.address;
+    urls.push(reached.href);
+  }
+  return urls;
+}
+
 /** Starts the server as the command asks, and prints where to open it. */
 async function serve(command: Extract<Command, { kind: "web" }>): Promise<void> {
   let storedPassword: string | undefined;
@@ -195,6 +215,11 @@ async function serve(command: Extract<Command, { kind: "web" }>): Promise<void> 
     ...(storedPassword !== undefined ? { storedPassword } : {}),
   });
   process.stdout.write(`Serving the notebooks under ${server.directory}\nOpen ${server.url}\n`);
+  const elsewhere = reachableAt(command.host, server.url);
+  if (elsewhere.length > 0) {
+    process.stdout.write(`From another machine, open whichever it can reach:\n`);
+    for (const url of elsewhere) process.stdout.write(`  ${url}\n`);
+  }
   if (command.host !== undefined) {
     // The flag's help said so; said again where it is now true, with the name filled in.
     process.stdout.write(

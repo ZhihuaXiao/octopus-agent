@@ -17,7 +17,7 @@
     "format:check": "prettier --check .",
     "lint": "npm run format:check && npm run typecheck",
     "test": "vitest run",
-    "octo": "npm run build && node dist/cli/octo.js"
+    "octo": "npm run build && node dist/cli/npm-octo.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.2",

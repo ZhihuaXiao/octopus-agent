@@ -66,6 +66,10 @@ If a tunnel is not possible, `--host` binds another address:
 octo --web --host 0.0.0.0 --password
 ```
 
+From a checkout, `npm run octo --web --host 0.0.0.0 --port 9000` does the same, with or without
+a `--` after `octo`. Bound to `0.0.0.0` or `::`, it prints a URL for each of the machine's
+network addresses as well as the loopback one; open whichever the other machine can reach.
+
 Read the warning it prints. Anyone who can reach that port and knows the token or the
 password can run arbitrary code as you, and the connection is plain HTTP: the token or
 password travels in the clear, as does everything the agent says and does. Put a TLS
