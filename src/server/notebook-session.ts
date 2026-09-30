@@ -62,7 +62,7 @@ import {
   openJournal,
   readJournals,
 } from "./journal.js";
-import { fileWithin, pathWithin } from "./notebooks.js";
+import { fileWithin, pathWithin, renameNotebook, type Renamed } from "./notebooks.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -260,6 +260,12 @@ export interface NotebookSession {
    * so a Run under way is not in it until it has written its record.
    */
   export(run?: string): Promise<Exported>;
+  /**
+   * The Notebook's file has been renamed to `nextPath`, and this session is
+   * that file still: later saves and Runs use the new path, and the Journal
+   * records the name so a server that starts later finds it there.
+   */
+  relocate(nextPath: string, nextNotebook: string): void;
 }
 
 interface NotebookSessionSetup {
@@ -321,7 +327,10 @@ interface InProgress {
 const LOST = "The server stopped while this cell was running";
 
 async function createNotebookSession(setup: NotebookSessionSetup): Promise<NotebookSession> {
-  const { id, path, notebook, agent, journal } = setup;
+  const { id, agent, journal } = setup;
+  /** Where the file is now. A rename moves both, and everything after it reads these. */
+  let path = setup.path;
+  let notebook = setup.notebook;
   const listeners = new Set<(event: NumberedEvent | Snapshot) => void>();
   /** Every event emitted so far, in order: what a browser coming back is told. */
   const events: NumberedEvent[] = [];
@@ -687,6 +696,16 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
 
     runFile: (run, file) => runFile(path, run, file),
 
+    relocate(nextPath, nextNotebook) {
+      path = nextPath;
+      notebook = nextNotebook;
+      // Not one of the numbered events: it says where the file went, which a
+      // server starting reads off the Journal, and the browsers are told by
+      // the change that follows.
+      journal.append({ type: "renamed", notebook: nextNotebook });
+      emit(() => ({ type: "notebook-changed", session: state() }));
+    },
+
     export: (run) =>
       exportNotebook({
         notebook: path,
@@ -704,9 +723,27 @@ export type Opened =
   /** A file that is there but is not a Notebook that can be opened. */
   | { readonly kind: "refused"; readonly problem: string };
 
+/** How renaming went, including a Notebook Session that is in the middle of a Run. */
+export type RenameResult = Renamed | { readonly kind: "running" };
+
+/** The path a Journal's Notebook has now: the last rename it recorded, or the name it was opened under. */
+function notebookNamed(journal: FoundJournal): string {
+  let name = journal.header.notebook;
+  for (const line of journal.lines) {
+    if (line.type === "renamed" && typeof line.notebook === "string") name = line.notebook;
+  }
+  return name;
+}
+
 export interface NotebookSessions {
   /** The Notebook Session for the Notebook at `notebook`, opened if it was not already. */
   open(notebook: string): Promise<Opened>;
+  /**
+   * Renames the Notebook at `from` to `to`. One a session holds is renamed
+   * there too, so the session carries on under the new name; one a Run is
+   * busy with is left where it is.
+   */
+  rename(from: string, to: string): Promise<RenameResult>;
   get(id: string): NotebookSession | undefined;
   /**
    * Interrupts every Run in progress and resolves once each has stopped,
@@ -808,7 +845,7 @@ export async function createNotebookSessions(
   };
 
   for (const journal of await readJournals(directory)) {
-    const path = fileWithin(directory, journal.header.notebook);
+    const path = fileWithin(directory, notebookNamed(journal));
     if (path === undefined) continue;
     // Two Journals of one Notebook is two servers having served this directory
     // at once, which nothing yet prevents; the later begun stands, and the
@@ -835,6 +872,22 @@ export async function createNotebookSessions(
       const path = fileWithin(directory, notebook);
       if (path === undefined) return { kind: "absent" };
       return openAt(path);
+    },
+
+    async rename(from, to) {
+      const source = fileWithin(directory, from);
+      if (source === undefined) return { kind: "absent" };
+      const session = byPath.get(source);
+      if (session?.state().running) return { kind: "running" };
+
+      const renamed = await renameNotebook(directory, from, to);
+      if (renamed.kind !== "renamed" || session === undefined) return renamed;
+      const target = fileWithin(directory, renamed.entry.path);
+      if (target === undefined || target === source) return renamed;
+      session.relocate(target, renamed.entry.path);
+      byPath.delete(source);
+      byPath.set(target, session);
+      return renamed;
     },
 
     get: (id) => byId.get(id),

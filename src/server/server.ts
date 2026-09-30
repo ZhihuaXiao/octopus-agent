@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, duplicate, promote, export — are HTTP
+ * Commands — open, run, interrupt, save, create, duplicate, promote, export — are HTTP
  * requests, each with an answer; what a Run produces is a stream, and goes to
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
@@ -35,7 +35,7 @@ import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
 import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js";
 import { type ChatsOptions, listChats, promoteChat } from "./chats.js";
-import { copyNotebook, listNotebooks } from "./notebooks.js";
+import { copyNotebook, createNotebook, listNotebooks, listTree } from "./notebooks.js";
 import {
   type NotebookSessions,
   type RunRequest,
@@ -66,6 +66,10 @@ const API_ROUTE = "/api/";
 /** Where the shell presents the password, or a pasted token, to open a Connection; the one thing under the API that needs none. */
 const CONNECT_ROUTE = "/api/connect";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
+/** The served directory as folders and files, for the sidebar. */
+const TREE_ROUTE = "/api/tree";
+/** A Notebook's file renamed, Runs included, the session following when one holds it. */
+const RENAME_ROUTE = "/api/notebooks/rename";
 /** The query the startup URL carries the token in, and the cookie a browser carries its Connection in. */
 const TOKEN_QUERY = "token";
 const CONNECTION_COOKIE = "octo_connection";
@@ -190,9 +194,14 @@ async function serveNotebooks(directory: string, response: ServerResponse): Prom
   json(response, 200, { directory, notebooks });
 }
 
-/** Duplicates a Notebook under a new name, so it can be adapted rather than written from nothing. */
-async function duplicateNotebook(
-  directory: string,
+/** The served directory as folders and the files in them, so the sidebar can open a folder. */
+async function serveTree(directory: string, response: ServerResponse): Promise<void> {
+  json(response, 200, { directory, entries: await listTree(directory) });
+}
+
+/** Renames a Notebook, and the session that holds it when one does. */
+async function renameOpen(
+  served: Served,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -203,7 +212,58 @@ async function duplicateNotebook(
     typeof body.from !== "string" ||
     typeof body.to !== "string"
   ) {
-    reply(response, 400, "The request must name the notebook to copy and the new name, as JSON.\n");
+    reply(response, 400, "The request must name the notebook and the new name, as JSON.\n");
+    return;
+  }
+
+  const renamed = await served.sessions.rename(body.from, body.to);
+  switch (renamed.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "invalid":
+      reply(response, 400, `${renamed.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${body.to}.\n`);
+      return;
+    case "runs":
+      reply(response, 409, `There are already runs stored for ${body.to}.\n`);
+      return;
+    case "running":
+      reply(response, 409, "This notebook is running; interrupt it or wait, then rename it.\n");
+      return;
+    case "renamed":
+      json(response, 200, renamed.entry);
+      return;
+  }
+}
+
+/**
+ * Writes a Notebook under a new name: a copy of one named `from`, so it can be
+ * adapted rather than written from nothing; or, named nothing to copy, a new
+ * one to be written from nothing.
+ */
+async function addNotebook(
+  directory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (!isRecord(body) || typeof body.to !== "string" || !hasKeys(body, ["to"], ["from"])) {
+    reply(
+      response,
+      400,
+      "The request must name the new notebook, and the notebook to copy when it is a copy, as JSON.\n",
+    );
+    return;
+  }
+  if (body.from === undefined) {
+    await newNotebook(directory, body.to, response);
+    return;
+  }
+  if (typeof body.from !== "string") {
+    reply(response, 400, "The notebook to copy must be named as a string.\n");
     return;
   }
 
@@ -220,6 +280,21 @@ async function duplicateNotebook(
       return;
     case "copied":
       json(response, 201, copied.entry);
+      return;
+  }
+}
+
+async function newNotebook(directory: string, to: string, response: ServerResponse): Promise<void> {
+  const created = await createNotebook(directory, to);
+  switch (created.kind) {
+    case "invalid":
+      reply(response, 400, `${created.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${to}.\n`);
+      return;
+    case "created":
+      json(response, 201, created.entry);
       return;
   }
 }
@@ -709,11 +784,19 @@ async function handle(
     if (permitted(WRITES, request, response)) await openSession(served.sessions, request, response);
     return;
   }
+  if (pathname === RENAME_ROUTE) {
+    if (permitted(WRITES, request, response)) await renameOpen(served, request, response);
+    return;
+  }
+  if (pathname === TREE_ROUTE) {
+    if (permitted(READS, request, response)) await serveTree(served.directory, response);
+    return;
+  }
   if (pathname === NOTEBOOKS_ROUTE) {
-    // Read, the Notebooks under the directory; written to, a copy of one of them.
+    // Read, the Notebooks under the directory; written to, a new one or a copy of one of them.
     if (!permitted([...READS, ...WRITES], request, response)) return;
     if (WRITES.includes(request.method ?? "")) {
-      await duplicateNotebook(served.directory, request, response);
+      await addNotebook(served.directory, request, response);
     } else await serveNotebooks(served.directory, response);
     return;
   }

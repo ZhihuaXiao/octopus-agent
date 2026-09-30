@@ -65,6 +65,10 @@ Click a notebook to open it. The address bar keeps the path in the fragment, so 
 
 The title in the header returns to the list.
 
+The left column is the directory. Click a folder to open it and list what is in it: subfolders, notebooks, and other files. A notebook opens when you click it. Any other file is listed so you can see it is there. `node_modules` and directories whose names start with a dot are skipped. The notebook that is open is highlighted, and the folders that lead to it start open. On a narrow screen the column sits above the page instead.
+
+**New notebook**, in the left column or beside the list, asks for a filename (`.md` is added if you leave it off; a path such as `notes/audit.md` makes the folder too) and writes a notebook holding one empty prompt cell. It opens in the editor, ready for you to write the prompt. It never overwrites a file that is already there.
+
 Below the notebooks, the page lists chats pi has had in this directory, when there are any. **Promote** turns one into a notebook. See [Make a notebook from a chat](#make-a-notebook-from-a-chat).
 
 If the server restarted, the old cookie is no longer valid. The page asks for the token from the new URL, or for the password if the server was started with `--password`.
@@ -93,11 +97,15 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 - Each cell has its type (`prompt` or `bash`), id, `uses`, an isolated checkbox, an optional model, an optional timeout, and its body.
 - Prose is the Markdown between cells.
 
+**+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing if you are not already, and put the cursor in the new cell. Nothing is written until you save.
+
 **Insert at the top** and **Insert below** add a prompt cell, a bash cell, or prose. **↑** and **↓** reorder. **Remove** deletes that piece. **Save** writes the file. Only what you changed is rewritten, so a diff stays readable. **Cancel** throws the draft away.
 
 If the file changed on disk, or another browser saved it, while you were editing, the first save is refused. Save again to overwrite that newer copy, or cancel to see what it holds now.
 
 **Duplicate** asks for a new filename and opens the copy. The suggestion is the current name with `-copy` before `.md`.
+
+**Rename** asks for a new filename and moves the notebook to it, runs included. `.md` is added if you leave it off, and a path such as `notes/audit.md` moves it into that folder. It never overwrites a file that is already there, and it waits if a run is in progress.
 
 **Export** downloads one HTML file of this notebook and its latest finished run. Someone can open that file without octo. A notebook that has never been run has nothing to export.
 

@@ -2595,6 +2595,189 @@ describe("duplicating a notebook", () => {
   });
 });
 
+describe("creating a notebook", () => {
+  it("writes one empty prompt cell under the name, which is then listed and opens", async () => {
+    const server = await serve();
+
+    const response = await post(server, "/api/notebooks", { to: "drafts/new.md" });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ path: "drafts/new.md", title: "new" });
+    expect(await readFile(join(server.directory, "drafts/new.md"), "utf8")).toBe(
+      "```prompt id=cell-1\n```\n",
+    );
+    const listed = (await (await get(server, "/api/notebooks")).json()) as {
+      notebooks: unknown[];
+    };
+    expect(listed.notebooks).toEqual([{ path: "drafts/new.md", title: "new" }]);
+    const session = await open(server, "drafts/new.md");
+    expect(session.cells).toMatchObject([{ id: "cell-1", type: "prompt", body: "" }]);
+  });
+
+  it("never writes over a file that is already there", async () => {
+    const server = await serve({ "notes.md": "Just notes.\n" });
+
+    const response = await post(server, "/api/notebooks", { to: "notes.md" });
+
+    expect(response.status).toBe(409);
+    expect(await readFile(join(server.directory, "notes.md"), "utf8")).toBe("Just notes.\n");
+  });
+
+  it("takes only a Markdown name under the served directory", async () => {
+    const server = await serve();
+    const create = (body: unknown) => post(server, "/api/notebooks", body);
+
+    expect((await create({ to: "../new.md" })).status).toBe(400);
+    expect((await create({ to: "new.txt" })).status).toBe(400);
+    expect((await create({ to: 1 })).status).toBe(400);
+    expect((await create({ to: "new.md", title: "x" })).status).toBe(400);
+    expect((await create({ to: "new.md", from: 1 })).status).toBe(400);
+    expect(await readdir(server.directory)).toEqual([]);
+  });
+});
+
+describe("the folder tree", () => {
+  it("lists folders and the files in them, and marks the notebooks", async () => {
+    const server = await serve({
+      "essay.md": essay,
+      "notes/plain.txt": "hello\n",
+      "notes/readme.md": "Just notes.\n",
+      "notes/nested/empty.md": "",
+      "node_modules/pkg/index.md": essay,
+      ".git/config": "",
+    });
+    await mkdir(join(server.directory, "notes/vacant"), { recursive: true });
+
+    const response = await get(server, "/api/tree");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      directory: server.directory,
+      entries: [
+        {
+          kind: "directory",
+          name: "notes",
+          path: "notes",
+          children: [
+            {
+              kind: "directory",
+              name: "nested",
+              path: "notes/nested",
+              children: [{ kind: "file", name: "empty.md", path: "notes/nested/empty.md" }],
+            },
+            { kind: "directory", name: "vacant", path: "notes/vacant", children: [] },
+            { kind: "file", name: "plain.txt", path: "notes/plain.txt" },
+            { kind: "file", name: "readme.md", path: "notes/readme.md" },
+          ],
+        },
+        { kind: "notebook", name: "essay.md", path: "essay.md", title: "Essay" },
+      ],
+    });
+  });
+});
+
+describe("renaming a notebook", () => {
+  it("moves the file and the runs stored beside it, and the open session follows", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const record = join(server.directory, ".octo/runs/essay/run-1/record.json");
+    await mkdir(join(server.directory, ".octo/runs/essay/run-1"), { recursive: true });
+    await writeFile(record, "{}\n", "utf8");
+
+    const response = await post(server, "/api/notebooks/rename", {
+      from: "essay.md",
+      to: "notes/piece.md",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ path: "notes/piece.md", title: "Essay" });
+    expect(await readFile(join(server.directory, "notes/piece.md"), "utf8")).toBe(essay);
+    await expect(readFile(join(server.directory, "essay.md"), "utf8")).rejects.toThrow();
+    expect(
+      await readFile(join(server.directory, "notes/.octo/runs/piece/run-1/record.json"), "utf8"),
+    ).toBe("{}\n");
+    expect(await stateOf(server, session.id)).toMatchObject({
+      id: session.id,
+      notebook: "notes/piece.md",
+    });
+    const current = await stateOf(server, session.id);
+    const saved = await save(server, current, {
+      ...editOf(current),
+      frontmatter: "title: Piece\n",
+    });
+    expect(saved.status).toBe(200);
+    expect(await readFile(join(server.directory, "notes/piece.md"), "utf8")).toContain(
+      "title: Piece",
+    );
+  });
+
+  it("is found under the new name after a restart, as the same session", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    expect(
+      (await post(server, "/api/notebooks/rename", { from: "essay.md", to: "piece.md" })).status,
+    ).toBe(200);
+
+    const again = await restart(server);
+
+    expect(await stateOf(again, session.id)).toMatchObject({
+      id: session.id,
+      notebook: "piece.md",
+    });
+    expect((await post(again, "/api/sessions", { notebook: "piece.md" })).status).toBe(200);
+    expect((await post(again, "/api/sessions", { notebook: "essay.md" })).status).toBe(404);
+  });
+
+  it("waits while a run is in progress", async () => {
+    const server = await serve({ "essay.md": essay }, createScriptedAgent([{ hangs: true }]));
+    const session = await open(server, "essay.md");
+    expect(await run(server, session.id)).toBe(202);
+    for (;;) {
+      if ((await stateOf(server, session.id)).running) break;
+      await new Promise((tick) => setTimeout(tick, 20));
+    }
+
+    const response = await post(server, "/api/notebooks/rename", {
+      from: "essay.md",
+      to: "piece.md",
+    });
+
+    expect(response.status).toBe(409);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+  });
+
+  it("never writes over a file, or over runs stored for another notebook", async () => {
+    const server = await serve({ "essay.md": essay, "hello.md": hello });
+    await mkdir(join(server.directory, ".octo/runs/essay/run-1"), { recursive: true });
+    await mkdir(join(server.directory, ".octo/runs/kept"), { recursive: true });
+
+    const taken = await post(server, "/api/notebooks/rename", { from: "essay.md", to: "hello.md" });
+    expect(taken.status).toBe(409);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+
+    const blocked = await post(server, "/api/notebooks/rename", {
+      from: "essay.md",
+      to: "kept.md",
+    });
+    expect(blocked.status).toBe(409);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+    expect((await readdir(join(server.directory, ".octo/runs"))).sort()).toEqual(["essay", "kept"]);
+  });
+
+  it("renames only a notebook that is there, to a Markdown name under the served directory", async () => {
+    const server = await serve({ "essay.md": essay, "notes.md": "Just notes.\n" });
+    const renameTo = (body: unknown) => post(server, "/api/notebooks/rename", body);
+
+    expect((await renameTo({ from: "missing.md", to: "copy.md" })).status).toBe(404);
+    expect((await renameTo({ from: "notes.md", to: "copy.md" })).status).toBe(404);
+    expect((await renameTo({ from: "../essay.md", to: "copy.md" })).status).toBe(404);
+    expect((await renameTo({ from: "essay.md", to: "../copy.md" })).status).toBe(400);
+    expect((await renameTo({ from: "essay.md", to: "copy.txt" })).status).toBe(400);
+    expect((await renameTo({ from: "essay.md" })).status).toBe(400);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+  });
+});
+
 // Derived from pi's own signature rather than imported: the message types live
 // in @earendil-works/pi-ai, which is pi's dependency and not ours to pin.
 type AppendableMessage = Parameters<SessionManager["appendMessage"]>[0];

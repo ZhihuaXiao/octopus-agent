@@ -22,62 +22,82 @@
         <p id="connect-status" class="status"></p>
       </form>
     </section>
-    <main id="list">
-      <h2>Notebooks</h2>
-      <p id="status" class="status">Looking for notebooks…</p>
-      <ul id="notebooks" class="notebooks"></ul>
-      <section id="chats-section" class="chats-section" hidden>
-        <h2>Chats</h2>
-        <p class="hint">
-          Chats pi has had at the terminal in this directory. Promote one to make a notebook of it —
-          a prompt cell for each message you sent, a bash cell for each command you ran — with a
-          record of what it did. Pi's own session file is left as it is.
-        </p>
-        <p id="chats-status" class="status"></p>
-        <ul id="chats" class="notebooks chats"></ul>
-      </section>
-    </main>
-    <main id="session" hidden>
-      <div class="session-header">
-        <div>
-          <h2 id="title"></h2>
-          <p id="notebook" class="path"></p>
+    <div class="layout">
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+          <h2 id="tree-root" class="tree-root"></h2>
+          <button id="tree-new" type="button" title="Make a new notebook in this directory">
+            New notebook
+          </button>
         </div>
-        <div id="author-controls" class="controls">
-          <button id="run-all" type="button">Run all</button>
-          <button id="interrupt" type="button" disabled>Interrupt</button>
-          <button id="edit" type="button">Edit</button>
-          <button id="duplicate" type="button">Duplicate</button>
-          <button id="export" type="button">Export</button>
-          <a id="to-run-view" class="button" href="#">Run view</a>
+        <p id="tree-status" class="status"></p>
+        <ul id="tree" class="tree"></ul>
+      </aside>
+      <main id="list">
+        <div class="list-header">
+          <h2>Notebooks</h2>
+          <button id="list-new" type="button">New notebook</button>
         </div>
-        <div id="run-controls" class="controls" hidden>
-          <a id="to-author-view" class="button" href="#">Author view</a>
-        </div>
-      </div>
-      <p id="session-status" class="status"></p>
-      <ol id="segments" class="segments"></ol>
-      <form id="editor" class="editor" hidden>
-        <div class="editor-controls">
-          <button id="save" type="submit">Save</button>
-          <button id="cancel" type="button">Cancel</button>
-          <p id="editor-status" class="status"></p>
-        </div>
-        <div id="draft"></div>
-      </form>
-      <section id="run-view" class="run-view" hidden>
-        <form id="run-form" class="run-form">
-          <div id="run-inputs" class="run-inputs"></div>
-          <div class="run-actions">
-            <button id="run-start" type="submit">Run</button>
-            <button id="run-stop" type="button" hidden>Stop</button>
-            <span id="run-progress" class="run-progress"></span>
+        <p id="status" class="status">Looking for notebooks…</p>
+        <ul id="notebooks" class="notebooks"></ul>
+        <section id="chats-section" class="chats-section" hidden>
+          <h2>Chats</h2>
+          <p class="hint">
+            Chats pi has had at the terminal in this directory. Promote one to make a notebook of it
+            — a prompt cell for each message you sent, a bash cell for each command you ran — with a
+            record of what it did. Pi's own session file is left as it is.
+          </p>
+          <p id="chats-status" class="status"></p>
+          <ul id="chats" class="notebooks chats"></ul>
+        </section>
+      </main>
+      <main id="session" hidden>
+        <div class="session-header">
+          <div>
+            <h2 id="title"></h2>
+            <p id="notebook" class="path"></p>
           </div>
+          <div id="author-controls" class="controls">
+            <button id="run-all" type="button">Run all</button>
+            <button id="interrupt" type="button" disabled>Interrupt</button>
+            <button id="edit" type="button">Edit</button>
+            <button id="duplicate" type="button">Duplicate</button>
+            <button id="rename" type="button">Rename</button>
+            <button id="export" type="button">Export</button>
+            <a id="to-run-view" class="button" href="#">Run view</a>
+          </div>
+          <div id="run-controls" class="controls" hidden>
+            <a id="to-author-view" class="button" href="#">Author view</a>
+          </div>
+        </div>
+        <p id="session-status" class="status"></p>
+        <ol id="segments" class="segments"></ol>
+        <form id="editor" class="editor" hidden>
+          <div class="editor-controls">
+            <button id="save" type="submit">Save</button>
+            <button id="cancel" type="button">Cancel</button>
+            <p id="editor-status" class="status"></p>
+          </div>
+          <div id="draft"></div>
         </form>
-        <section id="run-outcome" class="run-outcome" hidden></section>
-        <ol id="run-steps" class="run-steps"></ol>
-      </section>
-    </main>
+        <div id="add-cells" class="add-cells" hidden>
+          <button id="add-prompt" type="button">+ Prompt cell</button>
+          <button id="add-bash" type="button">+ Bash cell</button>
+        </div>
+        <section id="run-view" class="run-view" hidden>
+          <form id="run-form" class="run-form">
+            <div id="run-inputs" class="run-inputs"></div>
+            <div class="run-actions">
+              <button id="run-start" type="submit">Run</button>
+              <button id="run-stop" type="button" hidden>Stop</button>
+              <span id="run-progress" class="run-progress"></span>
+            </div>
+          </form>
+          <section id="run-outcome" class="run-outcome" hidden></section>
+          <ol id="run-steps" class="run-steps"></ol>
+        </section>
+      </main>
+    </div>
     <script type="module" src="/client/main.js"></script>
   </body>
 </html>

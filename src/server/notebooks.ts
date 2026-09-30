@@ -6,15 +6,18 @@
  * what keeps a project's README, which has fenced snippets but no Cells, out of
  * the list. A file that does not parse is left out too, since nothing can be
  * done with it here: the browser edits what parses, so a file broken in
- * another editor is fixed there. Copying a Notebook lives here too, being a
- * matter of the files under the directory rather than of any session.
+ * another editor is fixed there. Copying a Notebook, and making a new one,
+ * live here too, being a matter of the files under the directory rather than
+ * of any session.
  */
 
 import { constants } from "node:fs";
-import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
+import { applyEdit } from "../notebook/edit.js";
 import { cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
+import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
 
 export interface NotebookEntry {
@@ -150,4 +153,191 @@ export async function copyNotebook(directory: string, from: string, to: string):
     throw cause;
   }
   return { kind: "copied", entry: { path: pathWithin(directory, target), title: entry.title } };
+}
+
+/** How making a new Notebook went. */
+export type Created =
+  | { readonly kind: "created"; readonly entry: NotebookEntry }
+  /** The name is not one a Notebook under the served directory can have. */
+  | { readonly kind: "invalid"; readonly problem: string }
+  /** A file is already there under the name. */
+  | { readonly kind: "exists" };
+
+/**
+ * Writes a new Notebook at `to`, relative to the served directory, holding
+ * one empty Prompt Cell and nothing else: a Notebook is a file with a Cell in
+ * it, so one with none could be neither listed nor opened, and the author
+ * would have nowhere to begin. Never over a file that is already there; a
+ * directory the name needs is made.
+ */
+export async function createNotebook(directory: string, to: string): Promise<Created> {
+  const named = notebookTarget(directory, to);
+  if ("problem" in named) return { kind: "invalid", problem: named.problem };
+  const target = named.file;
+
+  const empty = parseNotebook("");
+  if (!empty.ok) throw new Error("An empty file is not a notebook");
+  const made = applyEdit(empty.notebook, {
+    segments: [{ kind: "cell", id: "cell-1", type: "prompt", body: "", uses: [], isolated: false }],
+  });
+  if (!made.ok) throw new Error("A new notebook does not parse");
+
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await writeFile(target, made.source, { encoding: "utf8", flag: "wx" });
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") return { kind: "exists" };
+    throw cause;
+  }
+  return {
+    kind: "created",
+    entry: { path: pathWithin(directory, target), title: titleOf(made.notebook, target) },
+  };
+}
+
+/**
+ * One entry of the served directory, as the sidebar draws it. A directory
+ * holds its children; a Notebook is a Markdown file with a Cell in it, which
+ * is what opens; anything else is a file, listed so a folder can be looked
+ * into, and not opened.
+ */
+export type TreeEntry =
+  | {
+      readonly kind: "directory";
+      readonly name: string;
+      readonly path: string;
+      readonly children: readonly TreeEntry[];
+    }
+  | {
+      readonly kind: "notebook";
+      readonly name: string;
+      readonly path: string;
+      readonly title: string;
+    }
+  | { readonly kind: "file"; readonly name: string; readonly path: string };
+
+/** Whether a path is on disk. A missing one is the absence, not an error. */
+const isThere = (path: string) =>
+  stat(path).then(
+    () => true,
+    (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT" || cause.code === "ENOTDIR") return false;
+      throw cause;
+    },
+  );
+
+/**
+ * The served directory as folders and files, for the sidebar to open one
+ * folder at a time. The same directories a Notebook search skips —
+ * `node_modules`, and anything named with a leading dot — are skipped here,
+ * and a symbolic link is neither, so a link that loops is never followed.
+ */
+export async function listTree(directory: string): Promise<TreeEntry[]> {
+  return readTree(directory, directory);
+}
+
+async function readTree(directory: string, root: string): Promise<TreeEntry[]> {
+  const dirents = await readdir(directory, { withFileTypes: true });
+  const entries: TreeEntry[] = [];
+
+  for (const dirent of dirents) {
+    if (isSkipped(dirent.name)) continue;
+    const path = join(directory, dirent.name);
+    const relativePath = pathWithin(root, path);
+    if (dirent.isDirectory()) {
+      entries.push({
+        kind: "directory",
+        name: dirent.name,
+        path: relativePath,
+        children: await readTree(path, root),
+      });
+    } else if (dirent.isFile()) {
+      const notebook =
+        extname(dirent.name) === NOTEBOOK_EXTENSION ? await readEntry(root, path) : undefined;
+      entries.push(
+        notebook !== undefined
+          ? { kind: "notebook", name: dirent.name, path: relativePath, title: notebook.title }
+          : { kind: "file", name: dirent.name, path: relativePath },
+      );
+    }
+  }
+
+  return entries.sort((a, b) => {
+    if (a.kind === "directory" && b.kind !== "directory") return -1;
+    if (a.kind !== "directory" && b.kind === "directory") return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/** How renaming a Notebook went. */
+export type Renamed =
+  | { readonly kind: "renamed"; readonly entry: NotebookEntry }
+  /** No such Notebook under the served directory. */
+  | { readonly kind: "absent" }
+  /** The new name is not one a Notebook under the served directory can have. */
+  | { readonly kind: "invalid"; readonly problem: string }
+  /** A file is already there under the new name. */
+  | { readonly kind: "exists" }
+  /** The new name would land on Runs another Notebook already has. */
+  | { readonly kind: "runs" };
+
+/**
+ * Renames the Notebook at `from` to `to`, both relative to the served
+ * directory, and moves the Runs stored beside it so they stay that
+ * Notebook's. Never over a file that is already there, and never over a Runs
+ * directory that is: either would be a way to lose work by mistyping a name.
+ * A directory the new name needs is made.
+ */
+export async function renameNotebook(
+  directory: string,
+  from: string,
+  to: string,
+): Promise<Renamed> {
+  const source = fileWithin(directory, from);
+  if (source === undefined) return { kind: "absent" };
+  const named = notebookTarget(directory, to);
+  if ("problem" in named) return { kind: "invalid", problem: named.problem };
+  const target = named.file;
+
+  let entry: NotebookEntry | undefined;
+  try {
+    entry = await readEntry(directory, source);
+  } catch (cause) {
+    const { code } = cause as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") return { kind: "absent" };
+    throw cause;
+  }
+  if (entry === undefined) return { kind: "absent" };
+  if (source === target) return { kind: "renamed", entry };
+
+  // `rename` replaces a file that is already there, which would lose it.
+  if (await isThere(target)) return { kind: "exists" };
+  const fromRuns = runsDirectory(source);
+  const toRuns = runsDirectory(target);
+  const moveRuns = fromRuns !== toRuns && (await isThere(fromRuns));
+  if (moveRuns && (await isThere(toRuns))) return { kind: "runs" };
+
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await rename(source, target);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") return { kind: "exists" };
+    throw cause;
+  }
+
+  if (moveRuns) {
+    await mkdir(dirname(toRuns), { recursive: true });
+    try {
+      await rename(fromRuns, toRuns);
+    } catch (cause) {
+      await rename(target, source).catch(() => undefined);
+      if ((cause as NodeJS.ErrnoException).code === "EEXIST") return { kind: "runs" };
+      throw cause;
+    }
+  }
+
+  return {
+    kind: "renamed",
+    entry: { path: pathWithin(directory, target), title: entry.title },
+  };
 }

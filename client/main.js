@@ -9,6 +9,11 @@
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
  * saved whole, based on the revision it was drawn from.
  *
+ * Beside whichever is shown, the served directory is drawn as a tree of its
+ * folders and the Notebooks in them, the one open marked, with a way to make
+ * a new Notebook; and under an open Notebook are the ways to add a Prompt
+ * Cell or a Bash Cell to it, which begin the editing when it has not begun.
+ *
  * The same Session is shown a second way, as the Run View: the Cells hidden,
  * the Notebook's declared Inputs as a form, one button, and, as it runs, how
  * far it has got and what each Cell says and leaves; a Run that could not
@@ -277,11 +282,197 @@ async function showList() {
     element("directory").textContent = found.directory;
     element("notebooks").replaceChildren(...found.notebooks.map(renderEntry));
     status.textContent =
-      found.notebooks.length === 0 ? "No notebooks found in this directory." : "";
+      found.notebooks.length === 0
+        ? "No notebooks found in this directory. Press New notebook to begin one."
+        : "";
   } catch (cause) {
     status.textContent = `Could not list the notebooks: ${describe(cause)}`;
+    element("tree-status").textContent = status.textContent;
   }
+  await refreshTree();
   await showChats();
+}
+
+/**
+ * One entry of the served directory, as the sidebar lists it.
+ * @typedef {{ name: string, path: string, kind: "directory", children: TreeNode[] }
+ *   | { name: string, path: string, kind: "notebook", title: string }
+ *   | { name: string, path: string, kind: "file" }} TreeNode
+ * @typedef {{ directory: string, entries: TreeNode[] }} FileTree
+ */
+
+/** The Notebooks last listed, so a new one can be offered a name none of them has. */
+/** @type {NotebookEntry[]} */
+let listed = [];
+
+/** The folders the sidebar has open, by path ending in a slash, kept open each time it is drawn again. */
+/** @type {Set<string>} */
+const openFolders = new Set();
+
+/** Which Notebook's folders were last unfolded, so a refresh does not reopen one the reader closed. */
+let revealed = "";
+
+/**
+ * The Notebooks in a tree, for naming a new one that does not collide.
+ * @param {TreeNode[]} nodes
+ * @param {NotebookEntry[]} [into]
+ * @returns {NotebookEntry[]}
+ */
+function notebooksIn(nodes, into = []) {
+  for (const node of nodes) {
+    if (node.kind === "notebook") into.push({ path: node.path, title: node.title });
+    else if (node.kind === "directory") notebooksIn(node.children, into);
+  }
+  return into;
+}
+
+/**
+ * Unfolds the folders that lead to `notebook`, so the one open can be seen.
+ * @param {string} notebook
+ */
+function reveal(notebook) {
+  const folders = notebook.split("/").slice(0, -1);
+  let prefix = "";
+  for (const name of folders) {
+    prefix += `${name}/`;
+    openFolders.add(prefix);
+  }
+}
+
+/**
+ * What one folder holds: its folders, then its files, a Notebook opening and
+ * any other file only listed.
+ * @param {TreeNode[]} nodes
+ * @returns {HTMLLIElement[]}
+ */
+function renderNodes(nodes) {
+  return nodes.map((node) => {
+    if (node.kind === "directory") {
+      const path = `${node.path}/`;
+      const item = make("li", "tree-folder");
+      const details = document.createElement("details");
+      details.open = openFolders.has(path);
+      details.addEventListener("toggle", () => {
+        if (details.open) openFolders.add(path);
+        else openFolders.delete(path);
+      });
+      const contents = make("ul", "tree");
+      contents.append(
+        ...(node.children.length === 0
+          ? [make("li", "tree-empty", "Empty")]
+          : renderNodes(node.children)),
+      );
+      details.append(make("summary", "", `${node.name}/`), contents);
+      item.append(details);
+      return item;
+    }
+    if (node.kind === "notebook") {
+      const item = make("li", "tree-notebook");
+      const link = make("a", "", node.name);
+      link.href = hashFor(node.path, "author");
+      link.title = node.title;
+      if (node.path === asked) link.setAttribute("aria-current", "page");
+      item.append(link);
+      return item;
+    }
+    const item = make("li", "tree-file", node.name);
+    item.title = node.path;
+    return item;
+  });
+}
+
+/** @param {FileTree} found */
+function drawTree(found) {
+  listed = notebooksIn(found.entries);
+  if (asked !== "" && asked !== revealed) {
+    reveal(asked);
+    revealed = asked;
+  }
+  element("directory").textContent = found.directory;
+  const root = element("tree-root");
+  root.textContent = `${found.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? found.directory}/`;
+  root.title = found.directory;
+  element("tree").replaceChildren(...renderNodes(found.entries));
+  element("tree-status").textContent = found.entries.length === 0 ? "This folder is empty." : "";
+}
+
+/** @returns {Promise<FileTree>} */
+async function fetchTree() {
+  const response = await request("/api/tree");
+  if (!response.ok) throw new Error(`The server answered ${response.status}`);
+  return response.json();
+}
+
+/** Lists the directory again for the sidebar, as a folder may have gained a file since. */
+async function refreshTree() {
+  try {
+    drawTree(await fetchTree());
+  } catch (cause) {
+    element("tree-status").textContent = `Could not list the directory: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Gives the open Notebook a new filename. The session follows the file, and
+ * the address follows the session, so a reload opens the renamed one.
+ */
+async function renameNotebook() {
+  if (watching === undefined) return;
+  const current = watching.state.notebook;
+  const given = window.prompt("Rename this notebook to:", current)?.trim();
+  if (given === undefined || given === "" || given === current) return;
+  const to = given.endsWith(".md") ? given : `${given}.md`;
+  const status = element("session-status");
+  try {
+    const made = /** @type {NotebookEntry} */ (
+      await (await post("/api/notebooks/rename", { from: current, to })).json()
+    );
+    if (watching?.state.notebook === current) {
+      watching.state.notebook = made.path;
+      watching.state.title = made.title;
+      const next = hashFor(made.path, view);
+      if (location.hash !== next) location.hash = next;
+      else renderSession();
+    }
+    status.textContent = "";
+    await refreshTree();
+  } catch (cause) {
+    status.textContent = `Could not rename: ${describe(cause)}`;
+  }
+}
+
+/**
+ * The Notebook to begin editing once it is open: one just made, whose one
+ * empty Cell is there to be written.
+ * @type {string | undefined}
+ */
+let editOnOpen;
+
+/** A name for a new Notebook that none of those listed has. */
+function untitledName() {
+  const taken = new Set(listed.map((entry) => entry.path));
+  let name = "untitled.md";
+  for (let count = 2; taken.has(name); count += 1) name = `untitled-${count}.md`;
+  return name;
+}
+
+/**
+ * Makes a new Notebook under a name the author gives — `.md` added when it is
+ * left off — holding one empty Prompt Cell, and opens it to be written.
+ * @param {HTMLElement} status where to say what went wrong
+ */
+async function newNotebook(status) {
+  const given = window.prompt("Name the new notebook:", untitledName())?.trim();
+  if (given === undefined || given === "") return;
+  const to = given.endsWith(".md") ? given : `${given}.md`;
+  try {
+    const made = /** @type {NotebookEntry} */ (await (await post("/api/notebooks", { to })).json());
+    status.textContent = "";
+    editOnOpen = made.path;
+    location.hash = hashFor(made.path, "author");
+  } catch (cause) {
+    status.textContent = `Could not make the notebook: ${describe(cause)}`;
+  }
 }
 
 /**
@@ -572,6 +763,7 @@ function renderSession() {
     "author",
   );
   element("run-view").hidden = authoring;
+  element("add-cells").hidden = !authoring;
   if (!authoring) {
     element("segments").hidden = true;
     element("editor").hidden = true;
@@ -698,17 +890,26 @@ function apply(event) {
       status.textContent = view === "author" ? event.error : "";
       renderSession();
       return;
-    case "notebook-changed":
+    case "notebook-changed": {
       // Saved from here or elsewhere, or found changed on disk: what the
       // session holds now, which is what the next save is based on. A draft
       // on the page is left alone, since it is the author's work in progress.
+      // A rename is the same event with a new path, and the address follows it.
+      const moved = event.session.notebook !== asked;
       watching.state = event.session;
       if (draft !== undefined && !draft.saving && draft.base !== event.session.revision) {
         element("editor-status").textContent =
           `${event.session.notebook} has changed since this draft was begun. Save to write over it, or cancel to see what it holds now.`;
       }
       renderSession();
+      if (moved) {
+        asked = event.session.notebook;
+        const next = hashFor(event.session.notebook, view);
+        if (location.hash !== next) location.hash = next;
+        void refreshTree();
+      }
       return;
+    }
   }
 }
 
@@ -895,6 +1096,54 @@ function freshId() {
 }
 
 /**
+ * A Cell with nothing in it yet, to go after `before`, with a blank line ahead
+ * of it when that is another Cell, so the two fences do not abut.
+ * @param {"prompt" | "bash"} type
+ * @param {DraftSegment | undefined} before
+ * @returns {DraftSegment[]}
+ */
+function blankCell(type, before) {
+  /** @type {DraftCell} */
+  const cell = {
+    kind: "cell",
+    id: freshId(),
+    type,
+    body: "",
+    uses: "",
+    isolated: false,
+    model: "",
+    timeout: "",
+  };
+  return before?.kind === "cell" ? [{ kind: "prose", text: "\n" }, cell] : [cell];
+}
+
+/**
+ * Adds an empty Cell at the end of the Notebook, beginning the editing when it
+ * has not begun, and puts the cursor in it.
+ * @param {"prompt" | "bash"} type
+ */
+function addCell(type) {
+  if (watching === undefined) return;
+  if (draft === undefined) beginEditing();
+  const segments = draft?.segments;
+  if (segments === undefined) return;
+  segments.push(...blankCell(type, segments.at(-1)));
+  renderEditor();
+  focusSegment(segments.length - 1);
+}
+
+/**
+ * Puts the cursor in the text of the draft's segment at `at`, and brings it into view.
+ * @param {number} at
+ */
+function focusSegment(at) {
+  const body = element("draft").querySelector(".segments")?.children[at]?.querySelector("textarea");
+  if (body === null || body === undefined) return;
+  body.focus();
+  body.scrollIntoView({ block: "center" });
+}
+
+/**
  * The row that adds a segment after position `at` — before everything when
  * `at` is -1 — and the ways to move and remove the segment it is under.
  * @param {number} at
@@ -929,29 +1178,10 @@ function actionsFor(at) {
 
   /** @param {DraftSegment[]} added */
   const insert = (added) => segments.splice(at + 1, 0, ...added);
-  /**
-   * A Cell with nothing in it yet, with a blank line before it when it would
-   * follow another Cell, so the two fences do not abut.
-   * @param {"prompt" | "bash"} type
-   * @returns {DraftSegment[]}
-   */
-  const newCell = (type) => {
-    const cell = /** @type {DraftCell} */ ({
-      kind: "cell",
-      id: freshId(),
-      type,
-      body: "",
-      uses: "",
-      isolated: false,
-      model: "",
-      timeout: "",
-    });
-    return segments[at]?.kind === "cell" ? [{ kind: "prose", text: "\n" }, cell] : [cell];
-  };
   const inserts = make("span", "draft-insert", at >= 0 ? "Insert below:" : "Insert at the top:");
   inserts.append(
-    button("prompt cell", () => insert(newCell("prompt"))),
-    button("bash cell", () => insert(newCell("bash"))),
+    button("prompt cell", () => insert(blankCell("prompt", segments[at]))),
+    button("bash cell", () => insert(blankCell("bash", segments[at]))),
     button("prose", () => insert([{ kind: "prose", text: "\n" }])),
   );
   actions.append(inserts);
@@ -1009,7 +1239,6 @@ function renderDraftCell(cell, at) {
     field("model", cell.model, (value) => (cell.model = value)),
     field("timeout", cell.timeout, (value) => (cell.timeout = value)),
   );
-
   card.append(
     declaration,
     textarea(
@@ -1511,10 +1740,13 @@ let asked = "";
 
 /** @param {string} notebook */
 async function showSession(notebook) {
+  const editing = editOnOpen === notebook && view === "author";
+  editOnOpen = undefined;
   draft = undefined;
   element("draft").replaceChildren();
   element("editor").hidden = true;
   element("segments").hidden = view !== "author";
+  element("add-cells").hidden = view !== "author";
   element("author-controls").hidden = view !== "author";
   element("run-controls").hidden = view === "author";
   // Drawn once the Notebook is open; a Run button with no form yet says nothing.
@@ -1542,6 +1774,7 @@ async function showSession(notebook) {
     element("title").textContent = notebook;
     element("notebook").textContent = "";
     element("segments").replaceChildren();
+    element("add-cells").hidden = true;
     clearRunView();
     status.textContent = `Could not open the notebook: ${describe(cause)}`;
     return;
@@ -1551,6 +1784,10 @@ async function showSession(notebook) {
   watching = { state, socket: connect(state.id), sequence: state.sequence };
   status.textContent = "";
   renderSession();
+  if (editing) {
+    beginEditing();
+    focusSegment(0);
+  }
 }
 
 /**
@@ -1647,7 +1884,10 @@ function route() {
     watching?.socket.close();
     watching = undefined;
     void showList();
-  } else void showSession(asked);
+  } else {
+    void refreshTree();
+    void showSession(asked);
+  }
 }
 
 element("run-all").addEventListener("click", () => void startRun());
@@ -1659,8 +1899,13 @@ element("run-form").addEventListener("submit", (event) => {
 element("run-stop").addEventListener("click", () => void interrupt());
 element("edit").addEventListener("click", beginEditing);
 element("duplicate").addEventListener("click", () => void duplicate());
+element("rename").addEventListener("click", () => void renameNotebook());
 element("export").addEventListener("click", () => void exportRun());
 element("cancel").addEventListener("click", stopEditing);
+element("add-prompt").addEventListener("click", () => addCell("prompt"));
+element("add-bash").addEventListener("click", () => addCell("bash"));
+element("tree-new").addEventListener("click", () => void newNotebook(element("tree-status")));
+element("list-new").addEventListener("click", () => void newNotebook(element("status")));
 element("editor").addEventListener("submit", (event) => {
   event.preventDefault();
   void saveDraft();
