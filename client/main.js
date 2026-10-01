@@ -1325,6 +1325,7 @@ function renderCell(cell, session, running) {
   heading.append(make("span", "cell-status", cell.status));
   const rounds = roundsButton(cell);
   if (rounds !== undefined) heading.append(rounds);
+  heading.append(branchButton(cell));
   const runOne = make("button", "cell-run", "Run");
   runOne.type = "button";
   runOne.title = `Run ${cell.id} alone, carrying on from the last run`;
@@ -2219,6 +2220,81 @@ async function exportRun() {
     status.textContent = "";
   } catch (cause) {
     status.textContent = `Could not export: ${describe(cause)}`;
+  }
+}
+
+/**
+ * A button that forks a new notebook from this cell and opens it in a new
+ * browser tab. The notebook on this page stays where it is.
+ * @param {CellView} cell
+ * @returns {HTMLButtonElement}
+ */
+function branchButton(cell) {
+  const button = /** @type {HTMLButtonElement} */ (make("button", "cell-branch", "Branch"));
+  button.type = "button";
+  button.title = `Fork a new notebook from ${cell.id} and open it in a new tab`;
+  button.addEventListener("click", () => void branchFrom(cell.id));
+  return button;
+}
+
+/**
+ * The name offered for a branch taken at `cell`: this notebook's name with
+ * the cell's id before `.md`.
+ * @param {string} notebook
+ * @param {string} cell
+ */
+function branchName(notebook, cell) {
+  return notebook.replace(/(\.md)?$/, `-${cell}.md`);
+}
+
+/**
+ * Opens `href` in a new browser tab. Called with a window `window.open`
+ * already returned, when the browser handed one back; otherwise by clicking
+ * a link, which is what a browser does when it opens the tab and does not
+ * hand it back.
+ * @param {string} href
+ * @param {Window | null} opened
+ */
+function showInNewTab(href, opened) {
+  if (opened !== null) {
+    opened.location.href = href;
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+/**
+ * Writes a new notebook that keeps this one through `cell`, and opens that
+ * notebook in a new browser tab.
+ * @param {string} cell
+ */
+async function branchFrom(cell) {
+  if (watching === undefined) return;
+  const { notebook } = watching.state;
+  const to = window.prompt("Save a branch of this notebook as:", branchName(notebook, cell));
+  if (to === null || to.trim() === "") return;
+  // Still inside the click, before anything is awaited, so the browser will
+  // allow the new tab. The address is set once the branch exists.
+  const opened = window.open("about:blank", "_blank");
+  const status = element("session-status");
+  try {
+    const made = /** @type {NotebookEntry} */ (
+      await (await post("/api/notebooks/branch", { from: notebook, cell, to: to.trim() })).json()
+    );
+    const url = new URL(location.href);
+    url.hash = hashFor(made.path, "author");
+    showInNewTab(url.href, opened);
+    status.textContent = "";
+    void refreshTree();
+  } catch (cause) {
+    opened?.close();
+    status.textContent = `Could not branch: ${describe(cause)}`;
   }
 }
 

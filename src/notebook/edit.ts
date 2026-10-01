@@ -160,6 +160,36 @@ export function editOf(notebook: Notebook): NotebookEdit {
 }
 
 /**
+ * The edit that keeps the Notebook through `cell` and drops what follows, so
+ * a branch can be written as a Notebook of its own. A `uses` that names a
+ * Cell the branch no longer holds is dropped with that Cell, which is what
+ * leaves the branch a Notebook that can be opened. Nothing when `cell` is
+ * not one of this Notebook's Cells.
+ */
+export function branchAt(notebook: Notebook, cell: string): NotebookEdit | undefined {
+  const at = notebook.segments.findIndex(
+    (segment) => isCellSegment(segment) && segment.cell.id === cell,
+  );
+  if (at < 0) return undefined;
+  const kept = new Set(
+    notebook.segments
+      .slice(0, at + 1)
+      .flatMap((segment) => (isCellSegment(segment) ? [segment.cell.id] : [])),
+  );
+  const current = editOf(notebook);
+  return {
+    ...(current.frontmatter !== undefined ? { frontmatter: current.frontmatter } : {}),
+    segments: current.segments
+      .slice(0, at + 1)
+      .map((segment) =>
+        segment.kind === "cell"
+          ? { ...segment, uses: segment.uses.filter((used) => kept.has(used)) }
+          : segment,
+      ),
+  };
+}
+
+/**
  * The line terminator the Notebook is written with: whatever its first line
  * ends with, and LF for a Notebook that has no line ending in it yet.
  */

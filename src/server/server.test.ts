@@ -2596,6 +2596,104 @@ describe("duplicating a notebook", () => {
   });
 });
 
+describe("branching a notebook through a cell", () => {
+  it("writes a notebook that keeps the original through that cell, and leaves the original", async () => {
+    const server = await serve({ "essay.md": essay });
+
+    const response = await post(server, "/api/notebooks/branch", {
+      from: "essay.md",
+      cell: "look",
+      to: "drafts/essay-look.md",
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ path: "drafts/essay-look.md", title: "Essay" });
+    const cut = essay.indexOf("\n\nThen the agent");
+    expect(await readFile(join(server.directory, "drafts/essay-look.md"), "utf8")).toBe(
+      `${essay.slice(0, cut)}\n`,
+    );
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+    const session = await open(server, "drafts/essay-look.md");
+    expect(session.cells.map((cell) => cell.id)).toEqual(["look"]);
+    const listed = (await (await get(server, "/api/notebooks")).json()) as {
+      notebooks: unknown[];
+    };
+    expect(listed.notebooks).toEqual([
+      { path: "drafts/essay-look.md", title: "Essay" },
+      { path: "essay.md", title: "Essay" },
+    ]);
+  });
+
+  it("keeps the whole notebook when the cell is the last thing in it", async () => {
+    const server = await serve({ "essay.md": essay });
+
+    const response = await post(server, "/api/notebooks/branch", {
+      from: "essay.md",
+      cell: "think",
+      to: "essay-think.md",
+    });
+
+    expect(response.status).toBe(201);
+    expect(await readFile(join(server.directory, "essay-think.md"), "utf8")).toBe(essay);
+  });
+
+  it("drops a dependency on a cell the branch does not keep", async () => {
+    const ahead =
+      "```prompt id=a\nA\n```\n\n```prompt id=b uses=a,c\nB\n```\n\n```prompt id=c\nC\n```\n";
+    const server = await serve({ "ahead.md": ahead });
+
+    const response = await post(server, "/api/notebooks/branch", {
+      from: "ahead.md",
+      cell: "b",
+      to: "branch.md",
+    });
+
+    expect(response.status).toBe(201);
+    expect(await readFile(join(server.directory, "branch.md"), "utf8")).toBe(
+      "```prompt id=a\nA\n```\n\n```prompt id=b uses=a\nB\n```\n",
+    );
+    const session = await open(server, "branch.md");
+    expect(session.cells.map((cell) => ({ id: cell.id, uses: cell.uses }))).toEqual([
+      { id: "a", uses: [] },
+      { id: "b", uses: ["a"] },
+    ]);
+    expect(await readFile(join(server.directory, "ahead.md"), "utf8")).toBe(ahead);
+  });
+
+  it("never writes over a file that is already there", async () => {
+    const server = await serve({ "essay.md": essay, "hello.md": hello });
+
+    const response = await post(server, "/api/notebooks/branch", {
+      from: "essay.md",
+      cell: "look",
+      to: "hello.md",
+    });
+
+    expect(response.status).toBe(409);
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+  });
+
+  it("branches only a notebook that is there, at a cell it has, to a Markdown name", async () => {
+    const server = await serve({ "essay.md": essay, "notes.md": "Just notes.\n" });
+    const branch = (body: unknown) => post(server, "/api/notebooks/branch", body);
+
+    expect((await branch({ from: "missing.md", cell: "look", to: "copy.md" })).status).toBe(404);
+    expect((await branch({ from: "notes.md", cell: "look", to: "copy.md" })).status).toBe(404);
+    expect((await branch({ from: "../essay.md", cell: "look", to: "copy.md" })).status).toBe(404);
+    const missing = await branch({ from: "essay.md", cell: "absent", to: "copy.md" });
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).toBe("There is no cell absent in essay.md.\n");
+    expect((await branch({ from: "essay.md", cell: "look", to: "../copy.md" })).status).toBe(400);
+    expect((await branch({ from: "essay.md", cell: "look", to: "copy.txt" })).status).toBe(400);
+    expect((await branch({ from: "essay.md", cell: "look" })).status).toBe(400);
+    expect(
+      (await branch({ from: "essay.md", cell: "look", to: "copy.md", title: "x" })).status,
+    ).toBe(400);
+    expect((await get(server, "/api/notebooks/branch")).status).toBe(405);
+    expect(await readdir(server.directory)).toEqual(["essay.md", "notes.md"]);
+  });
+});
+
 describe("creating a notebook", () => {
   it("writes one empty prompt cell under the name, which is then listed and opens", async () => {
     const server = await serve();

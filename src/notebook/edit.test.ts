@@ -4,6 +4,7 @@ import {
   type NotebookEdit,
   type SegmentEdit,
   applyEdit,
+  branchAt,
   editOf,
   notebookWithModel,
 } from "./edit.js";
@@ -551,5 +552,34 @@ describe("setting a notebook's model", () => {
     expect(made.source).toContain(
       'model: "Oracle1/gemini-3.8-flash-high, gemini-3.7-flash-high"\n',
     );
+  });
+});
+
+describe("branching a notebook through a cell", () => {
+  const taken = (notebook: Notebook, cell: string) => {
+    const edit = branchAt(notebook, cell);
+    if (edit === undefined) throw new Error(`no cell ${cell}`);
+    return edited(notebook, edit);
+  };
+
+  it("keeps the notebook through that cell and drops what follows, to the byte", () => {
+    const notebook = valid(source);
+    const throughFirst = source.slice(0, source.indexOf("\n\nProse between"));
+    expect(taken(notebook, "first")).toBe(`${throughFirst}\n`);
+    const throughSecond = source.slice(0, source.indexOf("\n\nProse after."));
+    expect(taken(notebook, "second")).toBe(`${throughSecond}\n`);
+  });
+
+  it("drops a dependency on a cell the branch no longer holds", () => {
+    const ahead =
+      "```prompt id=a\nA\n```\n\n```prompt id=b uses=a,c\nB\n```\n\n```prompt id=c\nC\n```\n";
+    expect(taken(valid(ahead), "b")).toBe(
+      "```prompt id=a\nA\n```\n\n```prompt id=b uses=a\nB\n```\n",
+    );
+    expect(cellsOf(valid(taken(valid(ahead), "b")))[1]?.uses).toEqual(["a"]);
+  });
+
+  it("is nothing when the notebook has no such cell", () => {
+    expect(branchAt(valid(source), "missing")).toBeUndefined();
   });
 });

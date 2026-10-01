@@ -6,9 +6,9 @@
  * what keeps a project's README, which has fenced snippets but no Cells, out of
  * the list. A file that does not parse is left out too, since nothing can be
  * done with it here: the browser edits what parses, so a file broken in
- * another editor is fixed there. Copying a Notebook, and making a new one,
- * live here too, being a matter of the files under the directory rather than
- * of any session.
+ * another editor is fixed there. Copying a Notebook, branching one through a
+ * Cell, and making a new one live here too, being a matter of the files under
+ * the directory rather than of any session.
  */
 
 import { constants } from "node:fs";
@@ -16,7 +16,7 @@ import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "nod
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import { formatDiagnostics } from "../notebook/diagnostic.js";
-import { applyEdit, notebookWithModel } from "../notebook/edit.js";
+import { applyEdit, branchAt, notebookWithModel } from "../notebook/edit.js";
 import { type Notebook, cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
 import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
@@ -172,6 +172,66 @@ export async function copyNotebook(directory: string, from: string, to: string):
       ...(entry.model !== undefined ? { model: entry.model } : {}),
     },
   };
+}
+
+/** How branching a Notebook through one of its Cells went. */
+export type Branched =
+  | { readonly kind: "branched"; readonly entry: NotebookEntry }
+  /** No such Notebook under the served directory. */
+  | { readonly kind: "absent" }
+  /** The Notebook is there, and it has no Cell by that id. */
+  | { readonly kind: "missing-cell" }
+  /** The new name is not one a Notebook under the served directory can have. */
+  | { readonly kind: "invalid"; readonly problem: string }
+  /** A file is already there under the new name. */
+  | { readonly kind: "exists" }
+  /** Keeping the Notebook through that Cell would not leave a Notebook that can be opened. */
+  | { readonly kind: "unreadable"; readonly problem: string };
+
+/**
+ * Writes a new Notebook at `to` that keeps the Notebook at `from` through the
+ * Cell `cell` — the frontmatter, and every Prose and Cell up to and including
+ * that one — and drops what follows. A Dependency on a Cell that was dropped
+ * is dropped with it. The original is left as it is, and the branch has no
+ * Runs until it is run: the original's are the original's history. Never over
+ * a file that is already there; a directory the new name needs is made.
+ */
+export async function branchNotebook(
+  directory: string,
+  from: string,
+  cell: string,
+  to: string,
+): Promise<Branched> {
+  const source = fileWithin(directory, from);
+  if (source === undefined) return { kind: "absent" };
+  const named = notebookTarget(directory, to);
+  if ("problem" in named) return { kind: "invalid", problem: named.problem };
+  const target = named.file;
+
+  let text: string;
+  try {
+    text = await readFile(source, "utf8");
+  } catch (cause) {
+    const { code } = cause as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") return { kind: "absent" };
+    throw cause;
+  }
+  const parsed = parseNotebook(text);
+  if (!parsed.ok || cellsOf(parsed.notebook).length === 0) return { kind: "absent" };
+
+  const edit = branchAt(parsed.notebook, cell);
+  if (edit === undefined) return { kind: "missing-cell" };
+  const made = applyEdit(parsed.notebook, edit);
+  if (!made.ok) return { kind: "unreadable", problem: formatDiagnostics(made.errors) };
+
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await writeFile(target, made.source, { encoding: "utf8", flag: "wx" });
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") return { kind: "exists" };
+    throw cause;
+  }
+  return { kind: "branched", entry: entryOf(directory, target, made.notebook) };
 }
 
 /** How making a new Notebook went. */

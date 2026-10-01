@@ -91,6 +91,8 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 
 **Run all** runs every cell, in dependency order. **Run** on one cell runs that cell alone and carries on from the last run, so it still sees what earlier cells said. Cells that depend on it are not run again. They are marked stale, which means their previous answer is out of date.
 
+**Branch**, on each cell, asks for a filename and writes a new notebook that keeps this one through that cell: the prose and cells before it, and the cell itself. Everything after that cell is left out, and a dependency on a cell that was left out is left out too. The notebook you branched from stays as it is, in this tab. The new one opens in a new browser tab, and it has no runs until you run it. The suggested name is the current filename with the cell's id before `.md`.
+
 **Interrupt** stops the cell that is running. Cells that had already finished keep their results. Cells that had not started do not run.
 
 **Edit** turns the notebook into a form:

@@ -46,7 +46,13 @@ import {
   saveProviders,
   testConfiguredModel,
 } from "./models.js";
-import { copyNotebook, createNotebook, listNotebooks, listTree } from "./notebooks.js";
+import {
+  branchNotebook,
+  copyNotebook,
+  createNotebook,
+  listNotebooks,
+  listTree,
+} from "./notebooks.js";
 import {
   type NotebookSessions,
   type RunRequest,
@@ -81,6 +87,8 @@ const NOTEBOOKS_ROUTE = "/api/notebooks";
 const TREE_ROUTE = "/api/tree";
 /** A Notebook's file renamed, Runs included, the session following when one holds it. */
 const RENAME_ROUTE = "/api/notebooks/rename";
+/** A new Notebook that keeps another through one Cell and drops what follows. */
+const BRANCH_ROUTE = "/api/notebooks/branch";
 /** The model a Notebook names, chosen from the models the user can already call. */
 const NOTEBOOK_MODEL_ROUTE = "/api/notebooks/model";
 /** Pi's model settings: the default, and the custom providers. */
@@ -535,6 +543,54 @@ async function addNotebook(
       return;
     case "copied":
       json(response, 201, copied.entry);
+      return;
+  }
+}
+
+/**
+ * Writes a Notebook that keeps another through one Cell, under a new name, so
+ * the rest of the original can stay while the branch is taken somewhere else.
+ */
+async function branchFromCell(
+  directory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["from", "cell", "to"]) ||
+    typeof body.from !== "string" ||
+    typeof body.cell !== "string" ||
+    typeof body.to !== "string"
+  ) {
+    reply(
+      response,
+      400,
+      "The request must name the notebook, the cell to branch from, and the new notebook, as JSON.\n",
+    );
+    return;
+  }
+
+  const branched = await branchNotebook(directory, body.from, body.cell, body.to);
+  switch (branched.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "missing-cell":
+      reply(response, 404, `There is no cell ${body.cell} in ${body.from}.\n`);
+      return;
+    case "invalid":
+      reply(response, 400, `${branched.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${body.to}.\n`);
+      return;
+    case "unreadable":
+      reply(response, 422, `${branched.problem}\n`);
+      return;
+    case "branched":
+      json(response, 201, branched.entry);
       return;
   }
 }
@@ -1094,6 +1150,11 @@ async function handle(
   }
   if (pathname === RENAME_ROUTE) {
     if (permitted(WRITES, request, response)) await renameOpen(served, request, response);
+    return;
+  }
+  if (pathname === BRANCH_ROUTE) {
+    if (permitted(WRITES, request, response))
+      await branchFromCell(served.directory, request, response);
     return;
   }
   if (pathname === NOTEBOOK_MODEL_ROUTE) {
