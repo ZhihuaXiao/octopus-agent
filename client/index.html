@@ -126,9 +126,10 @@
           Pi's model settings for this user. Search for a model, save it as the default, and store
           an API key for its provider. <strong>Show configured</strong> lists only models whose
           provider already has a stored key, and models from custom providers you added.
-          <strong>Show all</strong> brings the full list back. A notebook or a cell that names its
-          own model still uses that. A key already stored is not shown; leave the field blank to
-          keep it.
+          <strong>Show all</strong> brings the full list back. <strong>Test</strong>, beside a
+          configured model, asks it for one token and says whether it answered. A notebook or a cell
+          that names its own model still uses that. A key already stored is not shown; leave the
+          field blank to keep it.
         </p>
         <fieldset>
           <legend>Default</legend>
@@ -173,7 +174,8 @@
       <p class="hint">
         Models whose provider has a stored API key, and models from custom providers you added. The
         one you pick is written into this notebook. A cell that names its own model still uses that.
-        <strong>Use the default</strong> clears it.
+        <strong>Use the default</strong> clears it. <strong>Test</strong> asks that model for one
+        token and does not change the notebook.
       </p>
       <label
         >Search

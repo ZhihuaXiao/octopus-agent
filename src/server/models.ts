@@ -276,6 +276,112 @@ export async function isConfiguredModel(
   return { ok: true, value: providers.value.some((item) => item.id === provider) };
 }
 
+/**
+ * What one availability check found. `inputTokens` and `outputTokens` are what
+ * the provider reported for the check itself.
+ */
+export interface ModelProbe {
+  readonly available: boolean;
+  /** Why it did not answer, when `available` is false. */
+  readonly problem?: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+/**
+ * The whole check: one character in, and one token allowed out. Thinking is
+ * left off, so a provider that can answer at that size spends nothing more.
+ * One is the smallest cap pi will send.
+ */
+const PROBE_TEXT = ".";
+const PROBE_TOKENS = 1;
+const PROBE_TIMEOUT_MS = 30_000;
+
+type ProbeMessage = Awaited<ReturnType<ModelRuntime["completeSimple"]>>;
+
+const modelAnswered = (message: ProbeMessage) =>
+  message.stopReason === "stop" ||
+  message.stopReason === "length" ||
+  message.stopReason === "toolUse";
+
+/**
+ * Asks a configured model whether it answers. The model must be one the user
+ * can already call: its provider has a stored key, or it is a custom provider
+ * they added. Anything else is refused before a request is made.
+ */
+export async function testConfiguredModel(
+  agentDirectory: string,
+  provider: string,
+  id: string,
+): Promise<ModelResult<ModelProbe>> {
+  if (!providerName.test(provider) || id.trim() === "" || id !== id.trim()) {
+    return { ok: false, problem: "Name the model as provider and model." };
+  }
+  const configured = await isConfiguredModel(agentDirectory, provider, id);
+  if (!configured.ok) return configured;
+  if (!configured.value) {
+    return {
+      ok: false,
+      problem: `No configured model ${provider}/${id}. Choose one whose provider has a stored key, or a custom provider.`,
+    };
+  }
+
+  const runtime = await openRuntime(agentDirectory);
+  if (!runtime.ok) return runtime;
+  const model = runtime.value.getModel(provider, id);
+  if (model === undefined) return { ok: false, problem: `No model ${provider}/${id}.` };
+
+  let message: ProbeMessage;
+  try {
+    message = await runtime.value.completeSimple(
+      model,
+      { messages: [{ role: "user", content: PROBE_TEXT, timestamp: Date.now() }] },
+      {
+        maxTokens: PROBE_TOKENS,
+        maxRetries: 0,
+        cacheRetention: "none",
+        timeoutMs: PROBE_TIMEOUT_MS,
+        // Pi names the cap `max_completion_tokens` for a generic OpenAI-compatible
+        // URL. Many proxies only read `max_tokens`, and would otherwise answer at
+        // their own length. Official OpenAI rejects having both, so it is left as pi sent it.
+        onPayload: (payload, probed) => {
+          if (probed.api !== "openai-completions" || probed.baseUrl.includes("api.openai.com")) {
+            return undefined;
+          }
+          if (!isRecord(payload) || typeof payload.max_completion_tokens !== "number") {
+            return undefined;
+          }
+          if (payload.max_tokens !== undefined) return undefined;
+          return { ...payload, max_tokens: payload.max_completion_tokens };
+        },
+      },
+    );
+  } catch (cause) {
+    return {
+      ok: true,
+      value: {
+        available: false,
+        problem: cause instanceof Error ? cause.message : String(cause),
+        inputTokens: 0,
+        outputTokens: 0,
+      },
+    };
+  }
+
+  const available = modelAnswered(message);
+  return {
+    ok: true,
+    value: {
+      available,
+      ...(available
+        ? {}
+        : { problem: message.errorMessage ?? `The model stopped: ${message.stopReason}.` }),
+      inputTokens: message.usage.input,
+      outputTokens: message.usage.output,
+    },
+  };
+}
+
 /** Stores an API key for a provider the way pi's `/login` does, in `auth.json`. */
 export async function saveProviderKey(
   agentDirectory: string,

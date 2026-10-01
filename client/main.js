@@ -2300,6 +2300,72 @@ const modelLabel = (model) =>
     ? `${model.provider}/${model.id} — ${model.name}`
     : `${model.provider}/${model.id}`;
 
+/**
+ * Whether `model` is one the user can already call: its provider has a stored
+ * key, or it is a custom provider they added.
+ * @param {ModelChoice} model
+ * @param {ModelPage} page
+ */
+function isConfiguredChoice(model, page) {
+  if (page.keyed?.includes(model.provider) === true) return true;
+  return page.providers.some((provider) => provider.id !== "" && provider.id === model.provider);
+}
+
+/**
+ * One row: choosing the model calls `onChoose`. A configured model also has
+ * Test, which asks it for one token and says whether it answered.
+ * @param {ModelChoice} model
+ * @param {ModelPage | undefined} page
+ * @param {{ current: boolean, onChoose: () => void }} choice
+ */
+function modelChoiceItem(model, page, choice) {
+  const item = document.createElement("li");
+  const button = make("button", "", modelLabel(model));
+  button.type = "button";
+  if (choice.current) button.setAttribute("aria-current", "true");
+  button.addEventListener("click", choice.onChoose);
+  item.append(button);
+  if (page !== undefined && isConfiguredChoice(model, page)) {
+    item.className = "model-row";
+    const test = make("button", "model-test", "Test");
+    test.type = "button";
+    test.title = "Ask this model for one token, to see whether it answers";
+    const status = make("span", "model-test-status", "");
+    status.setAttribute("aria-live", "polite");
+    test.addEventListener("click", () => void testConfiguredModel(model, test, status));
+    item.append(test, status);
+  }
+  return item;
+}
+
+/**
+ * @param {ModelChoice} model
+ * @param {HTMLButtonElement} button
+ * @param {HTMLElement} status
+ */
+async function testConfiguredModel(model, button, status) {
+  button.disabled = true;
+  status.textContent = "Testing…";
+  status.title = "";
+  try {
+    /** @type {{ available: boolean, problem?: string, inputTokens: number, outputTokens: number }} */
+    const result = await (
+      await post("/api/models/test", { provider: model.provider, model: model.id })
+    ).json();
+    const text = result.available
+      ? `Available, ${result.inputTokens} in, ${result.outputTokens} out`
+      : (result.problem ?? "Unavailable");
+    status.textContent = text;
+    status.title = text;
+  } catch (cause) {
+    const text = describe(cause);
+    status.textContent = text;
+    status.title = text;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function chosenText() {
   const chosen = element("models-chosen");
   if (chosenModel === undefined) {
@@ -2335,26 +2401,22 @@ function renderMatches(query) {
     .filter((model) => needle === "" || modelLabel(model).toLowerCase().includes(needle))
     .sort((a, b) => rank(a, needle) - rank(b, needle));
   list.replaceChildren(
-    ...models.map((model) => {
-      const item = document.createElement("li");
-      const button = make("button", "", modelLabel(model));
-      button.type = "button";
-      const current = chosenModel?.provider === model.provider && chosenModel.id === model.id;
-      if (current) button.setAttribute("aria-current", "true");
-      button.addEventListener("click", () => {
-        chosenModel = { provider: model.provider, id: model.id };
-        const key = /** @type {HTMLInputElement} */ (element("models-key"));
-        key.value = "";
-        key.placeholder =
-          modelPage?.keyed?.includes(model.provider) === true
-            ? "Leave blank to keep the stored key"
-            : "Paste an API key";
-        chosenText();
-        renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
-      });
-      item.append(button);
-      return item;
-    }),
+    ...models.map((model) =>
+      modelChoiceItem(model, modelPage, {
+        current: chosenModel?.provider === model.provider && chosenModel.id === model.id,
+        onChoose: () => {
+          chosenModel = { provider: model.provider, id: model.id };
+          const key = /** @type {HTMLInputElement} */ (element("models-key"));
+          key.value = "";
+          key.placeholder =
+            modelPage?.keyed?.includes(model.provider) === true
+              ? "Leave blank to keep the stored key"
+              : "Paste an API key";
+          chosenText();
+          renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
+        },
+      }),
+    ),
   );
   if (models.length === 0) {
     list.append(
@@ -2562,16 +2624,12 @@ function renderNotebookModelChoices(models, query) {
 
   list.replaceChildren(
     none,
-    ...matched.map((model) => {
-      const item = document.createElement("li");
-      const named = `${model.provider}/${model.id}`;
-      const button = make("button", "", modelLabel(model));
-      button.type = "button";
-      if (named === modelCurrent) button.setAttribute("aria-current", "true");
-      button.addEventListener("click", () => void chooseNotebookModel(named));
-      item.append(button);
-      return item;
-    }),
+    ...matched.map((model) =>
+      modelChoiceItem(model, notebookModels, {
+        current: `${model.provider}/${model.id}` === modelCurrent,
+        onChoose: () => void chooseNotebookModel(`${model.provider}/${model.id}`),
+      }),
+    ),
   );
   if (matched.length === 0) {
     list.append(

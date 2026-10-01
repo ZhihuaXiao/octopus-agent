@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { request } from "node:http";
+import { createServer as createHttpServer, request } from "node:http";
 import { createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -3098,7 +3098,149 @@ describe("model settings", () => {
     expect(JSON.stringify(again)).not.toContain("test-key-value");
     expect((await post(server, "/api/models/key", { provider: "anthropic" })).status).toBe(400);
   });
+
+  it("will not test a model that is not configured", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+    const page = (await (await get(server, "/api/models")).json()) as {
+      models: { provider: string; id: string }[];
+    };
+    const model = page.models.find((candidate) => candidate.provider === "anthropic");
+    expect(model).toBeDefined();
+
+    const refused = await post(server, "/api/models/test", {
+      provider: model?.provider,
+      model: model?.id,
+    });
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toMatch(/configured/);
+    expect((await post(server, "/api/models/test", { provider: "anthropic" })).status).toBe(400);
+    expect((await get(server, "/api/models/test")).status).toBe(405);
+  });
+
+  it("asks a configured model for one token, and reports one that does not answer", async () => {
+    const chunks = [
+      `data: ${JSON.stringify({
+        id: "chatcmpl-test",
+        object: "chat.completion.chunk",
+        choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-test",
+        object: "chat.completion.chunk",
+        choices: [{ index: 0, delta: { content: "." }, finish_reason: null }],
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-test",
+        object: "chat.completion.chunk",
+        choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      })}\n\n`,
+      "data: [DONE]\n\n",
+    ].join("");
+    const answering = await completionsAt(200, chunks);
+    const refusing = await completionsAt(
+      401,
+      JSON.stringify({ error: { message: "nope", type: "auth" } }),
+      "application/json",
+    );
+    try {
+      const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+      const server = await serve({}, unusedAgent(), { agentDirectory });
+      const provider = {
+        id: "local",
+        api: "openai-completions",
+        apiKey: "local-secret",
+        models: ["m"],
+      };
+
+      expect(
+        (
+          await post(server, "/api/models/providers", {
+            providers: [{ ...provider, baseUrl: answering.url }],
+          })
+        ).status,
+      ).toBe(204);
+      const tested = await post(server, "/api/models/test", { provider: "local", model: "m" });
+      expect(tested.status).toBe(200);
+      const result = (await tested.json()) as {
+        available: boolean;
+        inputTokens: number;
+        outputTokens: number;
+      };
+      expect(result).toEqual({ available: true, inputTokens: 1, outputTokens: 1 });
+      expect(JSON.stringify(result)).not.toContain("local-secret");
+      expect(answering.bodies).toHaveLength(1);
+      const sent = answering.bodies[0] as {
+        max_tokens?: number;
+        max_completion_tokens?: number;
+        messages?: { role?: string; content?: unknown }[];
+        tools?: unknown;
+        reasoning_effort?: unknown;
+      };
+      expect(sent.max_tokens).toBe(1);
+      expect(sent.max_completion_tokens).toBe(1);
+      expect(sent.tools).toBeUndefined();
+      expect(sent.reasoning_effort).toBeUndefined();
+      expect(sent.messages).toHaveLength(1);
+      expect(sent.messages?.[0]?.role).toBe("user");
+      expect(JSON.stringify(sent.messages?.[0]?.content)).toBe(JSON.stringify("."));
+
+      expect(
+        (
+          await post(server, "/api/models/providers", {
+            providers: [{ ...provider, baseUrl: refusing.url }],
+          })
+        ).status,
+      ).toBe(204);
+      const failed = await post(server, "/api/models/test", { provider: "local", model: "m" });
+      expect(failed.status).toBe(200);
+      const problem = (await failed.json()) as { available: boolean; problem?: string };
+      expect(problem.available).toBe(false);
+      expect(problem.problem).toMatch(/nope/);
+      expect(refusing.bodies).toHaveLength(1);
+    } finally {
+      await answering.close();
+      await refusing.close();
+    }
+  });
 });
+
+/** A local chat-completions endpoint, so a probe can be checked without a provider. */
+function completionsAt(
+  status: number,
+  body: string,
+  type = "text/event-stream",
+): Promise<{ url: string; bodies: unknown[]; close: () => Promise<void> }> {
+  const bodies: unknown[] = [];
+  const http = createHttpServer((incoming, response) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+    incoming.on("end", () => {
+      bodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
+      response.writeHead(status, { "content-type": type });
+      response.end(body);
+    });
+  });
+  return new Promise((resolve, reject) => {
+    http.once("error", reject);
+    http.listen(0, "127.0.0.1", () => {
+      const address = http.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("no port"));
+        return;
+      }
+      resolve({
+        url: `http://127.0.0.1:${address.port}/v1`,
+        bodies,
+        close: () =>
+          new Promise((done, fail) => {
+            http.close((error) => (error ? fail(error) : done()));
+          }),
+      });
+    });
+  });
+}
 
 describe("a notebook's model", () => {
   const provider = {

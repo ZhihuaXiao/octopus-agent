@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, and the model a Notebook names — are HTTP
+ * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, and the model a Notebook names — are HTTP
  * requests, each with an answer; what a Run produces is a stream, and goes to
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
@@ -44,6 +44,7 @@ import {
   saveDefaultModel,
   saveProviderKey,
   saveProviders,
+  testConfiguredModel,
 } from "./models.js";
 import { copyNotebook, createNotebook, listNotebooks, listTree } from "./notebooks.js";
 import {
@@ -87,6 +88,8 @@ const MODELS_ROUTE = "/api/models";
 const MODELS_DEFAULT_ROUTE = "/api/models/default";
 const MODELS_KEY_ROUTE = "/api/models/key";
 const MODELS_PROVIDERS_ROUTE = "/api/models/providers";
+/** One token sent to a configured model, to see whether it answers. */
+const MODELS_TEST_ROUTE = "/api/models/test";
 /** The query the startup URL carries the token in, and the cookie a browser carries its Connection in. */
 const TOKEN_QUERY = "token";
 const CONNECTION_COOKIE = "octo_connection";
@@ -273,6 +276,30 @@ async function saveModelProviders(
   }
   response.writeHead(204);
   response.end();
+}
+
+/** Asks a configured model for one token and reports whether it answered. */
+async function testModel(
+  agentDirectory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["provider", "model"]) ||
+    typeof body.provider !== "string" ||
+    typeof body.model !== "string"
+  ) {
+    reply(response, 400, "The request must name a provider and a model, as JSON.\n");
+    return;
+  }
+  const tested = await testConfiguredModel(agentDirectory, body.provider, body.model);
+  if (!tested.ok) {
+    reply(response, 422, `${tested.problem}\n`);
+    return;
+  }
+  json(response, 200, tested.value);
 }
 
 async function saveModelKey(
@@ -1063,6 +1090,12 @@ async function handle(
   if (pathname === MODELS_PROVIDERS_ROUTE) {
     if (permitted(WRITES, request, response)) {
       await saveModelProviders(served.agentDirectory, request, response);
+    }
+    return;
+  }
+  if (pathname === MODELS_TEST_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await testModel(served.agentDirectory, request, response);
     }
     return;
   }
