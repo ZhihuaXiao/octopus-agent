@@ -102,6 +102,8 @@ const PROMOTE_ROUTE = /^\/api\/chats\/([^/]+)\/promote$/;
 const DELETE_CHAT_ROUTE = /^\/api\/chats\/([^/]+)$/;
 /** A Notebook Session by id, and what may be asked of it. */
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export))?$/;
+/** The model rounds of one Cell that has run, read from the Agent Session. */
+const ROUNDS_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/rounds$/;
 /** The query naming which Run an export is of, when not the latest. */
 const RUN_QUERY = "run";
 /** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
@@ -729,6 +731,28 @@ async function openSession(
   }
 }
 
+/** The model rounds of one Cell, as JSON, once that Cell has run. */
+async function serveRounds(
+  sessions: NotebookSessions,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!permitted(READS, request, response)) return;
+  const session = sessions.get(matched[1] ?? "");
+  const cell = decoded(matched[2] ?? "");
+  if (session === undefined || cell === undefined) {
+    notFound(response);
+    return;
+  }
+  const read = await session.rounds(cell);
+  if (!read.ok) {
+    reply(response, 422, `${read.problem}\n`);
+    return;
+  }
+  json(response, 200, read.value);
+}
+
 async function serveSession(
   sessions: NotebookSessions,
   matched: RegExpExecArray,
@@ -1049,6 +1073,11 @@ async function handle(
     }
   }
 
+  const rounds = ROUNDS_ROUTE.exec(pathname);
+  if (rounds !== null) {
+    await serveRounds(served.sessions, rounds, request, response);
+    return;
+  }
   const matched = SESSION_ROUTE.exec(pathname);
   if (matched !== null) {
     await serveSession(served.sessions, matched, request, response, searchParams);

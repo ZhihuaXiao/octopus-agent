@@ -46,6 +46,7 @@ import {
   titleOf,
 } from "../notebook/notebook.js";
 import type { CellRecord, CellStatus, RunEnvironment, RunRecord } from "../run/record.js";
+import { type RoundsResult, readCellRounds } from "../run/rounds.js";
 import {
   type RefusalKind,
   type RunEvent,
@@ -262,6 +263,12 @@ export interface NotebookSession {
    * pair names no file there, a climb out of the Run's directory included.
    */
   runFile(run: string, file: string): Promise<string | undefined>;
+  /**
+   * The model rounds of a Prompt Cell that has run: the question, then each
+   * provider reply and the tool results between them. Read from the Agent
+   * Session the Run left, at the Anchor the Cell ended on.
+   */
+  rounds(cellId: string): Promise<RoundsResult>;
   /**
    * The Notebook and the results of one of its Runs — `run`, or the latest to
    * have finished — as one document to be handed to someone who will never
@@ -738,6 +745,32 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     },
 
     runFile: (run, file) => runFile(path, run, file),
+
+    async rounds(cellId) {
+      const found = results.get(cellId);
+      if (found === undefined) return { ok: false, problem: "This cell has not run." };
+      if (found.record.type !== "prompt") {
+        return { ok: false, problem: "A bash cell does not call a model." };
+      }
+      const anchor = found.record.anchor;
+      if (anchor === undefined) {
+        return {
+          ok: false,
+          problem:
+            "This cell left no model rounds. An isolated cell's session is discarded when it finishes, and a cell that failed before the model answered has none.",
+        };
+      }
+      const record = await readRunRecord(path, found.run);
+      if (record?.agentSession === undefined) {
+        return { ok: false, problem: "The agent session for this cell is not on disk." };
+      }
+      return readCellRounds(
+        record.agentSession,
+        { ...record.anchors, [cellId]: anchor },
+        cellId,
+        cellsOf(parsed),
+      );
+    },
 
     relocate(nextPath, nextNotebook) {
       path = nextPath;

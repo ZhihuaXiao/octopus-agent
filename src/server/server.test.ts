@@ -3364,3 +3364,29 @@ describe("a notebook's model", () => {
     expect(await saved.json()).toMatchObject({ model: `${model?.provider}/${model?.id}` });
   });
 });
+
+describe("a cell's model rounds", () => {
+  it("refuses a cell that has not run, and one whose session was not kept", async () => {
+    const server = await serve({ "hello.md": hello });
+    const session = await open(server, "hello.md");
+
+    const early = await get(server, `/api/sessions/${session.id}/cells/greet/rounds`);
+    expect(early.status).toBe(422);
+    expect(await early.text()).toMatch(/has not run/);
+    expect((await post(server, `/api/sessions/${session.id}/cells/greet/rounds`, {})).status).toBe(
+      405,
+    );
+
+    const agent = createScriptedAgent([{ text: "Hello, world" }]);
+    const running = await serve({ "hello.md": hello }, agent);
+    const opened = await open(running, "hello.md");
+    const browser = await watch(running, opened.id);
+    expect(await run(running, opened.id)).toBe(202);
+    await browser.next("run-ended");
+    await browser.close();
+
+    const later = await get(running, `/api/sessions/${opened.id}/cells/greet/rounds`);
+    expect(later.status).toBe(422);
+    expect(await later.text()).toMatch(/not on disk/);
+  });
+});

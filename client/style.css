@@ -347,6 +347,7 @@ h2 {
   border-color: #3b82f6;
 }
 
+#cell-rounds-dialog,
 #notebook-model-dialog {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 0.4rem;
@@ -356,10 +357,19 @@ h2 {
   background: canvas;
 }
 
+#cell-rounds-dialog::backdrop,
 #notebook-model-dialog::backdrop {
   background: color-mix(in srgb, canvastext 40%, transparent);
 }
 
+#cell-rounds-dialog {
+  max-width: 44rem;
+  width: calc(100vw - 2rem);
+  max-height: 85vh;
+  overflow: auto;
+}
+
+#cell-rounds-dialog h2,
 #notebook-model-dialog h2 {
   margin: 0;
 }
@@ -379,6 +389,62 @@ h2 {
   border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
   border-radius: 0.3rem;
   padding: 0.3rem 0.5rem;
+}
+
+.rounds-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.rounds-heading h2 {
+  margin: 0;
+}
+
+.round {
+  margin: 0.8rem 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.round h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+}
+
+.round-model,
+.round-usage {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.round-usage {
+  margin: 0 0 0.3rem;
+}
+
+.round pre,
+.round-thinking,
+.round-result {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.round-tool {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 0.3rem;
+}
+
+.round-tool-name {
+  margin: 0 0 0.3rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
 }
 
 .models-chosen {
@@ -662,7 +728,8 @@ button:disabled {
   color: #f59e0b;
 }
 
-.cell-run {
+.cell-run,
+.cell-rounds {
   font-size: 0.8rem;
   padding: 0.1rem 0.6rem;
 }

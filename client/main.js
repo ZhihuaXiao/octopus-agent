@@ -1180,6 +1180,116 @@ function markdownBlocks(text) {
 }
 
 /**
+ * Shown once a prompt cell has run. Opens the model rounds of that turn.
+ * @param {CellView} cell
+ * @returns {HTMLButtonElement | undefined}
+ */
+function roundsButton(cell) {
+  if (cell.type !== "prompt" || cell.run === undefined) return undefined;
+  if (cell.status === "idle" || cell.status === "running") return undefined;
+  const button = make("button", "cell-rounds", "Rounds");
+  button.type = "button";
+  button.title = "The model rounds of this cell's turn";
+  button.addEventListener("click", () => void showRounds(cell.id));
+  return button;
+}
+
+/** @param {unknown} value */
+function roundText(value) {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * @param {{
+ *   query: string,
+ *   rounds: {
+ *     kind: "model" | "you",
+ *     text: string,
+ *     thinking?: string,
+ *     model?: string,
+ *     inputTokens?: number,
+ *     outputTokens?: number,
+ *     toolCalls: { name: string, input: unknown, result?: string, isError?: boolean }[],
+ *   }[],
+ * }} value
+ */
+function renderRounds(value) {
+  const body = element("cell-rounds-body");
+  const query = make("section", "round");
+  query.append(make("h3", "", "You"), make("p", "", value.query === "" ? "(empty)" : value.query));
+  /** @type {Node[]} */
+  const nodes = [query];
+  if (value.rounds.length === 0) {
+    nodes.push(make("p", "", "The model did not answer."));
+  }
+  let count = 0;
+  for (const round of value.rounds) {
+    const block = make("section", "round");
+    if (round.kind === "you") {
+      block.append(make("h3", "", "You"), make("p", "", round.text));
+      nodes.push(block);
+      continue;
+    }
+    count += 1;
+    const heading = make("h3", "", `Round ${count}`);
+    if (round.model !== undefined) heading.append(make("span", "round-model", round.model));
+    block.append(heading);
+    const spent = [round.inputTokens, round.outputTokens].filter((n) => n !== undefined);
+    if (spent.length === 2) {
+      block.append(make("p", "round-usage", `${round.inputTokens} in, ${round.outputTokens} out`));
+    }
+    if (round.thinking !== undefined && round.thinking !== "") {
+      const thought = document.createElement("details");
+      thought.append(
+        make("summary", "", "Thinking"),
+        make("pre", "round-thinking", round.thinking),
+      );
+      block.append(thought);
+    }
+    const said = make("div", "cell-output markdown");
+    said.append(...markdownBlocks(round.text === "" ? "" : round.text));
+    if (round.text === "") said.append(make("p", "", "(no text)"));
+    block.append(said);
+    for (const call of round.toolCalls) {
+      const tool = make("div", "round-tool");
+      tool.append(
+        make("p", "round-tool-name", call.isError === true ? `${call.name} failed` : call.name),
+      );
+      tool.append(make("pre", "", roundText(call.input)));
+      if (call.result !== undefined) tool.append(make("pre", "round-result", call.result));
+      block.append(tool);
+    }
+    nodes.push(block);
+  }
+  body.replaceChildren(...nodes);
+}
+
+/** @param {string} cell */
+async function showRounds(cell) {
+  if (watching === undefined) return;
+  const dialog = /** @type {HTMLDialogElement} */ (element("cell-rounds-dialog"));
+  element("cell-rounds-title").textContent = cell;
+  element("cell-rounds-body").replaceChildren(make("p", "", "Loading…"));
+  if (!dialog.open) dialog.showModal();
+  try {
+    const response = await request(
+      `/api/sessions/${encodeURIComponent(watching.state.id)}/cells/${encodeURIComponent(cell)}/rounds`,
+    );
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    renderRounds(await response.json());
+  } catch (cause) {
+    element("cell-rounds-body").replaceChildren(make("p", "", describe(cause)));
+  }
+}
+
+/**
  * Puts a Cell's reply into `node`: the characters as written, or Markdown.
  * @param {Element} node
  * @param {string} text
@@ -1213,6 +1323,8 @@ function renderCell(cell, session, running) {
   if (cell.timeout !== undefined)
     heading.append(make("span", "cell-attribute", `timeout ${formatDuration(cell.timeout)}`));
   heading.append(make("span", "cell-status", cell.status));
+  const rounds = roundsButton(cell);
+  if (rounds !== undefined) heading.append(rounds);
   const runOne = make("button", "cell-run", "Run");
   runOne.type = "button";
   runOne.title = `Run ${cell.id} alone, carrying on from the last run`;
@@ -2255,6 +2367,8 @@ function renderStep(cell, session) {
     make("span", "run-step-name", cell.id),
     make("span", "run-step-state", STATE_WORDS[cell.status]),
   );
+  const rounds = roundsButton(cell);
+  if (rounds !== undefined) heading.append(rounds);
   const output = make("div", "run-step-output streamed");
   fillOutput(output, cell.text);
   item.append(heading, output);
@@ -3150,6 +3264,9 @@ element("models-close").addEventListener("click", closeModels);
 element("notebook-model").addEventListener("click", () => {
   if (watching === undefined) return;
   void openNotebookModel(watching.state.notebook, watching.state.model);
+});
+element("cell-rounds-close").addEventListener("click", () => {
+  /** @type {HTMLDialogElement} */ (element("cell-rounds-dialog")).close();
 });
 element("notebook-model-cancel").addEventListener("click", () => {
   /** @type {HTMLDialogElement} */ (element("notebook-model-dialog")).close();
