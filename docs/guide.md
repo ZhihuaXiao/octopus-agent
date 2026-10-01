@@ -77,7 +77,7 @@ If the server restarted, the old cookie is no longer valid. The page asks for th
 
 ### Author view
 
-Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, and code. The choice stays in this browser, and it applies in run view too. Statuses you will see:
+Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. Statuses you will see:
 
 | Status | Meaning |
 | --- | --- |
@@ -96,7 +96,7 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 **Edit** turns the notebook into a form:
 
 - Frontmatter is the YAML at the top: title, inputs, mode, and the rest.
-- Each cell has its type (`prompt` or `bash`), id, `uses`, an isolated checkbox, an optional model, an optional timeout, and its body.
+- Each cell has its type (`prompt` or `bash`), id, `uses` chosen from the other cells (any of them; none means this cell waits for no cell), an isolated checkbox, a model chosen from the configured models (or left as the default), an optional timeout, and its body.
 - Prose is the Markdown between cells.
 
 **+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing if you are not already, and put the cursor in the new cell. Nothing is written until you save.

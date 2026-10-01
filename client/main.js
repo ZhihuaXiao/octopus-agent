@@ -832,21 +832,67 @@ function linkable(url) {
 }
 
 /**
- * Inline marks in one line: code, emphasis, and links. The text itself is
- * never parsed as HTML.
+ * Commands a reply is likely to write inside `$...$`, drawn as the character
+ * instead of the command. A command that is not here is left as written.
+ * @type {Readonly<Record<string, string>>}
+ */
+const LATEX_SYMBOLS = {
+  rightarrow: "→",
+  leftarrow: "←",
+  leftrightarrow: "↔",
+  Rightarrow: "⇒",
+  Leftarrow: "⇐",
+  Leftrightarrow: "⇔",
+  to: "→",
+  times: "×",
+  cdot: "·",
+  ldots: "…",
+  cdots: "⋯",
+  dots: "…",
+  pm: "±",
+  leq: "≤",
+  geq: "≥",
+  neq: "≠",
+  approx: "≈",
+  infty: "∞",
+  alpha: "α",
+  beta: "β",
+  gamma: "γ",
+  delta: "δ",
+  theta: "θ",
+  lambda: "λ",
+  pi: "π",
+  sigma: "σ",
+  omega: "ω",
+  Delta: "Δ",
+  Sigma: "Σ",
+  Omega: "Ω",
+};
+
+/** @param {string} source the inside of a `$...$`, which contains a command */
+function latexText(source) {
+  return source.replace(/\\+([a-zA-Z]+)/g, (whole, name) => {
+    const symbol = typeof name === "string" ? LATEX_SYMBOLS[name] : undefined;
+    return symbol ?? whole;
+  });
+}
+
+/**
+ * Inline marks in one line: code, emphasis, links, and `$...$` that names a
+ * symbol. The text itself is never parsed as HTML.
  * @param {string} text
  * @returns {Node[]}
  */
 function inlineNodes(text) {
   const pattern =
-    /(`+)([^`]+)\1|\*\*([^*]+)\*\*|__([^_]+)__|(?<![A-Za-z0-9*])\*([^*\n]+)\*(?!\*)|(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+    /(`+)([^`]+)\1|\*\*([^*]+)\*\*|__([^_]+)__|(?<![A-Za-z0-9*])\*([^*\n]+)\*(?!\*)|(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])|\[([^\]\n]+)\]\(([^)\s]+)\)|\$([^$\n]*\\[^$\n]*)\$/g;
   /** @type {Node[]} */
   const nodes = [];
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const index = match.index ?? 0;
     if (index > last) nodes.push(document.createTextNode(text.slice(last, index)));
-    const [whole, , code, stars, underscores, italic, underItalic, label, href] = match;
+    const [whole, , code, stars, underscores, italic, underItalic, label, href, math] = match;
     if (code !== undefined) {
       const marked = document.createElement("code");
       marked.textContent = code;
@@ -870,6 +916,8 @@ function inlineNodes(text) {
         link.append(...inlineNodes(label));
         nodes.push(link);
       }
+    } else if (math !== undefined) {
+      nodes.push(document.createTextNode(latexText(math)));
     }
     last = index + whole.length;
   }
@@ -879,6 +927,154 @@ function inlineNodes(text) {
 
 /** @param {string} line */
 const listItem = (line) => /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(line);
+
+/** @param {string} line */
+function splitRow(line) {
+  let row = line.trim();
+  if (row.startsWith("|")) row = row.slice(1);
+  if (row.endsWith("|")) row = row.slice(0, -1);
+  return row.split("|").map((cell) => cell.trim());
+}
+
+/** @param {string} line */
+function rowLike(line) {
+  return line.includes("|") && splitRow(line).length >= 2;
+}
+
+/** @param {string} line */
+function separatorRow(line) {
+  if (!line.includes("|")) return false;
+  const cells = splitRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+/**
+ * @param {string[]} lines
+ * @param {number} at
+ */
+function tableStart(lines, at) {
+  const header = lines[at] ?? "";
+  const rule = lines[at + 1] ?? "";
+  return rowLike(header) && separatorRow(rule) && splitRow(header).length === splitRow(rule).length;
+}
+
+/** @param {string} cell `:---`, `---:`, or `:---:` */
+function columnAlign(cell) {
+  const left = cell.startsWith(":");
+  const right = cell.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  return "left";
+}
+
+/**
+ * @param {HTMLElement} cell
+ * @param {string} align
+ */
+function alignCell(cell, align) {
+  if (align === "center" || align === "right") cell.style.textAlign = align;
+}
+
+/**
+ * A pipe table, from its header through the last row. `at` is the header line.
+ * @param {string[]} lines
+ * @param {number} at
+ * @returns {{ node: HTMLTableElement, at: number }}
+ */
+function readTable(lines, at) {
+  const align = splitRow(lines[at + 1] ?? "").map(columnAlign);
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  splitRow(lines[at] ?? "").forEach((cell, index) => {
+    const th = document.createElement("th");
+    alignCell(th, align[index] ?? "left");
+    th.append(...inlineNodes(cell));
+    headRow.append(th);
+  });
+  head.append(headRow);
+  table.append(head);
+  const body = document.createElement("tbody");
+  at += 2;
+  while (at < lines.length && rowLike(lines[at] ?? "") && !separatorRow(lines[at] ?? "")) {
+    const tr = document.createElement("tr");
+    const cells = splitRow(lines[at] ?? "");
+    for (let index = 0; index < align.length; index += 1) {
+      const td = document.createElement("td");
+      alignCell(td, align[index] ?? "left");
+      td.append(...inlineNodes(cells[index] ?? ""));
+      tr.append(td);
+    }
+    body.append(tr);
+    at += 1;
+  }
+  table.append(body);
+  return { node: table, at };
+}
+
+/**
+ * One list, including items nested under its entries and blank lines between
+ * items. A following item of the same kind stays in this list, so `1.` written
+ * on every item still counts 1, 2, 3.
+ * @param {string[]} lines
+ * @param {number} at
+ * @param {number} indent
+ * @returns {{ node: HTMLOListElement | HTMLUListElement, at: number }}
+ */
+function readList(lines, at, indent) {
+  const first = listItem(lines[at] ?? "");
+  const ordered = /^\d+\.$/.test(first?.[2] ?? "");
+  const list = ordered ? document.createElement("ol") : document.createElement("ul");
+  if (list instanceof HTMLOListElement) {
+    const start = Number.parseInt(first?.[2] ?? "1", 10);
+    if (start > 1) list.start = start;
+  }
+  while (at < lines.length) {
+    let look = at;
+    while (look < lines.length && (lines[look] ?? "").trim() === "") look += 1;
+    const item = listItem(lines[look] ?? "");
+    if (item === null) break;
+    const itemIndent = (item[1] ?? "").length;
+    if (itemIndent !== indent) break;
+    if (/^\d+\.$/.test(item[2] ?? "") !== ordered) break;
+    at = look + 1;
+    const row = document.createElement("li");
+    row.append(...inlineNodes(item[3] ?? ""));
+    while (at < lines.length) {
+      const next = lines[at] ?? "";
+      if (next.trim() === "") {
+        let peek = at + 1;
+        while (peek < lines.length && (lines[peek] ?? "").trim() === "") peek += 1;
+        const peeked = listItem(lines[peek] ?? "");
+        const peekedIndent = (peeked?.[1] ?? "").length;
+        if (peeked === null || peekedIndent <= indent) break;
+        at = peek;
+        const nested = readList(lines, at, peekedIndent);
+        row.append(nested.node);
+        at = nested.at;
+        continue;
+      }
+      const nestedItem = listItem(next);
+      if (nestedItem !== null) {
+        const nestedIndent = (nestedItem[1] ?? "").length;
+        if (nestedIndent <= indent) break;
+        const nested = readList(lines, at, nestedIndent);
+        row.append(nested.node);
+        at = nested.at;
+        continue;
+      }
+      const continued = next.match(/^\s*/)?.[0].length ?? 0;
+      if (continued > indent && next.trim() !== "") {
+        row.append(document.createElement("br"), ...inlineNodes(next.trim()));
+        at += 1;
+        continue;
+      }
+      break;
+    }
+    list.append(row);
+  }
+  return { node: list, at };
+}
 
 /**
  * A reply as Markdown: blocks of the lines, and the marks inside them. What
@@ -930,6 +1126,12 @@ function markdownBlocks(text) {
       at += 1;
       continue;
     }
+    if (tableStart(lines, at)) {
+      const table = readTable(lines, at);
+      blocks.push(table.node);
+      at = table.at;
+      continue;
+    }
     if (/^>\s?/.test(line)) {
       /** @type {string[]} */
       const quoted = [];
@@ -944,17 +1146,9 @@ function markdownBlocks(text) {
     }
     const listed = listItem(line);
     if (listed !== null) {
-      const ordered = /^\s*\d+\.\s+/.test(line);
-      const list = document.createElement(ordered ? "ol" : "ul");
-      while (at < lines.length) {
-        const item = listItem(lines[at] ?? "");
-        if (item === null || /^\s*\d+\.\s+/.test(lines[at] ?? "") !== ordered) break;
-        const row = document.createElement("li");
-        row.append(...inlineNodes(item[3] ?? ""));
-        list.append(row);
-        at += 1;
-      }
-      blocks.push(list);
+      const list = readList(lines, at, (listed[1] ?? "").length);
+      blocks.push(list.node);
+      at = list.at;
       continue;
     }
     /** @type {string[]} */
@@ -967,6 +1161,7 @@ function markdownBlocks(text) {
         /^#{1,6}\s+/.test(next) ||
         /^>\s?/.test(next) ||
         listItem(next) !== null ||
+        tableStart(lines, at) ||
         /^(-{3,}|\*{3,}|_{3,})$/.test(next.trim())
       ) {
         break;
@@ -1301,6 +1496,16 @@ async function interrupt() {
 let draft;
 
 /**
+ * Configured models (`provider/id`) for the cell model list, once loaded for
+ * the draft that is open. Undefined until that load finishes.
+ * @type {string[] | undefined}
+ */
+let cellModels;
+
+/** Which load of that list is current, so a slower answer cannot replace a newer one. */
+let cellModelLoad = 0;
+
+/**
  * A draft of the Notebook as the session holds it.
  * @param {NotebookSessionState} state
  * @returns {Draft}
@@ -1560,10 +1765,18 @@ function renderDraftCell(cell, at) {
 
   declaration.append(
     type,
-    field("id", cell.id, (value) => (cell.id = value), "draft-id"),
-    field("uses", cell.uses, (value) => (cell.uses = value)),
+    field(
+      "id",
+      cell.id,
+      (value) => {
+        cell.id = value;
+        fillUsesSelects();
+      },
+      "draft-id",
+    ),
+    usesSelect(cell),
     isolated,
-    field("model", cell.model, (value) => (cell.model = value)),
+    modelSelect(cell.model, (value) => (cell.model = value)),
     field("timeout", cell.timeout, (value) => (cell.timeout = value)),
   );
   card.append(
@@ -1619,8 +1832,167 @@ function beginEditing() {
   if (watching === undefined || draft !== undefined) return;
   draft = draftOf(watching.state);
   element("editor-status").textContent = "";
+  cellModels = undefined;
   renderEditor();
   renderSession();
+  const load = ++cellModelLoad;
+  void loadCellModels(load);
+}
+
+/** @param {string} value */
+function usesNames(value) {
+  return value
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== "");
+}
+
+/** Ids of the cells in the draft, in the order they are written. */
+function draftCellIds() {
+  return (draft?.segments ?? []).flatMap((segment) =>
+    segment.kind === "cell" && segment.id.trim() !== "" ? [segment.id.trim()] : [],
+  );
+}
+
+/**
+ * The cells this one waits for, chosen from the other cells in the notebook.
+ * Click an id to select or clear it. A name already stored that is not a cell
+ * stays in the list, so editing does not drop it.
+ * @param {DraftCell} cell
+ */
+function usesSelect(cell) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "draft-uses-label";
+  const select = document.createElement("select");
+  select.multiple = true;
+  select.className = "draft-uses";
+  select.title = "Cells that must finish before this one. Click an id to choose or clear it.";
+  fillUsesSelect(select, cell.id, cell.uses);
+  // A click toggles one id. The list otherwise replaces the whole choice unless a modifier is held.
+  select.addEventListener("mousedown", (event) => {
+    if (!(event.target instanceof HTMLOptionElement) || event.target.disabled) return;
+    event.preventDefault();
+    event.target.selected = !event.target.selected;
+    select.dispatchEvent(new Event("change"));
+  });
+  select.addEventListener("change", () => {
+    cell.uses = [...select.selectedOptions]
+      .map((option) => option.value)
+      .filter((name) => name !== "")
+      .join(", ");
+  });
+  wrapper.append("uses", select);
+  return wrapper;
+}
+
+/**
+ * @param {HTMLSelectElement} select
+ * @param {string} self
+ * @param {string} value
+ */
+function fillUsesSelect(select, self, value) {
+  const chosen = new Set(usesNames(value));
+  const others = draftCellIds().filter((id) => id !== self.trim());
+  const missing = [...chosen].filter((id) => !others.includes(id));
+  const names = [...others, ...missing];
+  select.replaceChildren(
+    ...names.map((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = missing.includes(name) ? `${name} (not a cell)` : name;
+      option.selected = chosen.has(name);
+      return option;
+    }),
+  );
+  select.size = Math.min(Math.max(names.length, 1), 4);
+  if (names.length === 0) {
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "no other cell";
+    none.disabled = true;
+    select.append(none);
+  }
+}
+
+/** Refills every uses list from the cells as they stand, keeping each choice. */
+function fillUsesSelects() {
+  const cells = (draft?.segments ?? []).flatMap((segment) =>
+    segment.kind === "cell" ? [segment] : [],
+  );
+  const selects = [...element("draft").querySelectorAll("select.draft-uses")];
+  selects.forEach((select, at) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    const cell = cells[at];
+    if (cell === undefined) return;
+    fillUsesSelect(select, cell.id, cell.uses);
+  });
+}
+
+/**
+ * The model list on a cell: the configured models, plus whatever this cell
+ * already names when that is not among them, so editing does not drop it.
+ * An empty choice leaves the cell on the notebook's model, or pi's default.
+ * @param {string} value
+ * @param {(value: string) => void} set
+ */
+function modelSelect(value, set) {
+  const wrapper = document.createElement("label");
+  const select = document.createElement("select");
+  select.className = "draft-model";
+  select.title =
+    "A configured model for this cell. The default uses the notebook's model, or pi's when the notebook names none.";
+  fillModelSelect(select, value);
+  select.addEventListener("change", () => set(select.value));
+  wrapper.append("model", select);
+  return wrapper;
+}
+
+/**
+ * @param {HTMLSelectElement} select
+ * @param {string} value
+ */
+function fillModelSelect(select, value) {
+  const names = cellModels ?? [];
+  /** @type {string[]} */
+  const options = [""];
+  if (value !== "" && !names.includes(value)) options.push(value);
+  options.push(...names);
+  select.replaceChildren(
+    ...options.map((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name === "" ? "default" : name;
+      option.selected = name === value;
+      return option;
+    }),
+  );
+}
+
+/** Fills every cell's model list from `cellModels`, keeping the choice already made. */
+function fillModelSelects() {
+  for (const select of element("draft").querySelectorAll("select.draft-model")) {
+    if (!(select instanceof HTMLSelectElement)) continue;
+    fillModelSelect(select, select.value);
+  }
+}
+
+/**
+ * Loads the configured models for the cell lists. `load` is the edit that asked,
+ * so an answer for an edit that was cancelled is ignored.
+ * @param {number} load
+ */
+async function loadCellModels(load) {
+  try {
+    const page = await fetchModels();
+    if (draft === undefined || load !== cellModelLoad) return;
+    cellModels = configuredModelsOf(page).map((model) => `${model.provider}/${model.id}`);
+    fillModelSelects();
+  } catch (cause) {
+    if (draft === undefined || load !== cellModelLoad) return;
+    const status = element("editor-status");
+    if (status.textContent === "")
+      status.textContent = `Could not load the models: ${describe(cause)}`;
+  }
 }
 
 function stopEditing() {

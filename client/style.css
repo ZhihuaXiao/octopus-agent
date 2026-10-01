@@ -916,6 +916,23 @@ button:disabled {
   width: 7rem;
 }
 
+.draft-declaration select.draft-model {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  max-width: 24rem;
+}
+
+.draft-declaration label.draft-uses-label {
+  align-items: flex-start;
+}
+
+.draft-declaration select.draft-uses {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  min-width: 9rem;
+  max-width: 16rem;
+}
+
 .draft-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1149,6 +1166,38 @@ button:disabled {
 .cell-output.markdown ol,
 .run-step-output.markdown ol {
   padding-left: 1.4rem;
+}
+
+.cell-output.markdown ul,
+.run-step-output.markdown ul {
+  list-style: disc;
+}
+
+.cell-output.markdown ol,
+.run-step-output.markdown ol {
+  list-style: decimal;
+}
+
+.cell-output.markdown table,
+.run-step-output.markdown table {
+  border-collapse: collapse;
+  margin: 0.45rem 0;
+  font-size: 0.9rem;
+}
+
+.cell-output.markdown th,
+.run-step-output.markdown th,
+.cell-output.markdown td,
+.run-step-output.markdown td {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  padding: 0.25rem 0.55rem;
+  vertical-align: top;
+}
+
+.cell-output.markdown th,
+.run-step-output.markdown th {
+  font-weight: 600;
+  text-align: left;
 }
 
 .cell-output.markdown h2,
