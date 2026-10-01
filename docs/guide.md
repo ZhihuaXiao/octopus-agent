@@ -99,7 +99,7 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 
 **+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing if you are not already, and put the cursor in the new cell. Nothing is written until you save.
 
-**Insert at the top** and **Insert below** add a prompt cell, a bash cell, or prose. **↑** and **↓** reorder. **Remove** deletes that piece. **Save** writes the file. Only what you changed is rewritten, so a diff stays readable. **Cancel** throws the draft away.
+**Insert at the top** and **Insert below** add a prompt cell, a bash cell, or prose. **↑** and **↓** reorder. **Remove** deletes that piece. **Run**, beside Remove and the same size, saves the notebook and runs that cell alone. **Save** writes the file. Only what you changed is rewritten, so a diff stays readable. **Cancel** throws the draft away.
 
 If the file changed on disk, or another browser saved it, while you were editing, the first save is refused. Save again to overwrite that newer copy, or cancel to see what it holds now.
 

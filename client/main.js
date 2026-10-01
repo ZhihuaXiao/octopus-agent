@@ -1169,11 +1169,24 @@ function actionsFor(at) {
   };
 
   if (at >= 0) {
+    const segment = segments[at];
     actions.append(
       button("↑", () => swap(at, at - 1), at === 0),
       button("↓", () => swap(at, at + 1), at === segments.length - 1),
       button("Remove", () => segments.splice(at, 1)),
     );
+    // The same Run a Cell has when it is not being edited. The draft is saved
+    // first, so the command just typed is what runs.
+    if (segment?.kind === "cell") {
+      const cell = segment;
+      actions.append(
+        button(
+          "Run",
+          () => void runDraftCell(cell),
+          watching?.state.running === true || draft?.saving === true,
+        ),
+      );
+    }
   }
 
   /** @param {DraftSegment[]} added */
@@ -1306,10 +1319,11 @@ function stopEditing() {
  * Saves the draft, based on the revision the session held when it was begun
  * or last found changed. A save the server would not take is explained where
  * the draft is, and the draft stays for the author to act on: change it, save
- * over what changed on disk, or cancel.
+ * over what changed on disk, or cancel. Resolves true when the file was written.
+ * @returns {Promise<boolean>}
  */
 async function saveDraft() {
-  if (watching === undefined || draft === undefined) return;
+  if (watching === undefined || draft === undefined) return false;
   const { state } = watching;
   const edited = draft;
   const status = element("editor-status");
@@ -1321,12 +1335,12 @@ async function saveDraft() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(saveRequestOf(edited)),
     });
-    if (draft !== edited || watching?.state.id !== state.id) return;
+    if (draft !== edited || watching?.state.id !== state.id) return false;
     if (response.ok) {
       watching.state = /** @type {NotebookSessionState} */ (await response.json());
       stopEditing();
       element("session-status").textContent = "";
-      return;
+      return true;
     }
     const problem = (await response.text()).trim() || `The server answered ${response.status}`;
     if (response.status === 409) {
@@ -1339,12 +1353,29 @@ async function saveDraft() {
       }
       status.textContent = `${problem}\nSave again to write over it, or cancel to see what it holds now.`;
     } else status.textContent = problem;
+    return false;
   } catch (cause) {
     status.textContent = `Could not save: ${describe(cause)}`;
+    return false;
   } finally {
     edited.saving = false;
     /** @type {HTMLButtonElement} */ (element("save")).disabled = false;
   }
+}
+
+/**
+ * Saves the draft, then runs the Cell it names. What was typed is what runs,
+ * and the Cell is shown with its output once the editing is over.
+ * @param {DraftCell} cell
+ */
+async function runDraftCell(cell) {
+  if (draft === undefined || draft.saving || watching?.state.running) return;
+  const id = cell.id.trim();
+  if (id === "") {
+    element("editor-status").textContent = "Give this cell an id before running it.";
+    return;
+  }
+  if (await saveDraft()) await startRun([id]);
 }
 
 /**
