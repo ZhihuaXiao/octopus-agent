@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { type NotebookEdit, type SegmentEdit, applyEdit, editOf } from "./edit.js";
+import {
+  type NotebookEdit,
+  type SegmentEdit,
+  applyEdit,
+  editOf,
+  notebookWithModel,
+} from "./edit.js";
 import { type Notebook, cellsOf, formatDiagnostics, parseNotebook } from "./notebook.js";
 
 /** Parses a Notebook the tests wrote, treating any diagnostic as a test bug. */
@@ -486,5 +492,64 @@ describe("applying an edit to a notebook", () => {
       expect(given.ok).toBe(false);
       if (!given.ok) expect(given.errors[0]?.message).toMatch(/"timeout" must be a duration/);
     });
+  });
+});
+
+describe("setting a notebook's model", () => {
+  const bare = "```prompt id=greet\nSay hello.\n```\n";
+
+  it("adds the model and leaves the cells as they were written", () => {
+    const made = notebookWithModel(valid(source), "anthropic/claude-sonnet-4-5");
+    if (!made.ok) throw new Error(formatDiagnostics(made.errors));
+
+    expect(made.source).toBe(
+      source.replace(
+        "    default: src\n",
+        "    default: src\nmodel: anthropic/claude-sonnet-4-5\n",
+      ),
+    );
+    expect(made.notebook.metadata.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(made.source).toContain("```prompt id=first isolated model=openai/gpt-5");
+    expect(made.source).toContain("```bash id=second uses=first timeout=30s");
+  });
+
+  it("replaces a model the notebook already names, and can clear it", () => {
+    const named = valid(
+      "---\ntitle: Hello\nmodel: old/one\n---\n\n```prompt id=greet\nSay hello.\n```\n",
+    );
+    const replaced = notebookWithModel(named, "new/two");
+    if (!replaced.ok) throw new Error(formatDiagnostics(replaced.errors));
+    expect(replaced.source).toBe(
+      "---\ntitle: Hello\nmodel: new/two\n---\n\n```prompt id=greet\nSay hello.\n```\n",
+    );
+
+    const cleared = notebookWithModel(replaced.notebook, undefined);
+    if (!cleared.ok) throw new Error(formatDiagnostics(cleared.errors));
+    expect(cleared.source).toBe("---\ntitle: Hello\n---\n\n```prompt id=greet\nSay hello.\n```\n");
+    expect(cleared.notebook.metadata.model).toBeUndefined();
+  });
+
+  it("writes a frontmatter block when the notebook had none, and removes it when the model was all it held", () => {
+    const made = notebookWithModel(valid(bare), "ollama/llama3.1:8b");
+    if (!made.ok) throw new Error(formatDiagnostics(made.errors));
+    expect(made.source).toBe(`---\nmodel: ollama/llama3.1:8b\n---\n${bare}`);
+
+    const cleared = notebookWithModel(made.notebook, undefined);
+    if (!cleared.ok) throw new Error(formatDiagnostics(cleared.errors));
+    expect(cleared.source).toBe(bare);
+  });
+
+  it("quotes a model whose id would not read back as a plain scalar", () => {
+    const made = notebookWithModel(
+      valid(bare),
+      "Oracle1/gemini-3.8-flash-high, gemini-3.7-flash-high",
+    );
+    if (!made.ok) throw new Error(formatDiagnostics(made.errors));
+    expect(made.notebook.metadata.model).toBe(
+      "Oracle1/gemini-3.8-flash-high, gemini-3.7-flash-high",
+    );
+    expect(made.source).toContain(
+      'model: "Oracle1/gemini-3.8-flash-high, gemini-3.7-flash-high"\n',
+    );
   });
 });

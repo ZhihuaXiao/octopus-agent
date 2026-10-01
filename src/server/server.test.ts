@@ -397,6 +397,7 @@ interface NotebookSessionState {
   id: string;
   notebook: string;
   title: string;
+  model?: string;
   revision: string;
   frontmatter?: string;
   inputs: { name: string; type: string; description?: string; default?: unknown }[];
@@ -2873,9 +2874,15 @@ describe("promoting a chat", () => {
     const response = await post(server, `/api/chats/${id}/promote`, { to: "chats/audit.md" });
 
     expect(response.status).toBe(201);
-    expect(await response.json()).toEqual({ path: "chats/audit.md", title: "Audit" });
+    expect(await response.json()).toEqual({
+      path: "chats/audit.md",
+      title: "Audit",
+      model: "anthropic/claude-sonnet-4-5",
+    });
     const listed = (await (await get(server, "/api/notebooks")).json()) as { notebooks: unknown[] };
-    expect(listed.notebooks).toEqual([{ path: "chats/audit.md", title: "Audit" }]);
+    expect(listed.notebooks).toEqual([
+      { path: "chats/audit.md", title: "Audit", model: "anthropic/claude-sonnet-4-5" },
+    ]);
 
     // Opened into a session of its own, its Cells the chat's messages.
     const opened = await open(server, "chats/audit.md");
@@ -2918,5 +2925,281 @@ describe("promoting a chat", () => {
 
     expect((await get(server, `/api/chats/${id}/promote`)).status).toBe(405);
     expect((await post(server, "/api/chats", {})).status).toBe(405);
+  });
+});
+
+describe("model settings", () => {
+  it("lists pi's models and saves a default without returning a stored key", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+
+    const listed = await get(server, "/api/models");
+    expect(listed.status).toBe(200);
+    const page = (await listed.json()) as {
+      models: { provider: string; id: string }[];
+      thinkingLevels: string[];
+      providers: unknown[];
+    };
+    expect(page.providers).toEqual([]);
+    expect(page.thinkingLevels).toContain("off");
+    const model = page.models.find((candidate) => candidate.provider === "anthropic");
+    expect(model).toBeDefined();
+
+    const saved = await post(server, "/api/models/default", {
+      provider: model?.provider,
+      model: model?.id,
+      thinking: "low",
+    });
+    expect(saved.status).toBe(204);
+    const again = (await (await get(server, "/api/models")).json()) as {
+      defaultProvider: string;
+      defaultModel: string;
+      defaultThinking: string;
+    };
+    expect(again).toMatchObject({
+      defaultProvider: model?.provider,
+      defaultModel: model?.id,
+      defaultThinking: "low",
+    });
+  });
+
+  it("writes a custom provider, keeps a key that was not replaced, and refuses a command", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+    const providers = (body: unknown) => post(server, "/api/models/providers", body);
+    const provider = {
+      id: "ollama",
+      baseUrl: "http://localhost:11434/v1",
+      api: "openai-completions",
+      apiKey: "local-secret",
+      models: ["llama3.1:8b"],
+    };
+
+    expect((await providers({ providers: [provider] })).status).toBe(204);
+    const file = JSON.parse(await readFile(join(agentDirectory, "models.json"), "utf8")) as {
+      providers: { ollama: { apiKey: string; models: { id: string }[] } };
+    };
+    expect(file.providers.ollama.apiKey).toBe("local-secret");
+    expect(file.providers.ollama.models).toEqual([{ id: "llama3.1:8b" }]);
+    const shown = (await (await get(server, "/api/models")).json()) as {
+      providers: { apiKeySet: boolean; models: { id: string }[] }[];
+    };
+    expect(JSON.stringify(shown)).not.toContain("local-secret");
+    expect(shown.providers[0]).toMatchObject({
+      id: "ollama",
+      apiKeySet: true,
+      models: [{ id: "llama3.1:8b" }],
+    });
+
+    expect(
+      (
+        await providers({
+          providers: [{ ...provider, apiKey: undefined, models: ["llama3.1:8b", "qwen"] }],
+        })
+      ).status,
+    ).toBe(204);
+    const kept = JSON.parse(await readFile(join(agentDirectory, "models.json"), "utf8")) as {
+      providers: { ollama: { apiKey: string; models: { id: string }[] } };
+    };
+    expect(kept.providers.ollama.apiKey).toBe("local-secret");
+    expect(kept.providers.ollama.models.map((model) => model.id)).toEqual(["llama3.1:8b", "qwen"]);
+
+    const command = await providers({
+      providers: [{ ...provider, apiKey: "!echo secret" }],
+    });
+    expect(command.status).toBe(422);
+    const untouched = JSON.parse(await readFile(join(agentDirectory, "models.json"), "utf8")) as {
+      providers: { ollama: { apiKey: string } };
+    };
+    expect(untouched.providers.ollama.apiKey).toBe("local-secret");
+  });
+
+  it("refuses a default that is not a model, and a provider that is not one", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+
+    expect(
+      (await post(server, "/api/models/default", { provider: "nope", model: "none" })).status,
+    ).toBe(422);
+    expect((await post(server, "/api/models/default", { model: "x" })).status).toBe(400);
+    expect(
+      (
+        await post(server, "/api/models/providers", {
+          providers: [
+            { id: "ollama", baseUrl: "ftp://files", api: "openai-completions", models: ["m"] },
+          ],
+        })
+      ).status,
+    ).toBe(422);
+    expect((await post(server, "/api/models/providers", {})).status).toBe(400);
+    const completions = await post(server, "/api/models/providers", {
+      providers: [
+        {
+          id: "proxy",
+          baseUrl: "http://127.0.0.1:8317/v1/chat/completions",
+          api: "openai-completions",
+          models: ["m"],
+        },
+      ],
+    });
+    expect(completions.status).toBe(422);
+    expect(await completions.text()).toMatch(/end at \/v1/);
+    const google = await post(server, "/api/models/providers", {
+      providers: [
+        {
+          id: "proxy",
+          baseUrl: "http://127.0.0.1:8317/v1/chat/completions",
+          api: "google-generative-ai",
+          models: ["m"],
+        },
+      ],
+    });
+    expect(google.status).toBe(422);
+    expect(await google.text()).toMatch(/openai-completions/);
+  });
+
+  it("stores an API key for the chosen provider and does not return it", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+    const page = (await (await get(server, "/api/models")).json()) as {
+      models: { provider: string; id: string }[];
+      keyed: string[];
+    };
+    const model = page.models.find((candidate) => candidate.provider === "anthropic");
+    expect(model).toBeDefined();
+    expect(page.keyed).not.toContain("anthropic");
+
+    const saved = await post(server, "/api/models/key", {
+      provider: "anthropic",
+      apiKey: "test-key-value",
+    });
+    expect(saved.status).toBe(204);
+    const again = (await (await get(server, "/api/models")).json()) as { keyed: string[] };
+    expect(again.keyed).toContain("anthropic");
+    expect(JSON.stringify(again)).not.toContain("test-key-value");
+    expect((await post(server, "/api/models/key", { provider: "anthropic" })).status).toBe(400);
+  });
+});
+
+describe("a notebook's model", () => {
+  const provider = {
+    id: "ollama",
+    baseUrl: "http://localhost:11434/v1",
+    api: "openai-completions",
+    models: ["llama3.1:8b"],
+  };
+
+  async function withOllama(): Promise<RunningServer> {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({ "hello.md": hello }, unusedAgent(), { agentDirectory });
+    expect((await post(server, "/api/models/providers", { providers: [provider] })).status).toBe(
+      204,
+    );
+    return server;
+  }
+
+  it("writes a configured model into the notebook, and clears it", async () => {
+    const server = await withOllama();
+
+    const saved = await post(server, "/api/notebooks/model", {
+      notebook: "hello.md",
+      model: "ollama/llama3.1:8b",
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({
+      path: "hello.md",
+      title: "Hello",
+      model: "ollama/llama3.1:8b",
+    });
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(
+      hello.replace(
+        "---\ntitle: Hello\n---\n",
+        "---\ntitle: Hello\nmodel: ollama/llama3.1:8b\n---\n",
+      ),
+    );
+    const listed = (await (await get(server, "/api/notebooks")).json()) as {
+      notebooks: { path: string; model?: string }[];
+    };
+    expect(listed.notebooks).toEqual([
+      { path: "hello.md", title: "Hello", model: "ollama/llama3.1:8b" },
+    ]);
+
+    const cleared = await post(server, "/api/notebooks/model", {
+      notebook: "hello.md",
+      model: "",
+    });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({ path: "hello.md", title: "Hello" });
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+  });
+
+  it("tells an open session, and refuses a model that is not configured", async () => {
+    const server = await withOllama();
+    const session = await open(server, "hello.md");
+
+    const saved = await post(server, "/api/notebooks/model", {
+      notebook: "hello.md",
+      model: "ollama/llama3.1:8b",
+    });
+    expect(saved.status).toBe(200);
+    const state = await stateOf(server, session.id);
+    expect(state.model).toBe("ollama/llama3.1:8b");
+    expect(state.frontmatter).toBe("title: Hello\nmodel: ollama/llama3.1:8b\n");
+    expect(state.revision).not.toBe(session.revision);
+    expect(state.cells[0]?.body).toBe("Say hello.\n");
+
+    const again = await post(server, "/api/notebooks/model", {
+      notebook: "hello.md",
+      model: "ollama/llama3.1:8b",
+    });
+    expect(again.status).toBe(200);
+    expect((await stateOf(server, session.id)).revision).toBe(state.revision);
+
+    expect(
+      (await post(server, "/api/notebooks/model", { notebook: "hello.md", model: "no/such" }))
+        .status,
+    ).toBe(422);
+    expect(
+      (await post(server, "/api/notebooks/model", { notebook: "hello.md", model: "nope" })).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(server, "/api/notebooks/model", {
+          notebook: "missing.md",
+          model: "ollama/llama3.1:8b",
+        })
+      ).status,
+    ).toBe(404);
+    expect((await post(server, "/api/notebooks/model", { notebook: "hello.md" })).status).toBe(400);
+    expect((await get(server, "/api/notebooks/model")).status).toBe(405);
+  });
+
+  it("accepts a model whose provider has a stored key", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({ "hello.md": hello }, unusedAgent(), { agentDirectory });
+    const page = (await (await get(server, "/api/models")).json()) as {
+      models: { provider: string; id: string }[];
+    };
+    const model = page.models.find((candidate) => candidate.provider === "anthropic");
+    expect(model).toBeDefined();
+    expect(
+      (
+        await post(server, "/api/notebooks/model", {
+          notebook: "hello.md",
+          model: `${model?.provider}/${model?.id}`,
+        })
+      ).status,
+    ).toBe(422);
+
+    expect(
+      (await post(server, "/api/models/key", { provider: "anthropic", apiKey: "test-key-value" }))
+        .status,
+    ).toBe(204);
+    const saved = await post(server, "/api/notebooks/model", {
+      notebook: "hello.md",
+      model: `${model?.provider}/${model?.id}`,
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ model: `${model?.provider}/${model?.id}` });
   });
 });

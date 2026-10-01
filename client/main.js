@@ -11,7 +11,8 @@
  *
  * Beside whichever is shown, the served directory is drawn as a tree of its
  * folders and the Notebooks in them, the one open marked, with a way to make
- * a new Notebook; and under an open Notebook are the ways to add a Prompt
+ * a new Notebook and a way to choose the model that Notebook runs on, from
+ * the models its user can already call; and under an open Notebook are the ways to add a Prompt
  * Cell or a Bash Cell to it, which begin the editing when it has not begun.
  *
  * The same Session is shown a second way, as the Run View: the Cells hidden,
@@ -43,7 +44,7 @@
  */
 
 /**
- * @typedef {{ path: string, title: string }} NotebookEntry
+ * @typedef {{ path: string, title: string, model?: string }} NotebookEntry
  * @typedef {{ directory: string, notebooks: NotebookEntry[] }} NotebookList
  * @typedef {{
  *   id: string,
@@ -83,6 +84,7 @@
  *   id: string,
  *   notebook: string,
  *   title: string,
+ *   model?: string,
  *   revision: string,
  *   frontmatter?: string,
  *   inputs: InputView[],
@@ -267,8 +269,31 @@ function renderEntry(entry) {
   // The other way in, for whoever is here to run it rather than read it.
   const run = make("a", "run-link", "Run view");
   run.href = hashFor(entry.path, "run");
-  item.append(link, run);
+  item.append(link, modelButton(entry.path, entry.model), run);
   return item;
+}
+
+/**
+ * The button that chooses the model this Notebook runs on, from the models
+ * the user can already call.
+ * @param {string} notebook
+ * @param {string} [model]
+ * @param {string} [className]
+ */
+function modelButton(notebook, model, className) {
+  const button = make("button", className ?? "notebook-model", model ?? "Model");
+  button.type = "button";
+  button.title = model ?? "Choose a configured model for this notebook";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (draft !== undefined && watching?.state.notebook === notebook) {
+      element("session-status").textContent = "Save or cancel the draft before choosing a model.";
+      return;
+    }
+    void openNotebookModel(notebook, model);
+  });
+  return button;
 }
 
 async function showList() {
@@ -296,7 +321,7 @@ async function showList() {
 /**
  * One entry of the served directory, as the sidebar lists it.
  * @typedef {{ name: string, path: string, kind: "directory", children: TreeNode[] }
- *   | { name: string, path: string, kind: "notebook", title: string }
+ *   | { name: string, path: string, kind: "notebook", title: string, model?: string }
  *   | { name: string, path: string, kind: "file" }} TreeNode
  * @typedef {{ directory: string, entries: TreeNode[] }} FileTree
  */
@@ -372,7 +397,7 @@ function renderNodes(nodes) {
       link.href = hashFor(node.path, "author");
       link.title = node.title;
       if (node.path === asked) link.setAttribute("aria-current", "page");
-      item.append(link);
+      item.append(link, modelButton(node.path, node.model, "tree-model"));
       return item;
     }
     const item = make("li", "tree-file", node.name);
@@ -772,6 +797,13 @@ function renderSession() {
   }
   /** @type {HTMLButtonElement} */ (element("run-all")).disabled = state.running;
   /** @type {HTMLButtonElement} */ (element("interrupt")).disabled = !state.running;
+  const chosen = /** @type {HTMLButtonElement} */ (element("notebook-model"));
+  chosen.textContent = state.model ?? "Model";
+  chosen.title =
+    draft !== undefined
+      ? "Save or cancel the draft before choosing a model."
+      : (state.model ?? "Choose a configured model for this notebook");
+  chosen.disabled = draft !== undefined;
   element("edit").hidden = draft !== undefined;
   element("segments").hidden = draft !== undefined;
   element("editor").hidden = draft === undefined;
@@ -1312,6 +1344,9 @@ function beginEditing() {
 function stopEditing() {
   draft = undefined;
   element("draft").replaceChildren();
+  const status = element("session-status");
+  if (status.textContent === "Save or cancel the draft before choosing a model.")
+    status.textContent = "";
   renderSession();
 }
 
@@ -1920,6 +1955,496 @@ function route() {
     void showSession(asked);
   }
 }
+
+/**
+ * Pi's model settings, in a dialog: the default a Run uses when nothing names
+ * a model, and the custom providers in pi's `models.json`.
+ * @typedef {{ provider: string, id: string, name: string }} ModelChoice
+ * @typedef {{ id: string }} CustomModel
+ * @typedef {{
+ *   id: string,
+ *   baseUrl: string,
+ *   api: string,
+ *   apiKeySet: boolean,
+ *   apiKeyFromCommand: boolean,
+ *   apiKey?: string,
+ *   models: CustomModel[],
+ * }} CustomProvider
+ * @typedef {{
+ *   defaultProvider?: string,
+ *   defaultModel?: string,
+ *   defaultThinking?: string,
+ *   thinkingLevels: string[],
+ *   apis: string[],
+ *   models: ModelChoice[],
+ *   keyed: string[],
+ *   providers: CustomProvider[],
+ * }} ModelPage
+ */
+
+/** The providers being edited, including ones added and not yet saved. */
+/** @type {CustomProvider[]} */
+let providerDraft = [];
+
+/** @type {ModelPage | undefined} */
+let modelPage;
+
+/** The model the dialog will save, once one has been picked. */
+/** @type {{ provider: string, id: string } | undefined} */
+let chosenModel;
+
+/**
+ * When set, the list is only models the user can already call: a provider
+ * with a stored API key, or a custom provider they added.
+ */
+let configuredOnly = false;
+
+/** @param {ModelChoice} model @param {string} needle */
+function rank(model, needle) {
+  if (needle === "") return 0;
+  const label = `${model.provider}/${model.id}`.toLowerCase();
+  if (label.startsWith(needle)) return 0;
+  if (model.id.toLowerCase().startsWith(needle)) return 1;
+  if (model.provider.toLowerCase().startsWith(needle)) return 2;
+  return 3;
+}
+
+/** @param {ModelChoice} model */
+const modelLabel = (model) =>
+  model.name !== model.id
+    ? `${model.provider}/${model.id} — ${model.name}`
+    : `${model.provider}/${model.id}`;
+
+function chosenText() {
+  const chosen = element("models-chosen");
+  if (chosenModel === undefined) {
+    chosen.textContent = "No model chosen yet. Search, then pick one.";
+    return;
+  }
+  const keyed = modelPage?.keyed?.includes(chosenModel.provider) === true;
+  chosen.textContent = `${chosenModel.provider}/${chosenModel.id}${keyed ? " · a key is stored" : " · no key stored"}`;
+}
+
+/** Providers the user has a key for, plus custom providers they added. */
+function configuredProviderIds() {
+  const ids = new Set(modelPage?.keyed ?? []);
+  for (const provider of modelPage?.providers ?? []) {
+    if (provider.id !== "") ids.add(provider.id);
+  }
+  return ids;
+}
+
+function syncConfiguredButton() {
+  const button = /** @type {HTMLButtonElement} */ (element("models-configured"));
+  button.setAttribute("aria-pressed", configuredOnly ? "true" : "false");
+  button.textContent = configuredOnly ? "Show all" : "Show configured";
+}
+
+/** @param {string} query */
+function renderMatches(query) {
+  const list = element("models-matches");
+  const needle = query.trim().toLowerCase();
+  const allowed = configuredOnly ? configuredProviderIds() : undefined;
+  const models = (modelPage?.models ?? [])
+    .filter((model) => allowed === undefined || allowed.has(model.provider))
+    .filter((model) => needle === "" || modelLabel(model).toLowerCase().includes(needle))
+    .sort((a, b) => rank(a, needle) - rank(b, needle));
+  list.replaceChildren(
+    ...models.map((model) => {
+      const item = document.createElement("li");
+      const button = make("button", "", modelLabel(model));
+      button.type = "button";
+      const current = chosenModel?.provider === model.provider && chosenModel.id === model.id;
+      if (current) button.setAttribute("aria-current", "true");
+      button.addEventListener("click", () => {
+        chosenModel = { provider: model.provider, id: model.id };
+        const key = /** @type {HTMLInputElement} */ (element("models-key"));
+        key.value = "";
+        key.placeholder =
+          modelPage?.keyed?.includes(model.provider) === true
+            ? "Leave blank to keep the stored key"
+            : "Paste an API key";
+        chosenText();
+        renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
+      });
+      item.append(button);
+      return item;
+    }),
+  );
+  if (models.length === 0) {
+    list.append(
+      make(
+        "li",
+        "models-none",
+        configuredOnly
+          ? needle === ""
+            ? "No model with a stored key or a custom provider."
+            : "No matching configured model."
+          : "No matching model.",
+      ),
+    );
+  }
+}
+
+/** @param {ModelPage} page */
+function renderModelPage(page) {
+  modelPage = page;
+  providerDraft = page.providers.map((provider) => ({ ...provider, models: [...provider.models] }));
+  if (page.defaultProvider !== undefined && page.defaultModel !== undefined) {
+    chosenModel = { provider: page.defaultProvider, id: page.defaultModel };
+  }
+  chosenText();
+  const key = /** @type {HTMLInputElement} */ (element("models-key"));
+  key.value = "";
+  key.placeholder =
+    chosenModel !== undefined && page.keyed?.includes(chosenModel.provider) === true
+      ? "Leave blank to keep the stored key"
+      : "Paste an API key";
+  /** @type {HTMLInputElement} */ (element("models-search")).value = "";
+
+  const thinking = /** @type {HTMLSelectElement} */ (element("models-thinking"));
+  thinking.replaceChildren(
+    ...page.thinkingLevels.map((level) => {
+      const option = document.createElement("option");
+      option.value = level;
+      option.textContent = level;
+      option.selected = level === page.defaultThinking;
+      return option;
+    }),
+  );
+  renderMatches("");
+  syncConfiguredButton();
+  renderProviders();
+}
+
+function renderProviders() {
+  const list = element("models-providers");
+  const apis = modelPage?.apis ?? [];
+  list.replaceChildren(
+    ...providerDraft.map((provider, at) => {
+      const card = make("div", "provider");
+      const name = document.createElement("input");
+      name.type = "text";
+      name.value = provider.id;
+      name.placeholder = "ollama";
+      name.addEventListener("input", () => (provider.id = name.value.trim()));
+
+      const baseUrl = document.createElement("input");
+      baseUrl.type = "text";
+      baseUrl.value = provider.baseUrl;
+      baseUrl.placeholder = "http://localhost:11434/v1";
+      baseUrl.addEventListener("input", () => (provider.baseUrl = baseUrl.value.trim()));
+
+      const api = document.createElement("select");
+      for (const choice of apis) {
+        const option = document.createElement("option");
+        option.value = choice;
+        option.textContent = choice;
+        option.selected = provider.api === choice;
+        api.append(option);
+      }
+      if (provider.api === "" && apis[0] !== undefined) provider.api = apis[0];
+      api.addEventListener("change", () => (provider.api = api.value));
+
+      const key = document.createElement("input");
+      key.type = "password";
+      key.autocomplete = "off";
+      key.placeholder = provider.apiKeyFromCommand
+        ? "A command supplies the current key; type a key to replace it"
+        : provider.apiKeySet
+          ? "Leave blank to keep the current key"
+          : "API key, or $ENV_VAR";
+      key.addEventListener("input", () => {
+        provider.apiKey = key.value;
+      });
+
+      const models = document.createElement("textarea");
+      models.value = provider.models.map((model) => model.id).join("\n");
+      models.placeholder = "One model id per line";
+      models.addEventListener("input", () => {
+        provider.models = models.value
+          .split("\n")
+          .map((id) => id.trim())
+          .filter((id) => id !== "")
+          .map((id) => ({ id }));
+      });
+
+      const remove = make("button", "", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", () => {
+        providerDraft.splice(at, 1);
+        renderProviders();
+      });
+
+      const nameLabel = document.createElement("label");
+      nameLabel.append("Name", name);
+      const urlLabel = document.createElement("label");
+      urlLabel.append("Base URL", baseUrl);
+      const apiLabel = document.createElement("label");
+      apiLabel.append("API", api);
+      const keyLabel = document.createElement("label");
+      keyLabel.append("API key", key);
+      const modelsLabel = document.createElement("label");
+      modelsLabel.append("Model ids", models);
+      const actions = make("div", "provider-actions");
+      actions.append(remove);
+      card.append(nameLabel, urlLabel, apiLabel, keyLabel, modelsLabel, actions);
+      return card;
+    }),
+  );
+}
+
+/** The notebook the model dialog is choosing for, and the model it names now. */
+let modelTarget = "";
+/** @type {string | undefined} */
+let modelCurrent;
+/** The model page the dialog last loaded, so a search filters that and not the Models tab. */
+/** @type {ModelPage | undefined} */
+let notebookModels;
+
+/**
+ * Models the user can already call: a provider with a stored key, or a custom
+ * provider they added.
+ * @param {ModelPage} page
+ * @returns {ModelChoice[]}
+ */
+function configuredModelsOf(page) {
+  const ids = new Set(page.keyed ?? []);
+  for (const provider of page.providers ?? []) {
+    if (provider.id !== "") ids.add(provider.id);
+  }
+  return page.models.filter((model) => ids.has(model.provider));
+}
+
+/**
+ * Opens the list of configured models for `notebook`. `current` is the one it
+ * names now, when it names one.
+ * @param {string} notebook
+ * @param {string} [current]
+ */
+async function openNotebookModel(notebook, current) {
+  modelTarget = notebook;
+  modelCurrent = current;
+  const dialog = /** @type {HTMLDialogElement} */ (element("notebook-model-dialog"));
+  element("notebook-model-title").textContent = notebook;
+  const status = element("notebook-model-status");
+  status.textContent = "Loading…";
+  element("notebook-model-list").replaceChildren();
+  /** @type {HTMLInputElement} */ (element("notebook-model-search")).value = "";
+  if (!dialog.open) dialog.showModal();
+  try {
+    notebookModels = await fetchModels();
+    renderNotebookModelChoices(
+      configuredModelsOf(notebookModels),
+      /** @type {HTMLInputElement} */ (element("notebook-model-search")).value,
+    );
+    status.textContent = "";
+    /** @type {HTMLInputElement} */ (element("notebook-model-search")).focus();
+  } catch (cause) {
+    status.textContent = `Could not load the models: ${describe(cause)}`;
+  }
+}
+
+/**
+ * @param {ModelChoice[]} models
+ * @param {string} query
+ */
+function renderNotebookModelChoices(models, query) {
+  const list = element("notebook-model-list");
+  const needle = query.trim().toLowerCase();
+  const matched = models
+    .filter((model) => needle === "" || modelLabel(model).toLowerCase().includes(needle))
+    .sort((a, b) => rank(a, needle) - rank(b, needle));
+
+  const clear = make("button", "", "Use the default");
+  clear.type = "button";
+  if (modelCurrent === undefined) clear.setAttribute("aria-current", "true");
+  clear.addEventListener("click", () => void chooseNotebookModel(""));
+  const none = document.createElement("li");
+  none.append(clear);
+
+  list.replaceChildren(
+    none,
+    ...matched.map((model) => {
+      const item = document.createElement("li");
+      const named = `${model.provider}/${model.id}`;
+      const button = make("button", "", modelLabel(model));
+      button.type = "button";
+      if (named === modelCurrent) button.setAttribute("aria-current", "true");
+      button.addEventListener("click", () => void chooseNotebookModel(named));
+      item.append(button);
+      return item;
+    }),
+  );
+  if (matched.length === 0) {
+    list.append(
+      make(
+        "li",
+        "models-none",
+        needle === ""
+          ? "No model with a stored key or a custom provider."
+          : "No matching configured model.",
+      ),
+    );
+  }
+}
+
+/** @param {string} model an empty string clears the notebook's model */
+async function chooseNotebookModel(model) {
+  const notebook = modelTarget;
+  const wanted = model === "" ? undefined : model;
+  const dialog = /** @type {HTMLDialogElement} */ (element("notebook-model-dialog"));
+  if (wanted === modelCurrent) {
+    dialog.close();
+    return;
+  }
+  const status = element("notebook-model-status");
+  status.textContent = "";
+  try {
+    const entry = /** @type {NotebookEntry} */ (
+      await (await post("/api/notebooks/model", { notebook, model })).json()
+    );
+    dialog.close();
+    if (watching?.state.notebook === entry.path) {
+      if (entry.model !== undefined) watching.state.model = entry.model;
+      else delete watching.state.model;
+      renderSession();
+    }
+    if (!element("list").hidden) await showList();
+    else await refreshTree();
+  } catch (cause) {
+    status.textContent = `Could not set the model: ${describe(cause)}`;
+  }
+}
+
+/** @returns {Promise<ModelPage>} */
+async function fetchModels() {
+  const response = await request("/api/models");
+  if (!response.ok) {
+    throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+  }
+  return response.json();
+}
+
+async function openModels() {
+  configuredOnly = false;
+  element("workspace").hidden = true;
+  element("models").hidden = false;
+  element("tab-notebook").removeAttribute("aria-current");
+  element("tab-models").setAttribute("aria-current", "page");
+  const status = element("models-status");
+  status.textContent = "Loading…";
+  try {
+    renderModelPage(await fetchModels());
+    status.textContent = "";
+    /** @type {HTMLInputElement} */ (element("models-search")).focus();
+  } catch (cause) {
+    status.textContent = `Could not load the models: ${describe(cause)}`;
+  }
+}
+
+function closeModels() {
+  element("models").hidden = true;
+  element("workspace").hidden = false;
+  element("tab-models").removeAttribute("aria-current");
+  element("tab-notebook").setAttribute("aria-current", "page");
+}
+
+async function saveModelDefault() {
+  const status = element("models-status");
+  if (chosenModel === undefined) {
+    status.textContent = "Search for a model and pick one before saving.";
+    return;
+  }
+  const { provider, id } = chosenModel;
+  const thinking = /** @type {HTMLSelectElement} */ (element("models-thinking")).value;
+  const apiKey = /** @type {HTMLInputElement} */ (element("models-key")).value.trim();
+  status.textContent = "";
+  try {
+    await post("/api/models/default", {
+      provider,
+      model: id,
+      ...(thinking === "" ? {} : { thinking }),
+    });
+    if (apiKey !== "") await post("/api/models/key", { provider, apiKey });
+    renderModelPage(await fetchModels());
+    status.textContent = apiKey === "" ? "Saved the default." : "Saved the default and the key.";
+  } catch (cause) {
+    status.textContent = `Could not save: ${describe(cause)}`;
+  }
+}
+
+async function saveModelProviders() {
+  const status = element("models-status");
+  status.textContent = "";
+  try {
+    await post("/api/models/providers", {
+      providers: providerDraft
+        .filter(
+          (provider) =>
+            provider.id.trim() !== "" ||
+            provider.baseUrl.trim() !== "" ||
+            provider.models.length > 0,
+        )
+        .map((provider) => ({
+          id: provider.id.trim(),
+          baseUrl: provider.baseUrl.trim(),
+          api: provider.api,
+          models: provider.models.map((model) => model.id),
+          ...(provider.apiKey !== undefined && provider.apiKey !== ""
+            ? { apiKey: provider.apiKey }
+            : {}),
+        })),
+    });
+    status.textContent = "Saved the providers.";
+    renderModelPage(await fetchModels());
+  } catch (cause) {
+    status.textContent = `Could not save the providers: ${describe(cause)}`;
+  }
+}
+
+function addProvider() {
+  const api = modelPage?.apis[0] ?? "openai-completions";
+  providerDraft.push({
+    id: "",
+    baseUrl: "",
+    api,
+    apiKeySet: false,
+    apiKeyFromCommand: false,
+    models: [],
+  });
+  renderProviders();
+}
+
+element("tab-notebook").addEventListener("click", closeModels);
+element("tab-models").addEventListener("click", () => void openModels());
+element("models-close").addEventListener("click", closeModels);
+element("notebook-model").addEventListener("click", () => {
+  if (watching === undefined) return;
+  void openNotebookModel(watching.state.notebook, watching.state.model);
+});
+element("notebook-model-cancel").addEventListener("click", () => {
+  /** @type {HTMLDialogElement} */ (element("notebook-model-dialog")).close();
+});
+element("notebook-model-search").addEventListener("input", () => {
+  if (notebookModels === undefined) return;
+  renderNotebookModelChoices(
+    configuredModelsOf(notebookModels),
+    /** @type {HTMLInputElement} */ (element("notebook-model-search")).value,
+  );
+});
+element("models-search").addEventListener("input", () => {
+  renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
+});
+element("models-configured").addEventListener("click", () => {
+  configuredOnly = !configuredOnly;
+  syncConfiguredButton();
+  renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
+});
+element("models-save-default").addEventListener("click", () => void saveModelDefault());
+element("models-save-providers").addEventListener("click", () => void saveModelProviders());
+element("models-add").addEventListener("click", addProvider);
+element("models-form").addEventListener("submit", (event) => event.preventDefault());
 
 element("run-all").addEventListener("click", () => void startRun());
 element("interrupt").addEventListener("click", () => void interrupt());

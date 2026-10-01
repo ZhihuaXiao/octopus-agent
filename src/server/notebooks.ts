@@ -15,8 +15,9 @@ import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
-import { applyEdit } from "../notebook/edit.js";
-import { cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
+import { formatDiagnostics } from "../notebook/diagnostic.js";
+import { applyEdit, notebookWithModel } from "../notebook/edit.js";
+import { type Notebook, cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
 import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
 
@@ -25,6 +26,8 @@ export interface NotebookEntry {
   readonly path: string;
   /** The Notebook's declared title, or its file's name when it declares none. */
   readonly title: string;
+  /** The model the Notebook names, when it names one. */
+  readonly model?: string;
 }
 
 const NOTEBOOK_EXTENSION = ".md";
@@ -40,10 +43,19 @@ const isSkipped = (name: string) => name === "node_modules" || name.startsWith("
 export const pathWithin = (directory: string, file: string) =>
   relative(directory, file).split(sep).join("/");
 
+function entryOf(directory: string, file: string, notebook: Notebook): NotebookEntry {
+  const model = notebook.metadata.model;
+  return {
+    path: pathWithin(directory, file),
+    title: titleOf(notebook, file),
+    ...(model !== undefined ? { model } : {}),
+  };
+}
+
 async function readEntry(directory: string, file: string): Promise<NotebookEntry | undefined> {
   const parsed = parseNotebook(await readFile(file, "utf8"));
   if (!parsed.ok || cellsOf(parsed.notebook).length === 0) return undefined;
-  return { path: pathWithin(directory, file), title: titleOf(parsed.notebook, file) };
+  return entryOf(directory, file, parsed.notebook);
 }
 
 /**
@@ -152,7 +164,14 @@ export async function copyNotebook(directory: string, from: string, to: string):
     if ((cause as NodeJS.ErrnoException).code === "EEXIST") return { kind: "exists" };
     throw cause;
   }
-  return { kind: "copied", entry: { path: pathWithin(directory, target), title: entry.title } };
+  return {
+    kind: "copied",
+    entry: {
+      path: pathWithin(directory, target),
+      title: entry.title,
+      ...(entry.model !== undefined ? { model: entry.model } : {}),
+    },
+  };
 }
 
 /** How making a new Notebook went. */
@@ -213,6 +232,8 @@ export type TreeEntry =
       readonly name: string;
       readonly path: string;
       readonly title: string;
+      /** The model the Notebook names, when it names one. */
+      readonly model?: string;
     }
   | { readonly kind: "file"; readonly name: string; readonly path: string };
 
@@ -256,7 +277,13 @@ async function readTree(directory: string, root: string): Promise<TreeEntry[]> {
         extname(dirent.name) === NOTEBOOK_EXTENSION ? await readEntry(root, path) : undefined;
       entries.push(
         notebook !== undefined
-          ? { kind: "notebook", name: dirent.name, path: relativePath, title: notebook.title }
+          ? {
+              kind: "notebook",
+              name: dirent.name,
+              path: relativePath,
+              title: notebook.title,
+              ...(notebook.model !== undefined ? { model: notebook.model } : {}),
+            }
           : { kind: "file", name: dirent.name, path: relativePath },
       );
     }
@@ -338,6 +365,67 @@ export async function renameNotebook(
 
   return {
     kind: "renamed",
-    entry: { path: pathWithin(directory, target), title: entry.title },
+    entry: {
+      path: pathWithin(directory, target),
+      title: entry.title,
+      ...(entry.model !== undefined ? { model: entry.model } : {}),
+    },
   };
+}
+
+/** How naming a Notebook's model went. */
+export type Assigned =
+  | { readonly kind: "saved"; readonly entry: NotebookEntry }
+  | { readonly kind: "absent" }
+  | { readonly kind: "refused"; readonly problem: string };
+
+/**
+ * Writes `model` into the Notebook at `name`, or removes the field when
+ * `model` is absent. A Notebook that already names that model is left as it
+ * was. One a session holds is not this function's to write: the session writes
+ * its own file, so the two cannot pass each other.
+ */
+export async function assignNotebookModel(
+  directory: string,
+  name: string,
+  model: string | undefined,
+): Promise<Assigned> {
+  const file = fileWithin(directory, name);
+  if (file === undefined) return { kind: "absent" };
+  const relativePath = pathWithin(directory, file);
+
+  let source: string;
+  try {
+    source = await readFile(file, "utf8");
+  } catch (cause) {
+    const { code } = cause as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") return { kind: "absent" };
+    throw cause;
+  }
+
+  const parsed = parseNotebook(source);
+  if (!parsed.ok) {
+    return {
+      kind: "refused",
+      problem: `Cannot save ${relativePath}:\n${formatDiagnostics(parsed.errors)}`,
+    };
+  }
+  if (cellsOf(parsed.notebook).length === 0) return { kind: "absent" };
+  if (parsed.notebook.metadata.model === model) {
+    return { kind: "saved", entry: entryOf(directory, file, parsed.notebook) };
+  }
+
+  const made = notebookWithModel(parsed.notebook, model);
+  if (!made.ok) {
+    return {
+      kind: "refused",
+      problem: `Cannot save ${relativePath}:\n${formatDiagnostics(made.errors)}`,
+    };
+  }
+  if (cellsOf(made.notebook).length === 0) {
+    return { kind: "refused", problem: `Cannot save ${relativePath}: it has no cells.` };
+  }
+
+  await writeFile(file, made.source, "utf8");
+  return { kind: "saved", entry: entryOf(directory, file, made.notebook) };
 }

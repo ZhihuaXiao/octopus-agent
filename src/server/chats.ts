@@ -94,6 +94,9 @@ export async function promoteChat(
     entry: {
       path: pathWithin(directory, named.file),
       title: titleOf(imported.notebook, named.file),
+      ...(imported.notebook.metadata.model !== undefined
+        ? { model: imported.notebook.metadata.model }
+        : {}),
     },
   };
 }

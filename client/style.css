@@ -79,14 +79,31 @@ body {
   opacity: 0.8;
 }
 
+.tree-notebook {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
 .tree-notebook a {
   display: block;
+  flex: 1;
+  min-width: 0;
   padding: 0.15rem 0.4rem;
   border-radius: 0.3rem;
   color: inherit;
   text-decoration: none;
   font-family: ui-monospace, monospace;
   overflow-wrap: anywhere;
+}
+
+.tree-model {
+  flex: none;
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.35rem;
 }
 
 .tree-notebook a:hover {
@@ -172,10 +189,158 @@ h2 {
   font-size: 0.9rem;
 }
 
-.directory {
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0.3rem 0.3rem 0 0;
+  background: transparent;
+  margin-bottom: -1px;
+}
+
+.tabs button[aria-current="page"] {
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.models {
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 0.4rem;
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.2rem;
+}
+
+.models-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.models-heading h2 {
   margin: 0;
+}
+
+.models fieldset {
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.3rem;
+  margin: 1rem 0 0;
+  padding: 0.8rem;
+}
+
+.models label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.models input,
+.models select,
+.models textarea {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.models textarea {
   font-family: ui-monospace, monospace;
-  overflow-wrap: anywhere;
+  min-height: 4.5rem;
+}
+
+.models .provider {
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.6rem;
+}
+
+.models-search-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.models-search-row label {
+  flex: 1;
+  margin: 0;
+}
+
+#models-configured {
+  white-space: nowrap;
+}
+
+#models-configured[aria-pressed="true"] {
+  border-color: #3b82f6;
+}
+
+.models-matches {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  max-height: 20rem;
+  overflow: auto;
+}
+
+.models-matches button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.models-matches button[aria-current="true"] {
+  border-color: #3b82f6;
+}
+
+#notebook-model-dialog {
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 0.4rem;
+  padding: 1rem 1.2rem;
+  max-width: 32rem;
+  color: canvastext;
+  background: canvas;
+}
+
+#notebook-model-dialog::backdrop {
+  background: color-mix(in srgb, canvastext 40%, transparent);
+}
+
+#notebook-model-dialog h2 {
+  margin: 0;
+}
+
+#notebook-model-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0.6rem 0;
+  font-size: 0.9rem;
+}
+
+#notebook-model-dialog input {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.models-chosen {
+  margin: 0.4rem 0 0;
+  font-family: ui-monospace, monospace;
 }
 
 .notebooks {
@@ -191,6 +356,20 @@ h2 {
   gap: 1rem;
   padding: 0.6rem 0;
   border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.notebooks li > a:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.notebooks .notebook-model,
+#notebook-model {
+  flex: none;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notebooks .run-link {

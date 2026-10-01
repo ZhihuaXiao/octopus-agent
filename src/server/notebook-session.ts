@@ -32,7 +32,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { type AgentFactory, type ToolCall, emptyResult, noUsage } from "../agent/agent.js";
 import { thisMachine } from "../export/credentials.js";
 import { type Exported, exportNotebook } from "../export/html.js";
-import { type NotebookEdit, applyEdit } from "../notebook/edit.js";
+import { type NotebookEdit, applyEdit, notebookWithModel } from "../notebook/edit.js";
 import {
   type Cell,
   type CellType,
@@ -62,7 +62,14 @@ import {
   openJournal,
   readJournals,
 } from "./journal.js";
-import { fileWithin, pathWithin, renameNotebook, type Renamed } from "./notebooks.js";
+import {
+  type Assigned,
+  type Renamed,
+  assignNotebookModel,
+  fileWithin,
+  pathWithin,
+  renameNotebook,
+} from "./notebooks.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -133,6 +140,8 @@ export interface NotebookSessionState {
   /** The Notebook's path relative to the served directory, forward slashes throughout. */
   readonly notebook: string;
   readonly title: string;
+  /** The model the Notebook names, when it names one. A Cell may still name its own. */
+  readonly model?: string;
   /**
    * Which version of the file the session holds. A save says which revision
    * its draft was made from, so one made from an earlier version — the file
@@ -266,6 +275,14 @@ export interface NotebookSession {
    * records the name so a server that starts later finds it there.
    */
   relocate(nextPath: string, nextNotebook: string): void;
+  /**
+   * Writes `model` into the Notebook, or removes the field when `model` is
+   * absent, and tells whoever is watching. A model the Notebook already names
+   * changes nothing. The file on disk is taken up first when it has moved on,
+   * so the model is set on the Notebook as it is, not on a copy the session
+   * has fallen behind.
+   */
+  setModel(model: string | undefined): Promise<Saved>;
 }
 
 interface NotebookSessionSetup {
@@ -498,6 +515,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     notebook,
     title: titleOf(parsed, path),
     revision,
+    ...(parsed.metadata.model !== undefined ? { model: parsed.metadata.model } : {}),
     ...(parsed.frontmatter !== undefined ? { frontmatter: parsed.frontmatter.text } : {}),
     inputs: parsed.metadata.inputs ?? [],
     segments: parsed.segments.map((segment) =>
@@ -547,6 +565,25 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     const made = readable(applyEdit(parsed, edit), `Cannot save ${notebook}`);
     if (!made.ok) return { kind: "refused", problem: made.problem };
 
+    await writeFile(path, made.source, "utf8");
+    adopt(made.source, made.notebook);
+    return { kind: "saved" };
+  };
+
+  const writeModel = async (model: string | undefined): Promise<Saved> => {
+    const onDisk = await readFile(path, "utf8").catch((cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return undefined;
+      throw cause;
+    });
+    if (onDisk !== undefined && onDisk !== source) {
+      const found = readable(parseNotebook(onDisk), `Cannot open ${notebook}`);
+      if (!found.ok) return { kind: "refused", problem: found.problem };
+      adopt(onDisk, found.notebook);
+    }
+    if (parsed.metadata.model === model) return { kind: "saved" };
+
+    const made = readable(notebookWithModel(parsed, model), `Cannot save ${notebook}`);
+    if (!made.ok) return { kind: "refused", problem: made.problem };
     await writeFile(path, made.source, "utf8");
     adopt(made.source, made.notebook);
     return { kind: "saved" };
@@ -642,6 +679,12 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     save(request) {
       const saved = saving.then(() => save(request));
       // The next save waits for this one however it went; its failure is its caller's.
+      saving = saved.catch(() => undefined);
+      return saved;
+    },
+
+    setModel(model) {
+      const saved = saving.then(() => writeModel(model));
       saving = saved.catch(() => undefined);
       return saved;
     },
@@ -744,6 +787,11 @@ export interface NotebookSessions {
    * busy with is left where it is.
    */
   rename(from: string, to: string): Promise<RenameResult>;
+  /**
+   * Sets the Notebook's model, or clears it. One a session holds is set there,
+   * so a browser watching it is told; one that is only a file is written directly.
+   */
+  setModel(notebook: string, model: string | undefined): Promise<Assigned>;
   get(id: string): NotebookSession | undefined;
   /**
    * Interrupts every Run in progress and resolves once each has stopped,
@@ -872,6 +920,24 @@ export async function createNotebookSessions(
       const path = fileWithin(directory, notebook);
       if (path === undefined) return { kind: "absent" };
       return openAt(path);
+    },
+
+    async setModel(notebook, model) {
+      const path = fileWithin(directory, notebook);
+      if (path === undefined) return { kind: "absent" };
+      const session = byPath.get(path);
+      if (session === undefined) return assignNotebookModel(directory, notebook, model);
+      const saved = await session.setModel(model);
+      if (saved.kind !== "saved") return { kind: "refused", problem: saved.problem };
+      const state = session.state();
+      return {
+        kind: "saved",
+        entry: {
+          path: state.notebook,
+          title: state.title,
+          ...(state.model !== undefined ? { model: state.model } : {}),
+        },
+      };
     },
 
     async rename(from, to) {

@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, create, duplicate, promote, export — are HTTP
+ * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, and the model a Notebook names — are HTTP
  * requests, each with an answer; what a Run produces is a stream, and goes to
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
@@ -26,6 +26,7 @@ import { basename, extname, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
@@ -35,6 +36,15 @@ import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
 import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js";
 import { type ChatsOptions, listChats, promoteChat } from "./chats.js";
+import {
+  type DefaultEdit,
+  type ProviderEdit,
+  isConfiguredModel,
+  readModelPage,
+  saveDefaultModel,
+  saveProviderKey,
+  saveProviders,
+} from "./models.js";
 import { copyNotebook, createNotebook, listNotebooks, listTree } from "./notebooks.js";
 import {
   type NotebookSessions,
@@ -70,6 +80,13 @@ const NOTEBOOKS_ROUTE = "/api/notebooks";
 const TREE_ROUTE = "/api/tree";
 /** A Notebook's file renamed, Runs included, the session following when one holds it. */
 const RENAME_ROUTE = "/api/notebooks/rename";
+/** The model a Notebook names, chosen from the models the user can already call. */
+const NOTEBOOK_MODEL_ROUTE = "/api/notebooks/model";
+/** Pi's model settings: the default, and the custom providers. */
+const MODELS_ROUTE = "/api/models";
+const MODELS_DEFAULT_ROUTE = "/api/models/default";
+const MODELS_KEY_ROUTE = "/api/models/key";
+const MODELS_PROVIDERS_ROUTE = "/api/models/providers";
 /** The query the startup URL carries the token in, and the cookie a browser carries its Connection in. */
 const TOKEN_QUERY = "token";
 const CONNECTION_COOKIE = "octo_connection";
@@ -127,6 +144,11 @@ export interface ServerOptions {
    * none reads what pi has on the machine it runs on.
    */
   readonly chatDirectory?: string;
+  /**
+   * Where pi keeps its settings and custom models. Pi's own place when
+   * absent; named by a test, so that none reads or writes the machine's.
+   */
+  readonly agentDirectory?: string;
 }
 
 export interface RunningServer {
@@ -199,6 +221,131 @@ async function serveTree(directory: string, response: ServerResponse): Promise<v
   json(response, 200, { directory, entries: await listTree(directory) });
 }
 
+/** Pi's models and the default a Run uses when a Notebook does not name one. */
+async function serveModels(agentDirectory: string, response: ServerResponse): Promise<void> {
+  const read = await readModelPage(agentDirectory);
+  if (!read.ok) {
+    reply(response, 422, `${read.problem}\n`);
+    return;
+  }
+  json(response, 200, read.value);
+}
+
+async function saveModelsDefault(
+  agentDirectory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const edit = defaultEditOf(await readJson(request));
+  if (edit === undefined) {
+    reply(
+      response,
+      400,
+      "The request must name a provider and a model, and may name a thinking level, as JSON.\n",
+    );
+    return;
+  }
+  const saved = await saveDefaultModel(agentDirectory, edit);
+  if (!saved.ok) {
+    reply(response, 422, `${saved.problem}\n`);
+    return;
+  }
+  response.writeHead(204);
+  response.end();
+}
+
+async function saveModelProviders(
+  agentDirectory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const edits = providerEditsOf(await readJson(request));
+  if (edits === undefined) {
+    reply(response, 400, "The request must list the providers, as JSON.\n");
+    return;
+  }
+  const saved = await saveProviders(agentDirectory, edits);
+  if (!saved.ok) {
+    reply(response, 422, `${saved.problem}\n`);
+    return;
+  }
+  response.writeHead(204);
+  response.end();
+}
+
+async function saveModelKey(
+  agentDirectory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["provider", "apiKey"]) ||
+    typeof body.provider !== "string" ||
+    typeof body.apiKey !== "string"
+  ) {
+    reply(response, 400, "The request must name a provider and a key, as JSON.\n");
+    return;
+  }
+  const saved = await saveProviderKey(agentDirectory, body.provider, body.apiKey);
+  if (!saved.ok) {
+    reply(response, 422, `${saved.problem}\n`);
+    return;
+  }
+  response.writeHead(204);
+  response.end();
+}
+
+function defaultEditOf(body: unknown): DefaultEdit | undefined {
+  if (!isRecord(body) || !hasKeys(body, ["provider", "model"], ["thinking"])) return undefined;
+  if (typeof body.provider !== "string" || typeof body.model !== "string") return undefined;
+  if (body.thinking !== undefined && typeof body.thinking !== "string") return undefined;
+  return {
+    provider: body.provider,
+    model: body.model,
+    ...(body.thinking !== undefined ? { thinking: body.thinking } : {}),
+  };
+}
+
+function providerEditsOf(body: unknown): ProviderEdit[] | undefined {
+  if (!isRecord(body) || !hasKeys(body, ["providers"]) || !Array.isArray(body.providers)) {
+    return undefined;
+  }
+  const edits: ProviderEdit[] = [];
+  for (const value of body.providers) {
+    const edit = providerEditOf(value);
+    if (edit === undefined) return undefined;
+    edits.push(edit);
+  }
+  return edits;
+}
+
+function providerEditOf(value: unknown): ProviderEdit | undefined {
+  if (!isRecord(value)) return undefined;
+  if (!hasKeys(value, ["id", "baseUrl", "api", "models"], ["apiKey", "clearApiKey"]))
+    return undefined;
+  if (
+    typeof value.id !== "string" ||
+    typeof value.baseUrl !== "string" ||
+    typeof value.api !== "string"
+  ) {
+    return undefined;
+  }
+  if (!Array.isArray(value.models) || value.models.some((id) => typeof id !== "string"))
+    return undefined;
+  if (value.apiKey !== undefined && typeof value.apiKey !== "string") return undefined;
+  if (value.clearApiKey !== undefined && typeof value.clearApiKey !== "boolean") return undefined;
+  return {
+    id: value.id,
+    baseUrl: value.baseUrl,
+    api: value.api,
+    models: value.models as string[],
+    ...(value.apiKey !== undefined ? { apiKey: value.apiKey } : {}),
+    ...(value.clearApiKey !== undefined ? { clearApiKey: value.clearApiKey } : {}),
+  };
+}
+
 /** Renames a Notebook, and the session that holds it when one does. */
 async function renameOpen(
   served: Served,
@@ -235,6 +382,83 @@ async function renameOpen(
       return;
     case "renamed":
       json(response, 200, renamed.entry);
+      return;
+  }
+}
+
+/**
+ * The model a request names, `provider/id`, or nothing when it is not one.
+ * An empty string is a request to clear the Notebook's model.
+ */
+function requestedModel(model: string): { provider: string; id: string } | "" | undefined {
+  if (model === "") return "";
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1) return undefined;
+  const provider = model.slice(0, slash);
+  const id = model.slice(slash + 1);
+  // The id is whatever the provider lists, which may contain a space. The
+  // provider name is the part pi uses to find a credential, and that does not.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider) || id.trim() === "" || id !== id.trim()) {
+    return undefined;
+  }
+  return { provider, id };
+}
+
+/** Sets the model a Notebook names, from the models the user can already call. */
+async function assignModel(
+  served: Served,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["notebook", "model"]) ||
+    typeof body.notebook !== "string" ||
+    typeof body.model !== "string"
+  ) {
+    reply(
+      response,
+      400,
+      "The request must name the notebook and the model, as JSON. An empty model clears it.\n",
+    );
+    return;
+  }
+
+  const named = requestedModel(body.model.trim());
+  if (named === undefined) {
+    reply(response, 400, "Name the model as provider/model.\n");
+    return;
+  }
+  if (named !== "") {
+    const configured = await isConfiguredModel(served.agentDirectory, named.provider, named.id);
+    if (!configured.ok) {
+      reply(response, 422, `${configured.problem}\n`);
+      return;
+    }
+    if (!configured.value) {
+      reply(
+        response,
+        422,
+        `No configured model ${named.provider}/${named.id}. Choose one whose provider has a stored key, or a custom provider.\n`,
+      );
+      return;
+    }
+  }
+
+  const assigned = await served.sessions.setModel(
+    body.notebook,
+    named === "" ? undefined : `${named.provider}/${named.id}`,
+  );
+  switch (assigned.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "refused":
+      reply(response, 422, `${assigned.problem}\n`);
+      return;
+    case "saved":
+      json(response, 200, assigned.entry);
       return;
   }
 }
@@ -638,6 +862,8 @@ interface Served {
   readonly auth: Auth;
   /** Where the served directory's chats are, when not where pi keeps them. */
   readonly chats: ChatsOptions;
+  /** Where pi keeps its settings and custom models. */
+  readonly agentDirectory: string;
 }
 
 /** The value of one cookie among those a request carries, or nothing. */
@@ -788,6 +1014,32 @@ async function handle(
     if (permitted(WRITES, request, response)) await renameOpen(served, request, response);
     return;
   }
+  if (pathname === NOTEBOOK_MODEL_ROUTE) {
+    if (permitted(WRITES, request, response)) await assignModel(served, request, response);
+    return;
+  }
+  if (pathname === MODELS_ROUTE) {
+    if (permitted(READS, request, response)) await serveModels(served.agentDirectory, response);
+    return;
+  }
+  if (pathname === MODELS_DEFAULT_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await saveModelsDefault(served.agentDirectory, request, response);
+    }
+    return;
+  }
+  if (pathname === MODELS_KEY_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await saveModelKey(served.agentDirectory, request, response);
+    }
+    return;
+  }
+  if (pathname === MODELS_PROVIDERS_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await saveModelProviders(served.agentDirectory, request, response);
+    }
+    return;
+  }
   if (pathname === TREE_ROUTE) {
     if (permitted(READS, request, response)) await serveTree(served.directory, response);
     return;
@@ -854,6 +1106,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     sessions,
     auth,
     chats: options.chatDirectory !== undefined ? { chatDirectory: options.chatDirectory } : {},
+    agentDirectory: options.agentDirectory ?? getAgentDir(),
   };
 
   const server = createServer((request, response) => {

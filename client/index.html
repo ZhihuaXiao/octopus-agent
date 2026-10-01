@@ -22,7 +22,11 @@
         <p id="connect-status" class="status"></p>
       </form>
     </section>
-    <div class="layout">
+    <nav class="tabs" aria-label="Pages">
+      <button id="tab-notebook" type="button" aria-current="page">Notebook</button>
+      <button id="tab-models" type="button">Models</button>
+    </nav>
+    <div id="workspace" class="layout">
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
           <h2 id="tree-root" class="tree-root"></h2>
@@ -58,6 +62,13 @@
             <p id="notebook" class="path"></p>
           </div>
           <div id="author-controls" class="controls">
+            <button
+              id="notebook-model"
+              type="button"
+              title="Choose a configured model for this notebook"
+            >
+              Model
+            </button>
             <button id="run-all" type="button">Run all</button>
             <button id="interrupt" type="button" disabled>Interrupt</button>
             <button id="edit" type="button">Edit</button>
@@ -98,6 +109,72 @@
         </section>
       </main>
     </div>
+    <section id="models" class="models" hidden>
+      <form id="models-form">
+        <div class="models-heading">
+          <h2>Models</h2>
+          <button id="models-close" type="button">Close</button>
+        </div>
+        <p class="hint">
+          Pi's model settings for this user. Search for a model, save it as the default, and store
+          an API key for its provider. <strong>Show configured</strong> lists only models whose
+          provider already has a stored key, and models from custom providers you added.
+          <strong>Show all</strong> brings the full list back. A notebook or a cell that names its
+          own model still uses that. A key already stored is not shown; leave the field blank to
+          keep it.
+        </p>
+        <fieldset>
+          <legend>Default</legend>
+          <p id="models-chosen" class="models-chosen">No model chosen yet.</p>
+          <div class="models-search-row">
+            <label
+              >Search
+              <input id="models-search" type="search" placeholder="anthropic, gpt, llama…" />
+            </label>
+            <button id="models-configured" type="button" aria-pressed="false">
+              Show configured
+            </button>
+          </div>
+          <ul id="models-matches" class="models-matches"></ul>
+          <label
+            >Thinking
+            <select id="models-thinking"></select>
+          </label>
+          <label
+            >API key for this provider
+            <input id="models-key" type="password" autocomplete="off" />
+          </label>
+          <button id="models-save-default" type="button">Save</button>
+        </fieldset>
+        <fieldset>
+          <legend>Custom providers</legend>
+          <p class="hint">
+            For an OpenAI-compatible proxy, choose openai-completions and a base URL that ends at
+            /v1. Pi adds /chat/completions itself. The Google API wants the version root, such as
+            …/v1beta, not a chat completions path.
+          </p>
+          <div id="models-providers"></div>
+          <button id="models-add" type="button">Add provider</button>
+          <button id="models-save-providers" type="button">Save providers</button>
+        </fieldset>
+        <p id="models-status" class="status"></p>
+      </form>
+    </section>
+    <dialog id="notebook-model-dialog">
+      <h2 id="notebook-model-title">Model</h2>
+      <p class="hint">
+        Models whose provider has a stored API key, and models from custom providers you added. The
+        one you pick is written into this notebook. A cell that names its own model still uses that.
+        <strong>Use the default</strong> clears it.
+      </p>
+      <label
+        >Search
+        <input id="notebook-model-search" type="search" placeholder="provider or model" />
+      </label>
+      <ul id="notebook-model-list" class="models-matches"></ul>
+      <p id="notebook-model-status" class="status"></p>
+      <button id="notebook-model-cancel" type="button">Cancel</button>
+    </dialog>
     <script type="module" src="/client/main.js"></script>
   </body>
 </html>
