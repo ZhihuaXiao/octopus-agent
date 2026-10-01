@@ -2926,6 +2926,25 @@ describe("promoting a chat", () => {
     expect((await get(server, `/api/chats/${id}/promote`)).status).toBe(405);
     expect((await post(server, "/api/chats", {})).status).toBe(405);
   });
+
+  it("deletes the chat that was named, and leaves the others and any notebook", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const kept = chatIn(server, chatDirectory, chat("Count the files.", "Three."));
+    const gone = chatIn(server, chatDirectory, chat("Audit it.", "Audited."));
+
+    const response = await get(server, `/api/chats/${gone.id}`, { method: "DELETE" });
+
+    expect(response.status).toBe(204);
+    await expect(readFile(gone.file, "utf8")).rejects.toThrow();
+    expect(await readFile(kept.file, "utf8")).toContain("Count the files.");
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+    const listed = (await (await get(server, "/api/chats")).json()) as { chats: { id: string }[] };
+    expect(listed.chats.map((entry) => entry.id)).toEqual([kept.id]);
+
+    expect((await get(server, `/api/chats/${gone.id}`, { method: "DELETE" })).status).toBe(404);
+    expect((await get(server, `/api/chats/no-such-chat`, { method: "DELETE" })).status).toBe(404);
+    expect((await post(server, `/api/chats/${kept.id}`, {})).status).toBe(405);
+  });
 });
 
 describe("model settings", () => {

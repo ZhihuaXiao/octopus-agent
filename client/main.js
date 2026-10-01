@@ -539,10 +539,15 @@ function renderChat(chat) {
     make("span", "said", chat.name ?? chat.firstMessage),
     make("span", "when", `${new Date(chat.modified).toLocaleString()} · ${messages}`),
   );
-  const button = make("button", "", "Promote");
-  button.type = "button";
-  button.addEventListener("click", () => void promote(chat, button));
-  item.append(about, button);
+  const promoteButton = make("button", "", "Promote");
+  promoteButton.type = "button";
+  promoteButton.addEventListener("click", () => void promote(chat, promoteButton));
+  const deleteButton = make("button", "", "Delete");
+  deleteButton.type = "button";
+  deleteButton.addEventListener("click", () => void removeChat(chat, deleteButton));
+  const actions = make("div", "chat-actions");
+  actions.append(promoteButton, deleteButton);
+  item.append(about, actions);
   return item;
 }
 
@@ -570,6 +575,36 @@ async function promote(chat, button) {
   } catch (cause) {
     element("chats-status").textContent = `Could not promote: ${describe(cause)}`;
   } finally {
+    button.disabled = false;
+  }
+}
+
+/**
+ * Removes the chat, after the reader confirms: pi's session file, not a
+ * notebook already made from it.
+ * @param {ChatEntry} chat
+ * @param {HTMLButtonElement} button
+ */
+async function removeChat(chat, button) {
+  const name = chat.name ?? chat.firstMessage;
+  if (
+    !window.confirm(
+      `Delete “${name}”? Pi's session file is removed. A notebook already made from it is kept.`,
+    )
+  ) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await request(`/api/chats/${encodeURIComponent(chat.id)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    await showChats();
+  } catch (cause) {
+    element("chats-status").textContent = `Could not delete: ${describe(cause)}`;
     button.disabled = false;
   }
 }

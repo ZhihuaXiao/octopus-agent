@@ -425,6 +425,12 @@ h2 {
   opacity: 0.7;
 }
 
+.chat-actions {
+  display: flex;
+  flex: none;
+  gap: 0.4rem;
+}
+
 .chats button {
   flex: none;
 }

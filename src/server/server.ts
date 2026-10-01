@@ -35,7 +35,7 @@ import { DOWNLOAD, runFileType } from "../run/store.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
 import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js";
-import { type ChatsOptions, listChats, promoteChat } from "./chats.js";
+import { type ChatsOptions, deleteChat, listChats, promoteChat } from "./chats.js";
 import {
   type DefaultEdit,
   type ProviderEdit,
@@ -95,6 +95,8 @@ const SESSIONS_ROUTE = "/api/sessions";
 const CHATS_ROUTE = "/api/chats";
 /** One of them, to be promoted into a Notebook. */
 const PROMOTE_ROUTE = /^\/api\/chats\/([^/]+)\/promote$/;
+/** One of them, to be removed: its session file, and nothing already made from it. */
+const DELETE_CHAT_ROUTE = /^\/api\/chats\/([^/]+)$/;
 /** A Notebook Session by id, and what may be asked of it. */
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export))?$/;
 /** The query naming which Run an export is of, when not the latest. */
@@ -556,6 +558,30 @@ async function promote(
       return;
     case "promoted":
       json(response, 201, promoted.entry);
+      return;
+  }
+}
+
+/** Removes a chat the reader named: the session file pi listed, after they asked. */
+async function removeChat(
+  served: Served,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!permitted(["DELETE"], request, response)) return;
+  const id = decoded(matched[1] ?? "");
+  const removed = await deleteChat(served.directory, id ?? "", served.chats);
+  switch (removed.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "refused":
+      reply(response, 422, `${removed.problem}\n`);
+      return;
+    case "removed":
+      response.writeHead(204);
+      response.end();
       return;
   }
 }
@@ -1059,6 +1085,11 @@ async function handle(
   const promoting = PROMOTE_ROUTE.exec(pathname);
   if (promoting !== null) {
     await promote(served, promoting, request, response);
+    return;
+  }
+  const deleting = DELETE_CHAT_ROUTE.exec(pathname);
+  if (deleting !== null) {
+    await removeChat(served, deleting, request, response);
     return;
   }
 

@@ -7,13 +7,19 @@
  * `importSession` the command line's `import` is, given the file pi's list
  * names rather than one typed by hand, so that the person at the browser need
  * not go looking under `~/.pi` for it. Pi's list is read and its files are
- * copied, never written (ADR-0022).
+ * copied, never written (ADR-0022). Deleting a Chat is the exception the
+ * reader asks for: the one file the list named is removed, and a Notebook
+ * already made from it is left where it is.
  */
+
+import { unlink } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { importSession } from "../import/pi-session.js";
 import { titleOf } from "../notebook/notebook.js";
+import { within } from "../util/paths.js";
 import { type NotebookEntry, notebookTarget, pathWithin } from "./notebooks.js";
 
 /** One Chat as the browser lists it: enough to tell it from the others. */
@@ -99,4 +105,45 @@ export async function promoteChat(
         : {}),
     },
   };
+}
+
+/** How deleting a Chat went. */
+export type Removed =
+  | { readonly kind: "removed" }
+  /** No Chat pi lists here has the id, or its file is already gone. */
+  | { readonly kind: "absent" }
+  /** The file the list named is not one this page should remove. */
+  | { readonly kind: "refused"; readonly problem: string };
+
+/**
+ * Removes the Chat pi lists under `id`: the session file itself, and nothing
+ * else. A Notebook promoted from it is a copy, and stays.
+ */
+export async function deleteChat(
+  directory: string,
+  id: string,
+  options: ChatsOptions = {},
+): Promise<Removed> {
+  const found = await SessionManager.list(directory, options.chatDirectory);
+  const session = found.find((candidate) => candidate.id === id);
+  if (session === undefined) return { kind: "absent" };
+
+  const file = resolve(session.path);
+  if (!file.endsWith(".jsonl")) {
+    return { kind: "refused", problem: "The chat is not a session file, so it was left as it is." };
+  }
+  if (options.chatDirectory !== undefined && !within(resolve(options.chatDirectory), file)) {
+    return {
+      kind: "refused",
+      problem: "The chat is not kept with the others, so it was left as it is.",
+    };
+  }
+
+  try {
+    await unlink(file);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
+    throw cause;
+  }
+  return { kind: "removed" };
 }
