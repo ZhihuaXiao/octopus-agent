@@ -3,7 +3,8 @@
  * The client: lists the Notebooks the server can see, opens one into its
  * Notebook Session, and shows the Session as the Author View — the Notebook as
  * written, each Cell as the Notebook declares it, with what running it has
- * produced: its text as it is spoken, each tool the agent invokes as it
+ * produced: its text as it is spoken, shown as plain text or as Markdown,
+ * each tool the agent invokes as it
  * invokes it, and the files it left — and a way to run one Cell or all of
  * them, or to stop; and, while editing, the whole Notebook as a form —
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
@@ -720,6 +721,249 @@ function renderArtifact(session, run, path) {
   return item;
 }
 
+/** How a Cell's reply is drawn. Kept in this browser. */
+const OUTPUT_FORMAT_KEY = "octo-output-format";
+
+/** @typedef {"plain" | "markdown"} OutputFormat */
+
+/** @returns {OutputFormat} */
+function storedOutputFormat() {
+  try {
+    return localStorage.getItem(OUTPUT_FORMAT_KEY) === "markdown" ? "markdown" : "plain";
+  } catch {
+    return "plain";
+  }
+}
+
+/** @type {OutputFormat} */
+let outputFormat = storedOutputFormat();
+
+function syncFormatButtons() {
+  /** @type {HTMLButtonElement} */ (element("format-plain")).setAttribute(
+    "aria-pressed",
+    outputFormat === "plain" ? "true" : "false",
+  );
+  /** @type {HTMLButtonElement} */ (element("format-markdown")).setAttribute(
+    "aria-pressed",
+    outputFormat === "markdown" ? "true" : "false",
+  );
+}
+
+/** @param {OutputFormat} format */
+function setOutputFormat(format) {
+  outputFormat = format;
+  try {
+    localStorage.setItem(OUTPUT_FORMAT_KEY, format);
+  } catch {
+    // A browser that refuses storage still switches for this page.
+  }
+  syncFormatButtons();
+  repaintOutputs();
+}
+
+/** Draws every visible reply again, in the format now chosen. */
+function repaintOutputs() {
+  if (watching === undefined) return;
+  const root = element(view === "author" ? "segments" : "run-steps");
+  for (const cell of watching.state.cells) {
+    const output = root.querySelector(`[data-cell="${CSS.escape(cell.id)}"] .streamed`);
+    if (output !== null) fillOutput(output, cell.text);
+  }
+}
+
+/**
+ * An address a reply may link to. Anything else — a script, or a name that is
+ * not an address — stays text, so a reply cannot navigate the page.
+ * @param {string} url
+ * @returns {string | undefined}
+ */
+function linkable(url) {
+  if (url.startsWith("/") || url.startsWith("#") || url.startsWith("./") || url.startsWith("../")) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol === "http:" ||
+      parsed.protocol === "https:" ||
+      parsed.protocol === "mailto:"
+    ) {
+      return url;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Inline marks in one line: code, emphasis, and links. The text itself is
+ * never parsed as HTML.
+ * @param {string} text
+ * @returns {Node[]}
+ */
+function inlineNodes(text) {
+  const pattern =
+    /(`+)([^`]+)\1|\*\*([^*]+)\*\*|__([^_]+)__|(?<![A-Za-z0-9*])\*([^*\n]+)\*(?!\*)|(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+  /** @type {Node[]} */
+  const nodes = [];
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > last) nodes.push(document.createTextNode(text.slice(last, index)));
+    const [whole, , code, stars, underscores, italic, underItalic, label, href] = match;
+    if (code !== undefined) {
+      const marked = document.createElement("code");
+      marked.textContent = code;
+      nodes.push(marked);
+    } else if (stars !== undefined || underscores !== undefined) {
+      const strong = document.createElement("strong");
+      strong.append(...inlineNodes(stars ?? underscores ?? ""));
+      nodes.push(strong);
+    } else if (italic !== undefined || underItalic !== undefined) {
+      const em = document.createElement("em");
+      em.append(...inlineNodes(italic ?? underItalic ?? ""));
+      nodes.push(em);
+    } else if (label !== undefined && href !== undefined) {
+      const safe = linkable(href);
+      if (safe === undefined) nodes.push(document.createTextNode(whole));
+      else {
+        const link = document.createElement("a");
+        link.href = safe;
+        link.rel = "noopener noreferrer";
+        link.target = "_blank";
+        link.append(...inlineNodes(label));
+        nodes.push(link);
+      }
+    }
+    last = index + whole.length;
+  }
+  if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
+  return nodes;
+}
+
+/** @param {string} line */
+const listItem = (line) => /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(line);
+
+/**
+ * A reply as Markdown: blocks of the lines, and the marks inside them. What
+ * is not a mark stays text.
+ * @param {string} text
+ * @returns {Node[]}
+ */
+function markdownBlocks(text) {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  /** @type {Node[]} */
+  const blocks = [];
+  let at = 0;
+  while (at < lines.length) {
+    const line = lines[at] ?? "";
+    if (line.trim() === "") {
+      at += 1;
+      continue;
+    }
+    const fence = /^```(.*)$/.exec(line);
+    if (fence !== null) {
+      /** @type {string[]} */
+      const code = [];
+      at += 1;
+      while (at < lines.length && !/^```/.test(lines[at] ?? "")) {
+        code.push(lines[at] ?? "");
+        at += 1;
+      }
+      if (at < lines.length) at += 1;
+      const pre = document.createElement("pre");
+      const body = document.createElement("code");
+      body.textContent = code.join("\n");
+      pre.append(body);
+      blocks.push(pre);
+      continue;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+      blocks.push(document.createElement("hr"));
+      at += 1;
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading !== null) {
+      const marks = heading[1] ?? "#";
+      const title = document.createElement(
+        marks.length <= 1 ? "h2" : marks.length === 2 ? "h3" : marks.length === 3 ? "h4" : "h5",
+      );
+      title.append(...inlineNodes(heading[2] ?? ""));
+      blocks.push(title);
+      at += 1;
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      /** @type {string[]} */
+      const quoted = [];
+      while (at < lines.length && /^>\s?/.test(lines[at] ?? "")) {
+        quoted.push((lines[at] ?? "").replace(/^>\s?/, ""));
+        at += 1;
+      }
+      const quote = document.createElement("blockquote");
+      quote.append(...markdownBlocks(quoted.join("\n")));
+      blocks.push(quote);
+      continue;
+    }
+    const listed = listItem(line);
+    if (listed !== null) {
+      const ordered = /^\s*\d+\.\s+/.test(line);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      while (at < lines.length) {
+        const item = listItem(lines[at] ?? "");
+        if (item === null || /^\s*\d+\.\s+/.test(lines[at] ?? "") !== ordered) break;
+        const row = document.createElement("li");
+        row.append(...inlineNodes(item[3] ?? ""));
+        list.append(row);
+        at += 1;
+      }
+      blocks.push(list);
+      continue;
+    }
+    /** @type {string[]} */
+    const paragraph = [];
+    while (at < lines.length) {
+      const next = lines[at] ?? "";
+      if (
+        next.trim() === "" ||
+        /^```/.test(next) ||
+        /^#{1,6}\s+/.test(next) ||
+        /^>\s?/.test(next) ||
+        listItem(next) !== null ||
+        /^(-{3,}|\*{3,}|_{3,})$/.test(next.trim())
+      ) {
+        break;
+      }
+      paragraph.push(next);
+      at += 1;
+    }
+    const block = document.createElement("p");
+    paragraph.forEach((row, index) => {
+      if (index > 0) block.append(document.createElement("br"));
+      block.append(...inlineNodes(row));
+    });
+    blocks.push(block);
+  }
+  return blocks;
+}
+
+/**
+ * Puts a Cell's reply into `node`: the characters as written, or Markdown.
+ * @param {Element} node
+ * @param {string} text
+ */
+function fillOutput(node, text) {
+  const markdown = outputFormat === "markdown" && text.trim() !== "";
+  node.classList.toggle("markdown", markdown);
+  if (!markdown) {
+    node.textContent = text;
+    return;
+  }
+  node.replaceChildren(...markdownBlocks(text));
+}
+
 /**
  * @param {CellView} cell
  * @param {string} session
@@ -749,7 +993,8 @@ function renderCell(cell, session, running) {
   const body = make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
   const calls = make("ol", "tool-calls");
   calls.append(...cell.toolCalls.map(renderToolCall));
-  const output = make("pre", "cell-output streamed", cell.text);
+  const output = make("div", "cell-output streamed");
+  fillOutput(output, cell.text);
 
   item.append(heading, body, calls, output);
   if (cell.error !== undefined) item.append(make("p", "cell-error", cell.error));
@@ -821,8 +1066,10 @@ function renderSession() {
  */
 function appendText(id, text) {
   const list = view === "author" ? "segments" : "run-steps";
-  const output = element(list).querySelector(`[data-cell="${id}"] .streamed`);
-  if (output !== null) output.textContent += text;
+  const output = element(list).querySelector(`[data-cell="${CSS.escape(id)}"] .streamed`);
+  if (output === null) return;
+  const cell = cellNamed(id);
+  fillOutput(output, cell === undefined ? `${output.textContent ?? ""}${text}` : cell.text);
 }
 
 /**
@@ -1601,7 +1848,9 @@ function renderStep(cell, session) {
     make("span", "run-step-name", cell.id),
     make("span", "run-step-state", STATE_WORDS[cell.status]),
   );
-  item.append(heading, make("pre", "run-step-output streamed", cell.text));
+  const output = make("div", "run-step-output streamed");
+  fillOutput(output, cell.text);
+  item.append(heading, output);
   if (cell.artifacts.length > 0 && cell.run !== undefined) {
     const run = cell.run;
     const artifacts = make("ul", "artifacts");
@@ -2446,6 +2695,9 @@ element("models-save-providers").addEventListener("click", () => void saveModelP
 element("models-add").addEventListener("click", addProvider);
 element("models-form").addEventListener("submit", (event) => event.preventDefault());
 
+element("format-plain").addEventListener("click", () => setOutputFormat("plain"));
+element("format-markdown").addEventListener("click", () => setOutputFormat("markdown"));
+syncFormatButtons();
 element("run-all").addEventListener("click", () => void startRun());
 element("interrupt").addEventListener("click", () => void interrupt());
 element("run-form").addEventListener("submit", (event) => {

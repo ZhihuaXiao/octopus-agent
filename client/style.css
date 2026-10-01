@@ -455,6 +455,35 @@ h1 a {
   overflow-wrap: anywhere;
 }
 
+.session-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.output-format {
+  display: flex;
+}
+
+.output-format button {
+  border-radius: 0;
+}
+
+.output-format button:first-child {
+  border-radius: 0.3rem 0 0 0.3rem;
+}
+
+.output-format button + button {
+  margin-left: -1px;
+  border-radius: 0 0.3rem 0.3rem 0;
+}
+
+.output-format button[aria-pressed="true"] {
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
 .session-header h2 {
   margin: 0 0 0.25rem;
 }
@@ -668,6 +697,7 @@ button:disabled {
   margin: 0.5rem 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
   font-size: 0.9rem;
   min-height: 1.2em;
 }
@@ -1032,7 +1062,82 @@ button:disabled {
   margin: 0.5rem 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
   font-size: 0.9rem;
+}
+
+.cell-output.markdown,
+.run-step-output.markdown {
+  white-space: normal;
+  font-family: inherit;
+}
+
+.cell-output.markdown > :first-child,
+.run-step-output.markdown > :first-child {
+  margin-top: 0;
+}
+
+.cell-output.markdown > :last-child,
+.run-step-output.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.cell-output.markdown p,
+.run-step-output.markdown p,
+.cell-output.markdown ul,
+.run-step-output.markdown ul,
+.cell-output.markdown ol,
+.run-step-output.markdown ol,
+.cell-output.markdown blockquote,
+.run-step-output.markdown blockquote,
+.cell-output.markdown pre,
+.run-step-output.markdown pre {
+  margin: 0.45rem 0;
+}
+
+.cell-output.markdown ul,
+.run-step-output.markdown ul,
+.cell-output.markdown ol,
+.run-step-output.markdown ol {
+  padding-left: 1.4rem;
+}
+
+.cell-output.markdown h2,
+.cell-output.markdown h3,
+.cell-output.markdown h4,
+.cell-output.markdown h5,
+.run-step-output.markdown h2,
+.run-step-output.markdown h3,
+.run-step-output.markdown h4,
+.run-step-output.markdown h5 {
+  font-size: 1rem;
+  margin: 0.7rem 0 0.3rem;
+}
+
+.cell-output.markdown code,
+.run-step-output.markdown code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.cell-output.markdown pre,
+.run-step-output.markdown pre {
+  white-space: pre-wrap;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.cell-output.markdown a,
+.run-step-output.markdown a {
+  color: inherit;
+}
+
+.cell-output.markdown blockquote,
+.run-step-output.markdown blockquote {
+  margin-left: 0;
+  padding-left: 0.8rem;
+  border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
 }
 
 .run-step-output:empty {

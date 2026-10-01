@@ -77,7 +77,7 @@ If the server restarted, the old cookie is no longer valid. The page asks for th
 
 ### Author view
 
-Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. Statuses you will see:
+Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, and code. The choice stays in this browser, and it applies in run view too. Statuses you will see:
 
 | Status | Meaning |
 | --- | --- |
