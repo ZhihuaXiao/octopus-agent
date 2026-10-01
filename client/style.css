@@ -264,6 +264,23 @@ h2 {
   padding-bottom: 0.6rem;
 }
 
+.models .provider summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.15rem 0;
+}
+
+.models .provider summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1rem;
+  opacity: 0.55;
+}
+
+.models .provider[open] summary::before {
+  content: "▾";
+}
+
 .models-search-row {
   display: flex;
   align-items: flex-end;

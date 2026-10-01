@@ -2253,6 +2253,7 @@ function route() {
  *   apiKeyFromCommand: boolean,
  *   apiKey?: string,
  *   models: CustomModel[],
+ *   open?: boolean,
  * }} CustomProvider
  * @typedef {{
  *   defaultProvider?: string,
@@ -2406,12 +2407,24 @@ function renderProviders() {
   const apis = modelPage?.apis ?? [];
   list.replaceChildren(
     ...providerDraft.map((provider, at) => {
-      const card = make("div", "provider");
+      const card = document.createElement("details");
+      card.className = "provider";
+      card.open = provider.open === true;
+      card.addEventListener("toggle", () => {
+        provider.open = card.open;
+      });
+      const summary = document.createElement("summary");
+      const title = () => (provider.id === "" ? "New provider" : provider.id);
+      summary.textContent = title();
+
       const name = document.createElement("input");
       name.type = "text";
       name.value = provider.id;
       name.placeholder = "ollama";
-      name.addEventListener("input", () => (provider.id = name.value.trim()));
+      name.addEventListener("input", () => {
+        provider.id = name.value.trim();
+        summary.textContent = title();
+      });
 
       const baseUrl = document.createElement("input");
       baseUrl.type = "text";
@@ -2472,7 +2485,7 @@ function renderProviders() {
       modelsLabel.append("Model ids", models);
       const actions = make("div", "provider-actions");
       actions.append(remove);
-      card.append(nameLabel, urlLabel, apiLabel, keyLabel, modelsLabel, actions);
+      card.append(summary, nameLabel, urlLabel, apiLabel, keyLabel, modelsLabel, actions);
       return card;
     }),
   );
@@ -2696,6 +2709,7 @@ function addProvider() {
     apiKeySet: false,
     apiKeyFromCommand: false,
     models: [],
+    open: true,
   });
   renderProviders();
 }
