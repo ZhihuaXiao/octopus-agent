@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, and the model a Notebook names — are HTTP
+ * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, the model a Notebook names, and the Skills installed for the user and for a Workspace — are HTTP
  * requests, each with an answer; what a Run produces is a stream, and goes to
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
@@ -22,6 +22,7 @@
 
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
+import { homedir } from "node:os";
 import { basename, extname, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -31,6 +32,7 @@ import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
+import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
 import { DOWNLOAD, runFileType } from "../run/store.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
@@ -50,9 +52,11 @@ import {
   branchNotebook,
   copyNotebook,
   createNotebook,
+  fileWithin,
   listNotebooks,
   listTree,
 } from "./notebooks.js";
+import { listInstalledSkills } from "./skills.js";
 import {
   type NotebookSessions,
   type RunRequest,
@@ -85,6 +89,8 @@ const CONNECT_ROUTE = "/api/connect";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
 /** The served directory as folders and files, for the sidebar. */
 const TREE_ROUTE = "/api/tree";
+/** Skills installed for the user and, when a Notebook is named, for its Workspace. */
+const SKILLS_ROUTE = "/api/skills";
 /** A Notebook's file renamed, Runs included, the session following when one holds it. */
 const RENAME_ROUTE = "/api/notebooks/rename";
 /** A new Notebook that keeps another through one Cell and drops what follows. */
@@ -164,6 +170,11 @@ export interface ServerOptions {
    * absent; named by a test, so that none reads or writes the machine's.
    */
   readonly agentDirectory?: string;
+  /**
+   * The home directory, for Skills installed under `~/.agents/skills`. The
+   * account's home when absent; named by a test, so that none reads the machine's.
+   */
+  readonly home?: string;
 }
 
 export interface RunningServer {
@@ -234,6 +245,64 @@ async function serveNotebooks(directory: string, response: ServerResponse): Prom
 /** The served directory as folders and the files in them, so the sidebar can open a folder. */
 async function serveTree(directory: string, response: ServerResponse): Promise<void> {
   json(response, 200, { directory, entries: await listTree(directory) });
+}
+
+/**
+ * The Workspace a skills list is for: the served directory, or the Workspace
+ * the named Notebook declares. A name that is not a Notebook here is absent.
+ */
+async function skillWorkspace(
+  directory: string,
+  notebook: string | null,
+): Promise<
+  | { readonly kind: "ready"; readonly workspace: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unreadable"; readonly problem: string }
+> {
+  if (notebook === null || notebook === "") return { kind: "ready", workspace: directory };
+  const file = fileWithin(directory, notebook);
+  if (file === undefined) return { kind: "absent" };
+  let source: string;
+  try {
+    source = await readFile(file, "utf8");
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EISDIR" || code === "ENOTDIR") return { kind: "absent" };
+    throw cause;
+  }
+  const parsed = parseNotebook(source);
+  if (!parsed.ok) return { kind: "unreadable", problem: formatDiagnostics(parsed.errors) };
+  return { kind: "ready", workspace: workspaceOf(parsed.notebook, file) };
+}
+
+/** Skills installed globally and in a Workspace, so a Prompt Cell can offer them. */
+async function serveSkills(
+  served: Served,
+  searchParams: URLSearchParams,
+  response: ServerResponse,
+): Promise<void> {
+  const resolved = await skillWorkspace(served.directory, searchParams.get("notebook"));
+  switch (resolved.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "unreadable":
+      reply(
+        response,
+        422,
+        `Cannot list skills for ${searchParams.get("notebook")}:\n${resolved.problem}\n`,
+      );
+      return;
+    case "ready":
+      json(response, 200, {
+        skills: listInstalledSkills({
+          workspace: resolved.workspace,
+          agentDir: served.agentDirectory,
+          home: served.home,
+        }),
+      });
+      return;
+  }
 }
 
 /** Pi's models and the default a Run uses when a Notebook does not name one. */
@@ -997,6 +1066,8 @@ interface Served {
   readonly chats: ChatsOptions;
   /** Where pi keeps its settings and custom models. */
   readonly agentDirectory: string;
+  /** The home directory Skills under `~/.agents/skills` are read from. */
+  readonly home: string;
 }
 
 /** The value of one cookie among those a request carries, or nothing. */
@@ -1193,6 +1264,10 @@ async function handle(
     if (permitted(READS, request, response)) await serveTree(served.directory, response);
     return;
   }
+  if (pathname === SKILLS_ROUTE) {
+    if (permitted(READS, request, response)) await serveSkills(served, searchParams, response);
+    return;
+  }
   if (pathname === NOTEBOOKS_ROUTE) {
     // Read, the Notebooks under the directory; written to, a new one or a copy of one of them.
     if (!permitted([...READS, ...WRITES], request, response)) return;
@@ -1261,6 +1336,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     auth,
     chats: options.chatDirectory !== undefined ? { chatDirectory: options.chatDirectory } : {},
     agentDirectory: options.agentDirectory ?? getAgentDir(),
+    home: options.home ?? homedir(),
   };
 
   const server = createServer((request, response) => {

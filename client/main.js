@@ -8,7 +8,9 @@
  * invokes it, and the files it left — and a way to run one Cell or all of
  * them, or to stop; and, while editing, the whole Notebook as a form —
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
- * saved whole, based on the revision it was drawn from.
+ * saved whole, based on the revision it was drawn from. Typing / in a Prompt
+ * Cell lists the Skills installed for the user and for that Notebook's
+ * Workspace; choosing one writes `/skill:name` and runs the Cell.
  *
  * Beside whichever is shown, the served directory is drawn as a tree of its
  * folders and the Notebooks in them, the one open marked, with a way to make
@@ -1822,6 +1824,282 @@ function textarea(value, set, placeholder) {
   return field;
 }
 
+/** @typedef {{ name: string, description: string, scope: "global" | "local" }} InstalledSkill */
+
+/** How many skill menus this page has drawn, so each has its own id. */
+let skillMenus = 0;
+
+/**
+ * The `/command` the caret is inside, when one is being typed. The token
+ * begins at the start of the text or after whitespace, and runs to the next
+ * whitespace, caret or not.
+ * @param {HTMLTextAreaElement} field
+ * @returns {{ start: number, end: number, query: string } | undefined}
+ */
+function slashToken(field) {
+  if (field.selectionStart !== field.selectionEnd) return undefined;
+  const caret = field.selectionStart;
+  const value = field.value;
+  const upTo = value.slice(0, caret);
+  const matched = /(?:^|\s)(\/[^\s]*)$/.exec(upTo);
+  const token = matched?.[1];
+  if (token === undefined) return undefined;
+  const start = upTo.length - token.length;
+  const tail = /^[^\s]*/.exec(value.slice(caret))?.[0] ?? "";
+  return { start, end: caret + tail.length, query: value.slice(start + 1, caret + tail.length) };
+}
+
+/**
+ * Whether `body` is the skill command, with nothing before it. Pi expands
+ * `/skill:name` only then, so a slash typed into a longer prompt is filled in
+ * and left for the author to run.
+ * @param {string} body
+ * @param {string} command
+ */
+function invokesSkill(body, command) {
+  const trimmed = body.trim();
+  return (
+    trimmed === command || trimmed.startsWith(`${command} `) || trimmed.startsWith(`${command}\n`)
+  );
+}
+
+/**
+ * Skills installed for the user and for the Notebook open now.
+ * @returns {Promise<InstalledSkill[]>}
+ */
+async function fetchInstalledSkills() {
+  const notebook = watching?.state.notebook;
+  const path =
+    notebook === undefined ? "/api/skills" : `/api/skills?notebook=${encodeURIComponent(notebook)}`;
+  const response = await request(path);
+  if (!response.ok) {
+    throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+  }
+  const listed = /** @type {{ skills: InstalledSkill[] }} */ (await response.json());
+  return listed.skills;
+}
+
+/**
+ * The prompt's body, with a menu of installed Skills that opens when `/` is
+ * typed. Choosing one writes `/skill:name` over the token, and runs the Cell
+ * when that command is the whole prompt.
+ * @param {HTMLTextAreaElement} field
+ * @param {DraftCell} cell
+ */
+function attachSkillMenu(field, cell) {
+  const wrap = field.parentElement;
+  if (wrap === null) return;
+  const menu = make("ul", "skill-menu");
+  menu.id = `skill-menu-${(skillMenus += 1)}`;
+  menu.hidden = true;
+  menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-label", "Installed skills");
+  field.setAttribute("aria-autocomplete", "list");
+  field.setAttribute("aria-controls", menu.id);
+  field.setAttribute("aria-expanded", "false");
+  wrap.append(menu);
+  // A press in the menu must not move focus out of the prompt, or the menu
+  // would close before the choice was taken.
+  menu.addEventListener("mousedown", (event) => event.preventDefault());
+
+  let writing = false;
+  let fetching = false;
+  let generation = 0;
+  /** @type {InstalledSkill[] | undefined} */
+  let loaded;
+  let query = "";
+  let highlighted = 0;
+
+  const choices = () =>
+    [...menu.querySelectorAll("button.skill-choice")].filter(
+      (button) => button instanceof HTMLButtonElement,
+    );
+
+  /** @param {number} index */
+  const mark = (index) => {
+    const buttons = choices();
+    if (buttons.length === 0) return;
+    highlighted = (index + buttons.length) % buttons.length;
+    buttons.forEach((button, at) => {
+      const on = at === highlighted;
+      button.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) button.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  const close = () => {
+    generation += 1;
+    fetching = false;
+    loaded = undefined;
+    menu.hidden = true;
+    menu.replaceChildren();
+    wrap.classList.remove("open");
+    field.setAttribute("aria-expanded", "false");
+  };
+
+  /**
+   * @param {InstalledSkill} skill
+   */
+  const choose = (skill) => {
+    const token = slashToken(field);
+    if (token === undefined) return;
+    const command = `/skill:${skill.name}`;
+    const next = `${field.value.slice(0, token.start)}${command}${field.value.slice(token.end)}`;
+    writing = true;
+    field.value = next;
+    const caret = token.start + command.length;
+    field.selectionStart = caret;
+    field.selectionEnd = caret;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    writing = false;
+    close();
+    if (cell.type === "prompt" && invokesSkill(next, command)) void runDraftCell(cell);
+  };
+
+  /**
+   * @param {string} [status]
+   */
+  const draw = (status) => {
+    menu.replaceChildren();
+    field.setAttribute("aria-expanded", "true");
+    wrap.classList.add("open");
+    menu.hidden = false;
+    if (status !== undefined) {
+      menu.append(make("li", "skill-status", status));
+      return;
+    }
+    const needle = query.replace(/^skill:/i, "").toLowerCase();
+    const matched = (loaded ?? []).filter(
+      (skill) =>
+        needle === "" ||
+        skill.name.toLowerCase().includes(needle) ||
+        skill.description.toLowerCase().includes(needle),
+    );
+    if (matched.length === 0) {
+      menu.append(
+        make(
+          "li",
+          "skill-status",
+          loaded === undefined ? "Looking for skills…" : "No skill matches.",
+        ),
+      );
+      return;
+    }
+    /**
+     * @param {string} label
+     * @param {InstalledSkill[]} skills
+     */
+    const group = (label, skills) => {
+      if (skills.length === 0) return;
+      menu.append(make("li", "skill-scope", label));
+      for (const skill of skills) {
+        const item = make("li", "skill-item");
+        const button = make("button", "skill-choice");
+        button.type = "button";
+        button.setAttribute("role", "option");
+        button.dataset.skill = skill.name;
+        button.title = skill.description;
+        button.append(
+          make("span", "skill-name", skill.name),
+          make("span", "skill-description", skill.description),
+        );
+        button.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          choose(skill);
+        });
+        item.append(button);
+        menu.append(item);
+      }
+    };
+    group(
+      "Local",
+      matched.filter((skill) => skill.scope === "local"),
+    );
+    group(
+      "Global",
+      matched.filter((skill) => skill.scope === "global"),
+    );
+    mark(0);
+  };
+
+  const refresh = () => {
+    if (writing) return;
+    const token = slashToken(field);
+    if (token === undefined || cell.type !== "prompt") {
+      if (!menu.hidden) close();
+      return;
+    }
+    query = token.query;
+    if (loaded !== undefined) {
+      draw();
+      return;
+    }
+    if (fetching) return;
+    fetching = true;
+    const ticket = generation;
+    draw("Looking for skills…");
+    void fetchInstalledSkills()
+      .then((skills) => {
+        if (ticket !== generation) return;
+        loaded = skills;
+        draw();
+      })
+      .catch((cause) => {
+        if (ticket !== generation) return;
+        draw(describe(cause));
+      })
+      .finally(() => {
+        if (ticket === generation) fetching = false;
+      });
+  };
+
+  field.addEventListener("input", refresh);
+  field.addEventListener("keydown", (event) => {
+    if (menu.hidden) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    const buttons = choices();
+    if (buttons.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      mark(highlighted + (event.key === "ArrowDown" ? 1 : -1));
+      return;
+    }
+    if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+      event.preventDefault();
+      const button = buttons[highlighted];
+      const skill = (loaded ?? []).find((candidate) => candidate.name === button?.dataset.skill);
+      if (skill !== undefined) choose(skill);
+    }
+  });
+  field.addEventListener("blur", () => {
+    if (!menu.hidden) close();
+  });
+}
+
+/**
+ * A Cell's body. A Prompt Cell's offers the installed Skills when `/` is typed.
+ * @param {DraftCell} cell
+ */
+function cellBody(cell) {
+  const field = textarea(
+    cell.body,
+    (value) => {
+      cell.body = value;
+    },
+    cell.type === "bash"
+      ? "A shell command"
+      : "What to ask the agent. Type / to run an installed skill.",
+  );
+  const wrap = make("div", "skill-field");
+  wrap.append(field);
+  attachSkillMenu(field, cell);
+  return wrap;
+}
+
 /**
  * A one-line field bound to one string of the draft.
  * @param {string} label
@@ -1990,6 +2268,14 @@ function renderDraftCell(cell, at) {
   type.addEventListener("change", () => {
     cell.type = type.value === "bash" ? "bash" : "prompt";
     card.className = `draft-segment cell ${cell.type}`;
+    const body = card.querySelector("textarea");
+    if (body instanceof HTMLTextAreaElement) {
+      body.placeholder =
+        cell.type === "bash"
+          ? "A shell command"
+          : "What to ask the agent. Type / to run an installed skill.";
+      body.dispatchEvent(new Event("input"));
+    }
   });
 
   const isolated = document.createElement("label");
@@ -2015,15 +2301,7 @@ function renderDraftCell(cell, at) {
     modelSelect(cell.model, (value) => (cell.model = value)),
     field("timeout", cell.timeout, (value) => (cell.timeout = value)),
   );
-  card.append(
-    declaration,
-    textarea(
-      cell.body,
-      (value) => (cell.body = value),
-      cell.type === "bash" ? "A shell command" : "What to ask the agent",
-    ),
-    actionsFor(at),
-  );
+  card.append(declaration, cellBody(cell), actionsFor(at));
   return card;
 }
 

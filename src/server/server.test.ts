@@ -3494,3 +3494,76 @@ describe("a cell's model rounds", () => {
     });
   });
 });
+
+/** A Skill file where pi looks for one: a markdown file, or a directory's SKILL.md. */
+async function installedSkill(
+  dir: string,
+  name: string,
+  description: string,
+  directory = false,
+): Promise<void> {
+  const file = directory ? join(dir, name, "SKILL.md") : join(dir, `${name}.md`);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\nDo ${name}.\n`,
+    "utf8",
+  );
+}
+
+describe("installed skills", () => {
+  it("lists the user's skills and the workspace's, and refuses what is not a notebook here", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-skill-agent-"));
+    const home = await mkdtemp(join(tmpdir(), "octo-skill-home-"));
+    const elsewhere = await mkdtemp(join(tmpdir(), "octo-skill-ws-"));
+    await mkdir(join(elsewhere, ".git"));
+    await installedSkill(join(agentDirectory, "skills"), "global-file", "From the agent directory");
+    await installedSkill(
+      join(home, ".agents", "skills", "global-dir"),
+      "global-dir",
+      "From home",
+      true,
+    );
+    await installedSkill(join(elsewhere, ".pi", "skills"), "there", "In the notebook's workspace");
+
+    const server = await serve(
+      {
+        "notes.md": `---\nworkspace: ${JSON.stringify(elsewhere)}\n---\n\n\`\`\`prompt id=ask\nHi\n\`\`\`\n`,
+        "here.md": "```prompt id=ask\nHi\n```\n",
+        "broken.md": "---\nnever closed\n",
+      },
+      unusedAgent(),
+      { agentDirectory, home },
+    );
+    await mkdir(join(server.directory, ".git"));
+    await installedSkill(
+      join(server.directory, ".pi", "skills"),
+      "here",
+      "In the served directory",
+    );
+
+    const globals = [
+      { name: "global-dir", description: "From home", scope: "global" },
+      { name: "global-file", description: "From the agent directory", scope: "global" },
+    ];
+    expect(await (await get(server, "/api/skills?notebook=notes.md")).json()).toEqual({
+      skills: [
+        { name: "there", description: "In the notebook's workspace", scope: "local" },
+        ...globals,
+      ],
+    });
+    expect(await (await get(server, "/api/skills")).json()).toEqual({
+      skills: [
+        { name: "here", description: "In the served directory", scope: "local" },
+        ...globals,
+      ],
+    });
+    expect((await fetch(new URL("/api/skills", server.url))).status).toBe(401);
+    expect((await post(server, "/api/skills", {})).status).toBe(405);
+    expect((await get(server, "/api/skills?notebook=missing.md")).status).toBe(404);
+    expect((await get(server, "/api/skills?notebook=../secret.md")).status).toBe(404);
+    const broken = await get(server, "/api/skills?notebook=broken.md");
+    expect(broken.status).toBe(422);
+    expect(await broken.text()).toMatch(/never closed|Frontmatter/);
+  });
+});

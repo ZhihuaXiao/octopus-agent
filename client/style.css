@@ -935,6 +935,77 @@ button:disabled {
   resize: vertical;
 }
 
+/* The Skills offered when a Prompt Cell's body is typed with a leading /. */
+.skill-field {
+  position: relative;
+}
+
+.skill-field.open {
+  z-index: 3;
+}
+
+.skill-menu {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  max-height: 16rem;
+  overflow: auto;
+  background: canvas;
+  color: canvastext;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  box-shadow: 0 0.4rem 1.2rem color-mix(in srgb, canvastext 18%, transparent);
+}
+
+.skill-menu[hidden] {
+  display: none;
+}
+
+.skill-scope,
+.skill-status {
+  padding: 0.25rem 0.45rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.skill-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.1rem;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  padding: 0.35rem 0.45rem;
+  background: transparent;
+}
+
+.skill-menu button[aria-selected="true"],
+.skill-menu button:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.skill-name {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.skill-description {
+  font-size: 0.8rem;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .draft-frontmatter,
 .draft-segment {
   border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
