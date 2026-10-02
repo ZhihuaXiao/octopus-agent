@@ -233,6 +233,22 @@ h2 {
   font-size: 0.9rem;
 }
 
+.models label.mode-flag {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mode-prompt {
+  min-height: 12rem;
+}
+
+.modes-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex: none;
+}
+
 .models input,
 .models select,
 .models textarea {

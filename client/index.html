@@ -24,6 +24,7 @@
     </section>
     <nav class="tabs" aria-label="Pages">
       <button id="tab-notebook" type="button" aria-current="page">Notebook</button>
+      <button id="tab-modes" type="button">Modes</button>
       <button id="tab-models" type="button">Models</button>
     </nav>
     <div id="workspace" class="layout">
@@ -125,6 +126,63 @@
         </section>
       </main>
     </div>
+    <section id="modes" class="models" hidden>
+      <form id="modes-form">
+        <div class="models-heading">
+          <h2>Modes</h2>
+          <button id="modes-close" type="button">Close</button>
+        </div>
+        <p class="hint">
+          A mode is a system prompt, an optional model, and which tools and skills the agent is
+          given. <strong>code</strong> and <strong>work</strong> come with octo and stay as they
+          are. A mode you add here is saved for your user and appears in the mode menu on each
+          notebook. Leave tools or skills unrestricted and the agent keeps pi's own. Saving rewrites
+          that mode's file.
+        </p>
+        <p id="modes-status" class="status"></p>
+        <ul id="modes-list" class="notebooks"></ul>
+        <button id="modes-new" type="button">New mode</button>
+        <fieldset id="mode-editor" hidden>
+          <legend id="mode-editor-title">New mode</legend>
+          <label
+            >Name
+            <input id="mode-name" type="text" autocomplete="off" placeholder="design" required />
+          </label>
+          <label
+            >Model
+            <input
+              id="mode-model"
+              type="text"
+              autocomplete="off"
+              placeholder="provider/model, or empty for pi's default"
+            />
+          </label>
+          <label class="mode-flag">
+            <input id="mode-limit-tools" type="checkbox" />
+            Only these tools, one name per line. An empty list allows none.
+          </label>
+          <textarea id="mode-tools" hidden placeholder="read" aria-label="Tools"></textarea>
+          <label class="mode-flag">
+            <input id="mode-limit-skills" type="checkbox" />
+            Only these skills, one name per line. An empty list gives none. A notebook can still
+            name more.
+          </label>
+          <textarea id="mode-skills" hidden placeholder="review" aria-label="Skills"></textarea>
+          <label
+            >System prompt
+            <textarea
+              id="mode-prompt"
+              class="mode-prompt"
+              placeholder="Leave empty to keep pi's own prompt."
+            ></textarea>
+          </label>
+          <div class="editor-controls">
+            <button id="mode-save" type="submit">Save</button>
+            <button id="mode-cancel" type="button">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
     <section id="models" class="models" hidden>
       <form id="models-form">
         <div class="models-heading">

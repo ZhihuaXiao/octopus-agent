@@ -48,7 +48,15 @@
 
 /**
  * @typedef {{ path: string, title: string, model?: string, mode?: string }} NotebookEntry
- * @typedef {{ modes: string[] }} ModeList
+ * @typedef {{
+ *   name: string,
+ *   prompt?: string,
+ *   model?: string,
+ *   tools?: string[],
+ *   skills?: string[],
+ *   problems?: string[],
+ * }} EditableMode
+ * @typedef {{ modes: string[], own?: EditableMode[] }} ModeList
  * @typedef {{ directory: string, notebooks: NotebookEntry[] }} NotebookList
  * @typedef {{
  *   id: string,
@@ -282,8 +290,12 @@ function renderEntry(entry) {
 /** @type {string[]} */
 let knownModes = [];
 
+/** The user's own modes, once they have been loaded for the Modes page. */
+/** @type {EditableMode[]} */
+let ownModes = [];
+
 /**
- * @returns {Promise<string[]>}
+ * @returns {Promise<ModeList>}
  */
 async function fetchModes() {
   const response = await request("/api/modes");
@@ -292,7 +304,8 @@ async function fetchModes() {
   }
   const page = /** @type {ModeList} */ (await response.json());
   knownModes = page.modes;
-  return knownModes;
+  ownModes = page.own ?? [];
+  return page;
 }
 
 /**
@@ -3776,8 +3789,10 @@ async function fetchModels() {
 async function openModels() {
   configuredOnly = false;
   element("workspace").hidden = true;
+  element("modes").hidden = true;
   element("models").hidden = false;
   element("tab-notebook").removeAttribute("aria-current");
+  element("tab-modes").removeAttribute("aria-current");
   element("tab-models").setAttribute("aria-current", "page");
   const status = element("models-status");
   status.textContent = "Loading…";
@@ -3790,11 +3805,164 @@ async function openModels() {
   }
 }
 
-function closeModels() {
+/** The notebook page: the directory and whichever notebook or list is open. */
+function showNotebook() {
   element("models").hidden = true;
+  element("modes").hidden = true;
   element("workspace").hidden = false;
   element("tab-models").removeAttribute("aria-current");
+  element("tab-modes").removeAttribute("aria-current");
   element("tab-notebook").setAttribute("aria-current", "page");
+  if (!element("list").hidden) void showList();
+  else if (watching !== undefined) renderSession();
+}
+
+async function openModes() {
+  element("workspace").hidden = true;
+  element("models").hidden = true;
+  element("modes").hidden = false;
+  element("tab-notebook").removeAttribute("aria-current");
+  element("tab-models").removeAttribute("aria-current");
+  element("tab-modes").setAttribute("aria-current", "page");
+  element("mode-editor").hidden = true;
+  const status = element("modes-status");
+  status.textContent = "Loading…";
+  try {
+    await fetchModes();
+    renderOwnModes();
+    status.textContent = ownModes.length === 0 ? "No modes of your own yet." : "";
+  } catch (cause) {
+    status.textContent = `Could not load the modes: ${describe(cause)}`;
+  }
+}
+
+/** Draws the user's modes, each with a way to change it or remove it. */
+function renderOwnModes() {
+  element("modes-list").replaceChildren(
+    ...ownModes.map((mode) => {
+      const item = document.createElement("li");
+      const text = document.createElement("div");
+      text.append(make("span", "title", mode.name));
+      if (mode.problems !== undefined) text.append(make("p", "status", mode.problems.join("\n")));
+      const actions = make("div", "modes-actions");
+      if (mode.problems === undefined) {
+        const edit = make("button", "", "Edit");
+        edit.type = "button";
+        edit.addEventListener("click", () => openModeEditor(mode));
+        actions.append(edit);
+      }
+      const remove = make("button", "", "Delete");
+      remove.type = "button";
+      remove.addEventListener("click", () => void deleteMode(mode.name));
+      actions.append(remove);
+      item.append(text, actions);
+      return item;
+    }),
+  );
+}
+
+/**
+ * The form for a new mode, or for `mode` when one is being changed.
+ * @param {EditableMode} [mode]
+ */
+function openModeEditor(mode) {
+  element("mode-editor").hidden = false;
+  element("mode-editor-title").textContent = mode === undefined ? "New mode" : mode.name;
+  /** @type {HTMLInputElement} */ (element("mode-name")).value = mode?.name ?? "";
+  /** @type {HTMLInputElement} */ (element("mode-model")).value = mode?.model ?? "";
+  const limitTools = /** @type {HTMLInputElement} */ (element("mode-limit-tools"));
+  limitTools.checked = mode?.tools !== undefined;
+  /** @type {HTMLTextAreaElement} */ (element("mode-tools")).value = (mode?.tools ?? []).join("\n");
+  const limitSkills = /** @type {HTMLInputElement} */ (element("mode-limit-skills"));
+  limitSkills.checked = mode?.skills !== undefined;
+  /** @type {HTMLTextAreaElement} */ (element("mode-skills")).value = (mode?.skills ?? []).join(
+    "\n",
+  );
+  /** @type {HTMLTextAreaElement} */ (element("mode-prompt")).value = mode?.prompt ?? "";
+  /** @type {HTMLInputElement} */ (element("mode-name")).dataset.original = mode?.name ?? "";
+  showModeLists();
+  /** @type {HTMLInputElement} */ (element("mode-name")).focus();
+}
+
+/** Shows the tool and skill lists only when the mode restricts them. */
+function showModeLists() {
+  element("mode-tools").hidden = !(
+    /** @type {HTMLInputElement} */ (element("mode-limit-tools")).checked
+  );
+  element("mode-skills").hidden = !(
+    /** @type {HTMLInputElement} */ (element("mode-limit-skills")).checked
+  );
+}
+
+/** @param {string} text */
+function linesOf(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+/** The mode the form describes. */
+function modeFromForm() {
+  const limitTools = /** @type {HTMLInputElement} */ (element("mode-limit-tools")).checked;
+  const limitSkills = /** @type {HTMLInputElement} */ (element("mode-limit-skills")).checked;
+  return {
+    name: /** @type {HTMLInputElement} */ (element("mode-name")).value.trim(),
+    prompt: /** @type {HTMLTextAreaElement} */ (element("mode-prompt")).value,
+    model: /** @type {HTMLInputElement} */ (element("mode-model")).value.trim(),
+    tools: limitTools
+      ? linesOf(/** @type {HTMLTextAreaElement} */ (element("mode-tools")).value)
+      : null,
+    skills: limitSkills
+      ? linesOf(/** @type {HTMLTextAreaElement} */ (element("mode-skills")).value)
+      : null,
+  };
+}
+
+/** @param {Event} event */
+async function saveMode(event) {
+  event.preventDefault();
+  if (element("mode-editor").hidden) return;
+  const status = element("modes-status");
+  const body = modeFromForm();
+  if (body.name === "") {
+    status.textContent = "Name the mode.";
+    return;
+  }
+  const original = /** @type {HTMLInputElement} */ (element("mode-name")).dataset.original ?? "";
+  status.textContent = "";
+  try {
+    await post(original === "" ? "/api/modes" : `/api/modes/${encodeURIComponent(original)}`, body);
+    element("mode-editor").hidden = true;
+    await fetchModes();
+    renderOwnModes();
+    status.textContent = `Saved ${body.name}.`;
+  } catch (cause) {
+    status.textContent = `Could not save the mode: ${describe(cause)}`;
+  }
+}
+
+/** @param {string} name */
+async function deleteMode(name) {
+  if (!window.confirm(`Delete the mode ${name}? A notebook that names it will no longer run.`)) {
+    return;
+  }
+  const status = element("modes-status");
+  status.textContent = "";
+  try {
+    const response = await request(`/api/modes/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    if (/** @type {HTMLInputElement} */ (element("mode-name")).dataset.original === name) {
+      element("mode-editor").hidden = true;
+    }
+    await fetchModes();
+    renderOwnModes();
+    status.textContent = ownModes.length === 0 ? "No modes of your own yet." : `Deleted ${name}.`;
+  } catch (cause) {
+    status.textContent = `Could not delete the mode: ${describe(cause)}`;
+  }
 }
 
 async function saveModelDefault() {
@@ -3864,9 +4032,18 @@ function addProvider() {
   renderProviders();
 }
 
-element("tab-notebook").addEventListener("click", closeModels);
+element("tab-notebook").addEventListener("click", showNotebook);
+element("tab-modes").addEventListener("click", () => void openModes());
 element("tab-models").addEventListener("click", () => void openModels());
-element("models-close").addEventListener("click", closeModels);
+element("modes-close").addEventListener("click", showNotebook);
+element("models-close").addEventListener("click", showNotebook);
+element("modes-new").addEventListener("click", () => openModeEditor());
+element("modes-form").addEventListener("submit", (event) => void saveMode(event));
+element("mode-cancel").addEventListener("click", () => {
+  element("mode-editor").hidden = true;
+});
+element("mode-limit-tools").addEventListener("change", showModeLists);
+element("mode-limit-skills").addEventListener("change", showModeLists);
 element("notebook-mode").addEventListener("change", () => {
   if (watching === undefined) return;
   void chooseNotebookMode(

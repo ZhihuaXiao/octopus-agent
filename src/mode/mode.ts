@@ -6,15 +6,15 @@
  * own without waiting for a release.
  */
 
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isMap, isScalar, isSeq, parseDocument } from "yaml";
+import { isMap, isScalar, isSeq, parseDocument, stringify } from "yaml";
 
 import { type Diagnostic, lineOffset } from "../notebook/diagnostic.js";
-import { isName } from "../notebook/name.js";
+import { NAME_RULE, isName } from "../notebook/name.js";
 
 export interface Mode {
   readonly name: string;
@@ -149,6 +149,172 @@ export async function availableModes(userDirectory: string): Promise<string[]> {
   const own = await modesIn(userDirectory);
   const collided = new Set(shipped.filter((name) => own.includes(name)));
   return [...shipped, ...own].filter((name) => !collided.has(name)).sort();
+}
+
+/**
+ * One mode of the user's own, as the page that edits them draws it. `problems`
+ * is a file that could not be read: it can be deleted, and saving a mode of
+ * that name writes over it.
+ */
+export type UserMode = Mode | { readonly name: string; readonly problems: readonly string[] };
+
+/** How writing or removing a user's mode went. */
+export type ModeWrite =
+  | { readonly kind: "saved"; readonly mode: Mode }
+  | { readonly kind: "removed" }
+  | { readonly kind: "invalid"; readonly problem: string }
+  | { readonly kind: "shipped"; readonly problem: string }
+  | { readonly kind: "exists"; readonly problem: string }
+  | { readonly kind: "absent" };
+
+/**
+ * The user's own modes, each read whole. A file that does not parse is named
+ * with its problems, so it can be removed. Sorted by name.
+ */
+export async function userModes(directory: string): Promise<UserMode[]> {
+  const names = (await modesIn(directory)).sort();
+  const modes: UserMode[] = [];
+  for (const name of names) {
+    const read = await loadModeFile(directory, name);
+    if (read === undefined) continue;
+    modes.push(read.ok ? read.mode : { name, problems: read.problems });
+  }
+  return modes;
+}
+
+/**
+ * Writes a new mode of the user's own. A name octo ships, or a file already
+ * there, is refused: a shipped name must mean the same on every machine, and
+ * a file already there is edited, not replaced unseen.
+ */
+export async function createUserMode(directory: string, mode: Mode): Promise<ModeWrite> {
+  const named = await checkName(mode.name);
+  if (named !== undefined) return named;
+  await mkdir(directory, { recursive: true });
+  try {
+    await writeFile(modeFile(directory, mode.name), sourceOf(mode), {
+      encoding: "utf8",
+      flag: "wx",
+    });
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") {
+      return { kind: "exists", problem: `There is already a mode named ${mode.name}.` };
+    }
+    throw cause;
+  }
+  return { kind: "saved", mode };
+}
+
+/**
+ * Rewrites the user's mode `name`, which may also rename it. The file named
+ * has to be there. The name it is given is checked as a new mode's is.
+ */
+export async function replaceUserMode(
+  directory: string,
+  name: string,
+  mode: Mode,
+): Promise<ModeWrite> {
+  const named = await checkName(mode.name);
+  if (named !== undefined) return named;
+  const current = modeFile(directory, name);
+  if (!(await isFile(current))) return { kind: "absent" };
+  const next = modeFile(directory, mode.name);
+  if (next !== current && (await isFile(next))) {
+    return { kind: "exists", problem: `There is already a mode named ${mode.name}.` };
+  }
+  await mkdir(directory, { recursive: true });
+  await writeFile(next, sourceOf(mode), "utf8");
+  if (next !== current) await unlink(current);
+  return { kind: "saved", mode };
+}
+
+/**
+ * Removes the user's mode `name`. A name octo ships has no file of the user's
+ * to remove. A file that is not there is absent.
+ */
+export async function removeUserMode(directory: string, name: string): Promise<ModeWrite> {
+  if (!isName(name)) return { kind: "invalid", problem: `A mode's name ${NAME_RULE}.` };
+  if (await isShipped(name)) {
+    return {
+      kind: "shipped",
+      problem: `"${name}" is a mode octo ships, so it cannot be removed.`,
+    };
+  }
+  const file = modeFile(directory, name);
+  try {
+    await unlink(file);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
+    throw cause;
+  }
+  return { kind: "removed" };
+}
+
+/** The file a user's mode is, given a name that has already been checked. */
+const modeFile = (directory: string, name: string) => join(directory, `${name}.md`);
+
+/** Whether `path` is a file. A missing one is the absence, not an error. */
+async function isFile(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw cause;
+  }
+}
+
+/** A name a user's mode may have, or why it may not. */
+async function checkName(name: string): Promise<ModeWrite | undefined> {
+  if (!isName(name)) return { kind: "invalid", problem: `A mode's name ${NAME_RULE}.` };
+  if (await isShipped(name)) {
+    return {
+      kind: "shipped",
+      problem: `"${name}" is a mode octo ships, so a mode of your own cannot take that name. Choose another.`,
+    };
+  }
+  return undefined;
+}
+
+const isShipped = async (name: string) => (await modesIn(SHIPPED_MODES)).includes(name);
+
+/**
+ * A mode as its file: YAML frontmatter for the fields it has, and the system
+ * prompt after. A field left out is left out of the file, which is what leaves
+ * pi's own tools, or every skill, in place. An empty prompt is no extra prompt.
+ */
+function sourceOf(mode: Mode): string {
+  const fields: { model?: string; tools?: readonly string[]; skills?: readonly string[] } = {};
+  if (mode.model !== undefined) fields.model = mode.model;
+  if (mode.tools !== undefined) fields.tools = mode.tools;
+  if (mode.skills !== undefined) fields.skills = mode.skills;
+  const prompt = mode.prompt?.trim() ?? "";
+  const front = Object.keys(fields).length === 0 ? "" : `---\n${stringify(fields)}---\n`;
+  if (prompt === "") return front;
+  return front === "" ? `${prompt}\n` : `${front}\n${prompt}\n`;
+}
+
+/**
+ * The mode a file in `directory` defines, or nothing when the file is not
+ * there. A file that does not parse is the problems, every one of them.
+ */
+async function loadModeFile(directory: string, name: string): Promise<ModeResult | undefined> {
+  let source: string;
+  try {
+    source = await readFile(modeFile(directory, name), "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw cause;
+  }
+  const errors: Diagnostic[] = [];
+  const mode = readMode(name, source, errors);
+  if (errors.length === 0) return { ok: true, mode };
+  return {
+    ok: false,
+    problems: [...errors]
+      .sort((a, b) => a.line - b.line)
+      .map((error) => `line ${error.line}: ${error.message}`),
+  };
 }
 
 /** `a`, `a and b`, `a, b and c`: a list as a sentence says one. */

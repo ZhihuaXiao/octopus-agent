@@ -296,6 +296,8 @@ Octo ships two:
 
 Add your own as `~/.octo/modes/<name>.md`. The frontmatter holds `model`, `tools`, and `skills`. The rest of the file is the system prompt. Look at [modes/work.md](../modes/work.md) for the shape. A file of yours may not reuse the name `code` or `work`.
 
+In the browser, **Modes**, beside Notebook, does the same thing. **New mode** asks for a name, an optional model, whether to limit tools and skills, and the system prompt. **Edit** changes that file. **Delete** removes it, after you confirm. `code` and `work` are not edited or deleted here. The mode menu on a notebook lists the new one once it is saved.
+
 A notebook that names no mode runs on pi's defaults.
 
 A cell's `model`, then the notebook's `model`, then the mode's model. The notebook's `tools` replace the mode's when the notebook lists any.

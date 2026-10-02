@@ -3481,15 +3481,22 @@ describe("a notebook's mode", () => {
 
     const listed = await get(server, "/api/modes");
     expect(listed.status).toBe(200);
-    expect(await listed.json()).toEqual({ modes: ["code", "design", "work"] });
-    expect((await post(server, "/api/modes", {})).status).toBe(405);
+    expect(await listed.json()).toEqual({
+      modes: ["code", "design", "work"],
+      own: [{ name: "design", model: "openai/gpt-5", prompt: "Design." }],
+    });
+    expect((await post(server, "/api/modes", {})).status).toBe(400);
+    expect((await get(server, "/api/modes", { method: "DELETE" })).status).toBe(405);
   });
 
   it("leaves out a user mode that reuses a shipped name", async () => {
     const directory = await modesDirectory({ "code.md": "You are something else.\n" });
     const server = await serve({}, unusedAgent(), { modesDirectory: directory });
 
-    expect(await (await get(server, "/api/modes")).json()).toEqual({ modes: ["work"] });
+    expect(await (await get(server, "/api/modes")).json()).toEqual({
+      modes: ["work"],
+      own: [{ name: "code", prompt: "You are something else." }],
+    });
   });
 
   it("writes an available mode into the notebook, and clears it", async () => {
@@ -3555,6 +3562,78 @@ describe("a notebook's mode", () => {
     ).toBe(404);
     expect((await post(server, "/api/notebooks/mode", { notebook: "hello.md" })).status).toBe(400);
     expect((await get(server, "/api/notebooks/mode")).status).toBe(405);
+  });
+
+  it("creates a mode, rewrites it, and removes it", async () => {
+    const directory = await modesDirectory();
+    const server = await serve({ "hello.md": hello }, unusedAgent(), { modesDirectory: directory });
+    const draft = {
+      name: "design",
+      prompt: "Keep to the brief.",
+      model: "openai/gpt-5",
+      tools: ["read", "write"],
+      skills: [] as string[],
+    };
+
+    const created = await post(server, "/api/modes", { ...draft, skills: null });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({
+      name: "design",
+      prompt: "Keep to the brief.",
+      model: "openai/gpt-5",
+      tools: ["read", "write"],
+    });
+    expect(await readFile(join(directory, "design.md"), "utf8")).toContain("Keep to the brief.");
+
+    const listed = (await (await get(server, "/api/modes")).json()) as { modes: string[] };
+    expect(listed.modes).toEqual(["code", "design", "work"]);
+    const chosen = await post(server, "/api/notebooks/mode", {
+      notebook: "hello.md",
+      mode: "design",
+    });
+    expect(chosen.status).toBe(200);
+
+    const rewritten = await post(server, "/api/modes/design", {
+      name: "draft",
+      prompt: "Say what you assumed.",
+      model: "",
+      tools: null,
+      skills: [],
+    });
+    expect(rewritten.status).toBe(200);
+    expect(await rewritten.json()).toEqual({
+      name: "draft",
+      prompt: "Say what you assumed.",
+      skills: [],
+    });
+    expect(await readFile(join(directory, "draft.md"), "utf8")).toContain("skills: []");
+    await expect(readFile(join(directory, "design.md"), "utf8")).rejects.toThrow();
+
+    const removed = await get(server, "/api/modes/draft", { method: "DELETE" });
+    expect(removed.status).toBe(204);
+    const after = (await (await get(server, "/api/modes")).json()) as {
+      modes: string[];
+      own: unknown[];
+    };
+    expect(after.modes).toEqual(["code", "work"]);
+    expect(after.own).toEqual([]);
+    expect(
+      (await post(server, "/api/notebooks/mode", { notebook: "hello.md", mode: "draft" })).status,
+    ).toBe(422);
+  });
+
+  it("refuses a shipped name, a bad name, a duplicate, and removing a mode that is not there", async () => {
+    const directory = await modesDirectory({ "design.md": "Design.\n" });
+    const server = await serve({}, unusedAgent(), { modesDirectory: directory });
+    const body = { prompt: "", model: "", tools: null, skills: null };
+
+    expect((await post(server, "/api/modes", { ...body, name: "work" })).status).toBe(422);
+    expect((await post(server, "/api/modes", { ...body, name: "../x" })).status).toBe(400);
+    expect((await post(server, "/api/modes", { ...body, name: "design" })).status).toBe(409);
+    expect((await post(server, "/api/modes/missing", body)).status).toBe(404);
+    expect((await get(server, "/api/modes/work", { method: "DELETE" })).status).toBe(422);
+    expect((await get(server, "/api/modes/missing", { method: "DELETE" })).status).toBe(404);
+    expect((await get(server, "/api/modes/design")).status).toBe(405);
   });
 });
 

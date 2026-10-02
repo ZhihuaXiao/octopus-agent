@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, the model a Notebook names, the mode a Notebook names, and the Skills installed for the user and for a Workspace — are HTTP
+ * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, the model a Notebook names, the mode a Notebook names, the modes a user writes, and the Skills installed for the user and for a Workspace — are HTTP
  * requests, each with an answer; what a Run produces is a stream, and goes to
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
@@ -31,7 +31,16 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
-import { availableModes, resolveMode, userModesDirectory } from "../mode/mode.js";
+import {
+  type Mode,
+  availableModes,
+  createUserMode,
+  removeUserMode,
+  replaceUserMode,
+  resolveMode,
+  userModes,
+  userModesDirectory,
+} from "../mode/mode.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
 import { DOWNLOAD, runFileType } from "../run/store.js";
@@ -102,6 +111,8 @@ const NOTEBOOK_MODEL_ROUTE = "/api/notebooks/model";
 const NOTEBOOK_MODE_ROUTE = "/api/notebooks/mode";
 /** The modes a Notebook can be set to: the ones octo ships, and the user's own. */
 const MODES_ROUTE = "/api/modes";
+/** One mode of the user's own, to be rewritten or removed. */
+const MODE_ROUTE = /^\/api\/modes\/([^/]+)$/;
 /** Pi's model settings: the default, and the custom providers. */
 const MODELS_ROUTE = "/api/models";
 const MODELS_DEFAULT_ROUTE = "/api/models/default";
@@ -571,9 +582,155 @@ async function assignModel(
   answerAssignment(assigned, response);
 }
 
-/** The modes a notebook can be set to on this machine. */
+/** The modes a notebook can be set to, and the user's own as the page edits them. */
 async function serveModeList(directory: string, response: ServerResponse): Promise<void> {
-  json(response, 200, { modes: await availableModes(directory) });
+  json(response, 200, {
+    modes: await availableModes(directory),
+    own: await userModes(directory),
+  });
+}
+
+/**
+ * The mode a request describes. `name` is required when creating; a rewrite
+ * names the mode in the URL and may carry a new name. Tools or skills left
+ * null stay pi's own; a list, even an empty one, is what the mode allows.
+ */
+function requestedMode(body: unknown, current: string | undefined): Mode | undefined {
+  const creating = current === undefined;
+  if (
+    !isRecord(body) ||
+    !hasKeys(
+      body,
+      creating
+        ? ["name", "prompt", "model", "tools", "skills"]
+        : ["prompt", "model", "tools", "skills"],
+      creating ? [] : ["name"],
+    ) ||
+    typeof body.prompt !== "string" ||
+    typeof body.model !== "string" ||
+    ((creating || body.name !== undefined) && typeof body.name !== "string")
+  ) {
+    return undefined;
+  }
+  const tools = requestedList(body.tools);
+  const skills = requestedList(body.skills);
+  if (tools === undefined || skills === undefined) return undefined;
+  const prompt = body.prompt.trim();
+  const model = body.model.trim();
+  const name = typeof body.name === "string" ? body.name.trim() : current;
+  if (name === undefined) return undefined;
+  return {
+    name,
+    ...(prompt === "" ? {} : { prompt }),
+    ...(model === "" ? {} : { model }),
+    ...(tools === null ? {} : { tools }),
+    ...(skills === null ? {} : { skills }),
+  };
+}
+
+/** A list of strings, null when the field is left to pi, or nothing when it is neither. */
+function requestedList(value: unknown): string[] | null | undefined {
+  if (value === null) return null;
+  if (!Array.isArray(value)) return undefined;
+  const items: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.trim() === "" || item.includes("\n")) return undefined;
+    items.push(item.trim());
+  }
+  return items;
+}
+
+/** Writes a new mode of the user's own. */
+async function createMode(
+  directory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const mode = requestedMode(await readJson(request), undefined);
+  if (mode === undefined) {
+    reply(
+      response,
+      400,
+      "The request must name the mode and give its prompt, model, tools, and skills, as JSON. An empty prompt or model sets none. Null tools or skills leaves pi's own; a list is only those.\n",
+    );
+    return;
+  }
+  answerMode(await createUserMode(directory, mode), response, 201);
+}
+
+/** Rewrites or removes the user's mode named in the URL. */
+async function changeMode(
+  directory: string,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!permitted(["POST", "DELETE"], request, response)) return;
+  const name = decoded(matched[1] ?? "");
+  if (name === undefined) {
+    reply(response, 400, "The mode's name is not a URL.\n");
+    return;
+  }
+  if (request.method === "DELETE") {
+    answerMode(await removeUserMode(directory, name), response, 204);
+    return;
+  }
+  const mode = requestedMode(await readJson(request), name);
+  if (mode === undefined) {
+    reply(
+      response,
+      400,
+      "The request must give the mode's prompt, model, tools, and skills, as JSON, and may give it a new name. An empty prompt or model sets none. Null tools or skills leaves pi's own; a list is only those.\n",
+    );
+    return;
+  }
+  answerMode(await replaceUserMode(directory, name, mode), response, 200);
+}
+
+/** The answer to creating, rewriting, or removing a user's mode. */
+function answerMode(
+  written: Awaited<ReturnType<typeof createUserMode>>,
+  response: ServerResponse,
+  saved: number,
+): void {
+  switch (written.kind) {
+    case "saved":
+      json(response, saved, modeJson(written.mode));
+      return;
+    case "removed":
+      response.writeHead(saved);
+      response.end();
+      return;
+    case "invalid":
+      reply(response, 400, `${written.problem}\n`);
+      return;
+    case "shipped":
+      reply(response, 422, `${written.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `${written.problem}\n`);
+      return;
+    case "absent":
+      notFound(response);
+      return;
+  }
+}
+
+/** A mode as JSON, with only the fields it has. */
+function modeJson(mode: Mode): {
+  name: string;
+  prompt?: string;
+  model?: string;
+  tools?: readonly string[];
+  skills?: readonly string[];
+} {
+  return {
+    name: mode.name,
+    ...(mode.prompt !== undefined ? { prompt: mode.prompt } : {}),
+    ...(mode.model !== undefined ? { model: mode.model } : {}),
+    ...(mode.tools !== undefined ? { tools: mode.tools } : {}),
+    ...(mode.skills !== undefined ? { skills: mode.skills } : {}),
+  };
 }
 
 /**
@@ -1299,7 +1456,15 @@ async function handle(
     return;
   }
   if (pathname === MODES_ROUTE) {
-    if (permitted(READS, request, response)) await serveModeList(served.modesDirectory, response);
+    if (!permitted([...READS, ...WRITES], request, response)) return;
+    if (WRITES.includes(request.method ?? "")) {
+      await createMode(served.modesDirectory, request, response);
+    } else await serveModeList(served.modesDirectory, response);
+    return;
+  }
+  const modeItem = MODE_ROUTE.exec(pathname);
+  if (modeItem !== null) {
+    await changeMode(served.modesDirectory, modeItem, request, response);
     return;
   }
   if (pathname === MODELS_ROUTE) {
