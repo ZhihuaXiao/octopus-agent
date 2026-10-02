@@ -16,7 +16,13 @@ import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "nod
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import { formatDiagnostics } from "../notebook/diagnostic.js";
-import { applyEdit, branchAt, notebookWithModel } from "../notebook/edit.js";
+import {
+  type EditResult,
+  applyEdit,
+  branchAt,
+  notebookWithMode,
+  notebookWithModel,
+} from "../notebook/edit.js";
 import { type Notebook, cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
 import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
@@ -28,6 +34,8 @@ export interface NotebookEntry {
   readonly title: string;
   /** The model the Notebook names, when it names one. */
   readonly model?: string;
+  /** The mode the Notebook names, when it names one. */
+  readonly mode?: string;
 }
 
 const NOTEBOOK_EXTENSION = ".md";
@@ -45,10 +53,12 @@ export const pathWithin = (directory: string, file: string) =>
 
 function entryOf(directory: string, file: string, notebook: Notebook): NotebookEntry {
   const model = notebook.metadata.model;
+  const mode = notebook.metadata.mode;
   return {
     path: pathWithin(directory, file),
     title: titleOf(notebook, file),
     ...(model !== undefined ? { model } : {}),
+    ...(mode !== undefined ? { mode } : {}),
   };
 }
 
@@ -170,6 +180,7 @@ export async function copyNotebook(directory: string, from: string, to: string):
       path: pathWithin(directory, target),
       title: entry.title,
       ...(entry.model !== undefined ? { model: entry.model } : {}),
+      ...(entry.mode !== undefined ? { mode: entry.mode } : {}),
     },
   };
 }
@@ -294,6 +305,8 @@ export type TreeEntry =
       readonly title: string;
       /** The model the Notebook names, when it names one. */
       readonly model?: string;
+      /** The mode the Notebook names, when it names one. */
+      readonly mode?: string;
     }
   | { readonly kind: "file"; readonly name: string; readonly path: string };
 
@@ -343,6 +356,7 @@ async function readTree(directory: string, root: string): Promise<TreeEntry[]> {
               path: relativePath,
               title: notebook.title,
               ...(notebook.model !== undefined ? { model: notebook.model } : {}),
+              ...(notebook.mode !== undefined ? { mode: notebook.mode } : {}),
             }
           : { kind: "file", name: dirent.name, path: relativePath },
       );
@@ -429,6 +443,7 @@ export async function renameNotebook(
       path: pathWithin(directory, target),
       title: entry.title,
       ...(entry.model !== undefined ? { model: entry.model } : {}),
+      ...(entry.mode !== undefined ? { mode: entry.mode } : {}),
     },
   };
 }
@@ -440,15 +455,17 @@ export type Assigned =
   | { readonly kind: "refused"; readonly problem: string };
 
 /**
- * Writes `model` into the Notebook at `name`, or removes the field when
- * `model` is absent. A Notebook that already names that model is left as it
- * was. One a session holds is not this function's to write: the session writes
- * its own file, so the two cannot pass each other.
+ * Writes one frontmatter field into the Notebook at `name`, or removes it when
+ * `value` is absent. A Notebook that already has that value is left as it was.
+ * One a session holds is not this function's to write: the session writes its
+ * own file, so the two cannot pass each other.
  */
-export async function assignNotebookModel(
+async function assignNotebookField(
   directory: string,
   name: string,
-  model: string | undefined,
+  field: "model" | "mode",
+  value: string | undefined,
+  rewrite: (notebook: Notebook, value: string | undefined) => EditResult,
 ): Promise<Assigned> {
   const file = fileWithin(directory, name);
   if (file === undefined) return { kind: "absent" };
@@ -471,11 +488,11 @@ export async function assignNotebookModel(
     };
   }
   if (cellsOf(parsed.notebook).length === 0) return { kind: "absent" };
-  if (parsed.notebook.metadata.model === model) {
+  if (parsed.notebook.metadata[field] === value) {
     return { kind: "saved", entry: entryOf(directory, file, parsed.notebook) };
   }
 
-  const made = notebookWithModel(parsed.notebook, model);
+  const made = rewrite(parsed.notebook, value);
   if (!made.ok) {
     return {
       kind: "refused",
@@ -488,4 +505,32 @@ export async function assignNotebookModel(
 
   await writeFile(file, made.source, "utf8");
   return { kind: "saved", entry: entryOf(directory, file, made.notebook) };
+}
+
+/**
+ * Writes `model` into the Notebook at `name`, or removes the field when
+ * `model` is absent. A Notebook that already names that model is left as it
+ * was. One a session holds is not this function's to write: the session writes
+ * its own file, so the two cannot pass each other.
+ */
+export function assignNotebookModel(
+  directory: string,
+  name: string,
+  model: string | undefined,
+): Promise<Assigned> {
+  return assignNotebookField(directory, name, "model", model, notebookWithModel);
+}
+
+/**
+ * Writes `mode` into the Notebook at `name`, or removes the field when `mode`
+ * is absent. A Notebook that already names that mode is left as it was. One a
+ * session holds is not this function's to write: the session writes its own
+ * file, so the two cannot pass each other.
+ */
+export function assignNotebookMode(
+  directory: string,
+  name: string,
+  mode: string | undefined,
+): Promise<Assigned> {
+  return assignNotebookField(directory, name, "mode", mode, notebookWithMode);
 }

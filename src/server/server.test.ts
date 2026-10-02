@@ -398,6 +398,7 @@ interface NotebookSessionState {
   notebook: string;
   title: string;
   model?: string;
+  mode?: string;
   revision: string;
   frontmatter?: string;
   inputs: { name: string; type: string; description?: string; default?: unknown }[];
@@ -3460,6 +3461,100 @@ describe("a notebook's model", () => {
     });
     expect(saved.status).toBe(200);
     expect(await saved.json()).toMatchObject({ model: `${model?.provider}/${model?.id}` });
+  });
+});
+
+describe("a notebook's mode", () => {
+  async function modesDirectory(files: Readonly<Record<string, string>> = {}): Promise<string> {
+    const directory = await mkdtemp(join(tmpdir(), "octo-modes-"));
+    for (const [name, contents] of Object.entries(files)) {
+      await writeFile(join(directory, name), contents, "utf8");
+    }
+    return directory;
+  }
+
+  it("lists the modes octo ships, and a mode the user added", async () => {
+    const directory = await modesDirectory({
+      "design.md": "---\nmodel: openai/gpt-5\n---\nDesign.\n",
+    });
+    const server = await serve({ "hello.md": hello }, unusedAgent(), { modesDirectory: directory });
+
+    const listed = await get(server, "/api/modes");
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ modes: ["code", "design", "work"] });
+    expect((await post(server, "/api/modes", {})).status).toBe(405);
+  });
+
+  it("leaves out a user mode that reuses a shipped name", async () => {
+    const directory = await modesDirectory({ "code.md": "You are something else.\n" });
+    const server = await serve({}, unusedAgent(), { modesDirectory: directory });
+
+    expect(await (await get(server, "/api/modes")).json()).toEqual({ modes: ["work"] });
+  });
+
+  it("writes an available mode into the notebook, and clears it", async () => {
+    const directory = await modesDirectory();
+    const server = await serve({ "hello.md": hello }, unusedAgent(), { modesDirectory: directory });
+
+    const saved = await post(server, "/api/notebooks/mode", { notebook: "hello.md", mode: "work" });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ path: "hello.md", title: "Hello", mode: "work" });
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(
+      hello.replace("---\ntitle: Hello\n---\n", "---\ntitle: Hello\nmode: work\n---\n"),
+    );
+    const listed = (await (await get(server, "/api/notebooks")).json()) as {
+      notebooks: { path: string; mode?: string }[];
+    };
+    expect(listed.notebooks).toEqual([{ path: "hello.md", title: "Hello", mode: "work" }]);
+    const tree = (await (await get(server, "/api/tree")).json()) as {
+      entries: { kind: string; mode?: string }[];
+    };
+    expect(tree.entries).toEqual([
+      { kind: "notebook", name: "hello.md", path: "hello.md", title: "Hello", mode: "work" },
+    ]);
+
+    const cleared = await post(server, "/api/notebooks/mode", { notebook: "hello.md", mode: "" });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({ path: "hello.md", title: "Hello" });
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+  });
+
+  it("tells an open session, and refuses a mode that is not available", async () => {
+    const directory = await modesDirectory({
+      "design.md": "---\nmodel: openai/gpt-5\n---\nDesign.\n",
+    });
+    const server = await serve({ "hello.md": hello }, unusedAgent(), { modesDirectory: directory });
+    const session = await open(server, "hello.md");
+
+    const saved = await post(server, "/api/notebooks/mode", {
+      notebook: "hello.md",
+      mode: "design",
+    });
+    expect(saved.status).toBe(200);
+    const state = await stateOf(server, session.id);
+    expect(state.mode).toBe("design");
+    expect(state.frontmatter).toBe("title: Hello\nmode: design\n");
+    expect(state.revision).not.toBe(session.revision);
+    expect(state.cells[0]?.body).toBe("Say hello.\n");
+
+    const again = await post(server, "/api/notebooks/mode", {
+      notebook: "hello.md",
+      mode: "design",
+    });
+    expect(again.status).toBe(200);
+    expect((await stateOf(server, session.id)).revision).toBe(state.revision);
+
+    const refused = await post(server, "/api/notebooks/mode", {
+      notebook: "hello.md",
+      mode: "review",
+    });
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toMatch(/not available here/);
+    expect(
+      (await post(server, "/api/notebooks/mode", { notebook: "missing.md", mode: "work" })).status,
+    ).toBe(404);
+    expect((await post(server, "/api/notebooks/mode", { notebook: "hello.md" })).status).toBe(400);
+    expect((await get(server, "/api/notebooks/mode")).status).toBe(405);
   });
 });
 

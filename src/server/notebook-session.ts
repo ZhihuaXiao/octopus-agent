@@ -32,7 +32,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import { type AgentFactory, type ToolCall, emptyResult, noUsage } from "../agent/agent.js";
 import { thisMachine } from "../export/credentials.js";
 import { type Exported, exportNotebook } from "../export/html.js";
-import { type NotebookEdit, applyEdit, notebookWithModel } from "../notebook/edit.js";
+import {
+  type EditResult,
+  type NotebookEdit,
+  applyEdit,
+  notebookWithMode,
+  notebookWithModel,
+} from "../notebook/edit.js";
 import {
   type Cell,
   type CellType,
@@ -70,7 +76,9 @@ import {
 } from "./journal.js";
 import {
   type Assigned,
+  type NotebookEntry,
   type Renamed,
+  assignNotebookMode,
   assignNotebookModel,
   fileWithin,
   pathWithin,
@@ -148,6 +156,8 @@ export interface NotebookSessionState {
   readonly title: string;
   /** The model the Notebook names, when it names one. A Cell may still name its own. */
   readonly model?: string;
+  /** The mode the Notebook names, when it names one. A run cannot choose another. */
+  readonly mode?: string;
   /**
    * Which version of the file the session holds. A save says which revision
    * its draft was made from, so one made from an earlier version — the file
@@ -295,6 +305,14 @@ export interface NotebookSession {
    * has fallen behind.
    */
   setModel(model: string | undefined): Promise<Saved>;
+  /**
+   * Writes `mode` into the Notebook, or removes the field when `mode` is
+   * absent, and tells whoever is watching. A mode the Notebook already names
+   * changes nothing. The file on disk is taken up first when it has moved on,
+   * so the mode is set on the Notebook as it is, not on a copy the session
+   * has fallen behind.
+   */
+  setMode(mode: string | undefined): Promise<Saved>;
 }
 
 interface NotebookSessionSetup {
@@ -528,6 +546,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     title: titleOf(parsed, path),
     revision,
     ...(parsed.metadata.model !== undefined ? { model: parsed.metadata.model } : {}),
+    ...(parsed.metadata.mode !== undefined ? { mode: parsed.metadata.mode } : {}),
     ...(parsed.frontmatter !== undefined ? { frontmatter: parsed.frontmatter.text } : {}),
     inputs: parsed.metadata.inputs ?? [],
     segments: parsed.segments.map((segment) =>
@@ -582,7 +601,11 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     return { kind: "saved" };
   };
 
-  const writeModel = async (model: string | undefined): Promise<Saved> => {
+  const writeField = async (
+    field: "model" | "mode",
+    value: string | undefined,
+    rewrite: (notebook: Notebook, value: string | undefined) => EditResult,
+  ): Promise<Saved> => {
     const onDisk = await readFile(path, "utf8").catch((cause: NodeJS.ErrnoException) => {
       if (cause.code === "ENOENT") return undefined;
       throw cause;
@@ -592,9 +615,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       if (!found.ok) return { kind: "refused", problem: found.problem };
       adopt(onDisk, found.notebook);
     }
-    if (parsed.metadata.model === model) return { kind: "saved" };
+    if (parsed.metadata[field] === value) return { kind: "saved" };
 
-    const made = readable(notebookWithModel(parsed, model), `Cannot save ${notebook}`);
+    const made = readable(rewrite(parsed, value), `Cannot save ${notebook}`);
     if (!made.ok) return { kind: "refused", problem: made.problem };
     await writeFile(path, made.source, "utf8");
     adopt(made.source, made.notebook);
@@ -716,7 +739,13 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     },
 
     setModel(model) {
-      const saved = saving.then(() => writeModel(model));
+      const saved = saving.then(() => writeField("model", model, notebookWithModel));
+      saving = saved.catch(() => undefined);
+      return saved;
+    },
+
+    setMode(mode) {
+      const saved = saving.then(() => writeField("mode", mode, notebookWithMode));
       saving = saved.catch(() => undefined);
       return saved;
     },
@@ -848,6 +877,16 @@ function notebookNamed(journal: FoundJournal): string {
   return name;
 }
 
+/** A Notebook as the list names it, from the session that holds it. */
+function listedNotebook(state: NotebookSessionState): NotebookEntry {
+  return {
+    path: state.notebook,
+    title: state.title,
+    ...(state.model !== undefined ? { model: state.model } : {}),
+    ...(state.mode !== undefined ? { mode: state.mode } : {}),
+  };
+}
+
 export interface NotebookSessions {
   /** The Notebook Session for the Notebook at `notebook`, opened if it was not already. */
   open(notebook: string): Promise<Opened>;
@@ -862,6 +901,11 @@ export interface NotebookSessions {
    * so a browser watching it is told; one that is only a file is written directly.
    */
   setModel(notebook: string, model: string | undefined): Promise<Assigned>;
+  /**
+   * Sets the Notebook's mode, or clears it. One a session holds is set there,
+   * so a browser watching it is told; one that is only a file is written directly.
+   */
+  setMode(notebook: string, mode: string | undefined): Promise<Assigned>;
   get(id: string): NotebookSession | undefined;
   /**
    * Interrupts every Run in progress and resolves once each has stopped,
@@ -999,15 +1043,17 @@ export async function createNotebookSessions(
       if (session === undefined) return assignNotebookModel(directory, notebook, model);
       const saved = await session.setModel(model);
       if (saved.kind !== "saved") return { kind: "refused", problem: saved.problem };
-      const state = session.state();
-      return {
-        kind: "saved",
-        entry: {
-          path: state.notebook,
-          title: state.title,
-          ...(state.model !== undefined ? { model: state.model } : {}),
-        },
-      };
+      return { kind: "saved", entry: listedNotebook(session.state()) };
+    },
+
+    async setMode(notebook, mode) {
+      const path = fileWithin(directory, notebook);
+      if (path === undefined) return { kind: "absent" };
+      const session = byPath.get(path);
+      if (session === undefined) return assignNotebookMode(directory, notebook, mode);
+      const saved = await session.setMode(mode);
+      if (saved.kind !== "saved") return { kind: "refused", problem: saved.problem };
+      return { kind: "saved", entry: listedNotebook(session.state()) };
     },
 
     async rename(from, to) {

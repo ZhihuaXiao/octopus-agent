@@ -58,6 +58,10 @@ npm run octo -- --web --port 9000
 
 The page lists every Markdown file under the current directory that parses and contains at least one cell. A README full of shell snippets is not listed. `node_modules` and directories whose names start with a dot are skipped.
 
+Each notebook in the list has a **Mode** menu: the modes octo ships, and any you added under `~/.octo/modes`. The one you pick is written into that notebook. **Default** clears it, so the notebook runs on pi's defaults. The same menu sits beside the controls of a notebook you have open. Save or cancel an edit before choosing a mode.
+
+Each notebook in the list has a **Model** button. It lists the models whose provider already has a stored API key, and the models from custom providers you added. The one you pick is written into that notebook. **Use the default** clears it, so the notebook uses its mode's model, or pi's default when it names no mode. A cell that names its own model still uses that. **Test**, beside a model, asks it for one token and says whether it answered; it does not change the notebook. The same button sits beside the controls of a notebook you have open. Save or cancel an edit before choosing.
+
 Click a notebook to open it. The address bar keeps the path in the fragment, so a reload opens the same one, and a link opens it for someone else who can already reach the server:
 
 - `#examples/hello.md` is author view
@@ -65,7 +69,7 @@ Click a notebook to open it. The address bar keeps the path in the fragment, so 
 
 The title in the header returns to the list.
 
-The left column is the directory. Click a folder to open it and list what is in it: subfolders, notebooks, and other files. A notebook opens when you click it. Any other file is listed so you can see it is there. `node_modules` and directories whose names start with a dot are skipped. The notebook that is open is highlighted, and the folders that lead to it start open. On a narrow screen the column sits above the page instead. Each notebook has a **Model** button. It lists the models whose provider already has a stored API key, and the models from custom providers you added. The one you pick is written into that notebook. **Use the default** clears it, so the notebook uses its mode's model, or pi's default when it names no mode. A cell that names its own model still uses that. **Test**, beside a model, asks it for one token and says whether it answered; it does not change the notebook. The same button sits beside the controls of a notebook you have open. Save or cancel an edit before choosing.
+The left column is the directory. Click a folder to open it and list what is in it: subfolders, notebooks, and other files. A notebook opens when you click it. Any other file is listed so you can see it is there. `node_modules` and directories whose names start with a dot are skipped. The notebook that is open is highlighted, and the folders that lead to it start open. On a narrow screen the column sits above the page instead.
 
 **New notebook**, in the left column or beside the list, asks for a filename (`.md` is added if you leave it off; a path such as `notes/audit.md` makes the folder too) and writes a notebook holding one empty prompt cell. It opens in the editor, ready for you to write the prompt. It never overwrites a file that is already there.
 
@@ -279,7 +283,7 @@ The decision is remembered for that directory. Trusting a workspace loads its se
 
 ## Modes
 
-A mode is a preset: a system prompt, a default model, which tools the agent may use, and which skills it is given. The notebook names it in frontmatter, and every run of that notebook uses that mode.
+A mode is a preset: a system prompt, a default model, which tools the agent may use, and which skills it is given. The notebook names it in frontmatter, and every run of that notebook uses that mode. In the browser, the Mode menu on the notebook writes that line. Default removes it.
 
 ```yaml
 mode: work

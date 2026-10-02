@@ -97,15 +97,6 @@ body {
   overflow-wrap: anywhere;
 }
 
-.tree-model {
-  flex: none;
-  max-width: 6.5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 0.75rem;
-  padding: 0.05rem 0.35rem;
-}
-
 .tree-notebook a:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
@@ -473,6 +464,7 @@ h2 {
   min-width: 0;
 }
 
+.notebooks .mode-choice,
 .notebooks .notebook-model,
 #notebook-model {
   flex: none;
@@ -480,6 +472,30 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mode-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+select.notebook-mode,
+#notebook-mode {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  cursor: pointer;
+  max-width: 10rem;
+}
+
+select.notebook-mode:disabled,
+#notebook-mode:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .notebooks .run-link {

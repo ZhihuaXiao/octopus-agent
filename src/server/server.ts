@@ -5,7 +5,7 @@
  * It binds to loopback, serves the client, lists the Notebooks under the
  * directory it was started in, and opens them into Notebook Sessions that it
  * owns: a Run started from a browser carries on when the browser has gone.
- * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, the model a Notebook names, and the Skills installed for the user and for a Workspace — are HTTP
+ * Commands — open, run, interrupt, save, create, duplicate, promote, export, the model settings, a one-token check that a configured model answers, the model a Notebook names, the mode a Notebook names, and the Skills installed for the user and for a Workspace — are HTTP
  * requests, each with an answer; what a Run produces is a stream, and goes to
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
@@ -31,6 +31,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
+import { availableModes, resolveMode, userModesDirectory } from "../mode/mode.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
 import { DOWNLOAD, runFileType } from "../run/store.js";
@@ -97,6 +98,10 @@ const RENAME_ROUTE = "/api/notebooks/rename";
 const BRANCH_ROUTE = "/api/notebooks/branch";
 /** The model a Notebook names, chosen from the models the user can already call. */
 const NOTEBOOK_MODEL_ROUTE = "/api/notebooks/model";
+/** The mode a Notebook names, chosen from the modes available here. */
+const NOTEBOOK_MODE_ROUTE = "/api/notebooks/mode";
+/** The modes a Notebook can be set to: the ones octo ships, and the user's own. */
+const MODES_ROUTE = "/api/modes";
 /** Pi's model settings: the default, and the custom providers. */
 const MODELS_ROUTE = "/api/models";
 const MODELS_DEFAULT_ROUTE = "/api/models/default";
@@ -170,6 +175,11 @@ export interface ServerOptions {
    * absent; named by a test, so that none reads or writes the machine's.
    */
   readonly agentDirectory?: string;
+  /**
+   * Where a user's own modes are, one `<name>.md` each. `~/.octo/modes` when
+   * absent; named by a test, so that none reads the machine's.
+   */
+  readonly modesDirectory?: string;
   /**
    * The home directory, for Skills installed under `~/.agents/skills`. The
    * account's home when absent; named by a test, so that none reads the machine's.
@@ -558,6 +568,56 @@ async function assignModel(
     body.notebook,
     named === "" ? undefined : `${named.provider}/${named.id}`,
   );
+  answerAssignment(assigned, response);
+}
+
+/** The modes a notebook can be set to on this machine. */
+async function serveModeList(directory: string, response: ServerResponse): Promise<void> {
+  json(response, 200, { modes: await availableModes(directory) });
+}
+
+/**
+ * Sets the mode a Notebook names, from the modes available here. An empty mode
+ * clears it, so the notebook runs on pi's defaults.
+ */
+async function assignMode(
+  served: Served,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["notebook", "mode"]) ||
+    typeof body.notebook !== "string" ||
+    typeof body.mode !== "string"
+  ) {
+    reply(
+      response,
+      400,
+      "The request must name the notebook and the mode, as JSON. An empty mode clears it.\n",
+    );
+    return;
+  }
+
+  const mode = body.mode.trim();
+  if (mode !== "") {
+    const resolved = await resolveMode(mode, served.modesDirectory);
+    if (!resolved.ok) {
+      reply(response, 422, `${resolved.problems.join("\n")}\n`);
+      return;
+    }
+  }
+
+  const assigned = await served.sessions.setMode(body.notebook, mode === "" ? undefined : mode);
+  answerAssignment(assigned, response);
+}
+
+/** The answer to setting a notebook's model or its mode. */
+function answerAssignment(
+  assigned: Awaited<ReturnType<NotebookSessions["setModel"]>>,
+  response: ServerResponse,
+): void {
   switch (assigned.kind) {
     case "absent":
       notFound(response);
@@ -1066,6 +1126,8 @@ interface Served {
   readonly chats: ChatsOptions;
   /** Where pi keeps its settings and custom models. */
   readonly agentDirectory: string;
+  /** Where a user's own modes are, one `<name>.md` each. */
+  readonly modesDirectory: string;
   /** The home directory Skills under `~/.agents/skills` are read from. */
   readonly home: string;
 }
@@ -1232,6 +1294,14 @@ async function handle(
     if (permitted(WRITES, request, response)) await assignModel(served, request, response);
     return;
   }
+  if (pathname === NOTEBOOK_MODE_ROUTE) {
+    if (permitted(WRITES, request, response)) await assignMode(served, request, response);
+    return;
+  }
+  if (pathname === MODES_ROUTE) {
+    if (permitted(READS, request, response)) await serveModeList(served.modesDirectory, response);
+    return;
+  }
   if (pathname === MODELS_ROUTE) {
     if (permitted(READS, request, response)) await serveModels(served.agentDirectory, response);
     return;
@@ -1336,6 +1406,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     auth,
     chats: options.chatDirectory !== undefined ? { chatDirectory: options.chatDirectory } : {},
     agentDirectory: options.agentDirectory ?? getAgentDir(),
+    modesDirectory: options.modesDirectory ?? userModesDirectory(),
     home: options.home ?? homedir(),
   };
 

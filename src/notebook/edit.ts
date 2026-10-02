@@ -94,26 +94,27 @@ function declarationOf(cell: Cell): CellEdit {
 }
 
 /**
- * The frontmatter text with its top-level `model` set to `model`, or removed
- * when `model` is absent. Every other line is kept, so a comment or an input
+ * The frontmatter text with its top-level `field` set to `value`, or removed
+ * when `value` is absent. Every other line is kept, so a comment or an input
  * is not rewritten. Absent when that leaves no frontmatter at all.
  */
-export function frontmatterWithModel(
+function frontmatterWithField(
   text: string | undefined,
-  model: string | undefined,
+  field: "model" | "mode",
+  value: string | undefined,
 ): string | undefined {
-  if (text === undefined && model === undefined) return undefined;
+  if (text === undefined && value === undefined) return undefined;
   const source = text ?? "";
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
   const ended = source.endsWith("\n") || source === "";
   const lines = source === "" ? [] : source.split(/\r?\n/);
   if (ended && lines.at(-1) === "") lines.pop();
 
-  const at = lines.findIndex((line) => /^model:/.test(line));
-  const spelled = model === undefined ? undefined : `model: ${spellModel(model)}`;
+  const at = lines.findIndex((line) => line.startsWith(`${field}:`));
+  const spelled = value === undefined ? undefined : `${field}: ${spellScalar(value)}`;
   if (spelled === undefined) {
     if (at === -1) return text === "" ? undefined : text;
-    const block = /^model:\s*[|>]/.test(lines[at] ?? "");
+    const block = new RegExp(`^${field}:\\s*[|>]`).test(lines[at] ?? "");
     lines.splice(at, 1);
     if (block) {
       while (at < lines.length && /^[ \t]/.test(lines[at] ?? "")) lines.splice(at, 1);
@@ -130,9 +131,33 @@ export function frontmatterWithModel(
   return `${lines.join(newline)}${newline}`;
 }
 
-/** A model value as a plain YAML scalar, quoted when a plain one would not read back. */
-function spellModel(model: string): string {
-  return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(model) ? model : JSON.stringify(model);
+/**
+ * The frontmatter text with its top-level `model` set to `model`, or removed
+ * when `model` is absent. Every other line is kept, so a comment or an input
+ * is not rewritten. Absent when that leaves no frontmatter at all.
+ */
+export function frontmatterWithModel(
+  text: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  return frontmatterWithField(text, "model", model);
+}
+
+/**
+ * The frontmatter text with its top-level `mode` set to `mode`, or removed
+ * when `mode` is absent. Every other line is kept. Absent when that leaves
+ * no frontmatter at all.
+ */
+export function frontmatterWithMode(
+  text: string | undefined,
+  mode: string | undefined,
+): string | undefined {
+  return frontmatterWithField(text, "mode", mode);
+}
+
+/** A frontmatter value as a plain YAML scalar, quoted when a plain one would not read back. */
+function spellScalar(value: string): string {
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value) ? value : JSON.stringify(value);
 }
 
 /**
@@ -141,8 +166,24 @@ function spellModel(model: string): string {
  * to the caller to notice, so a line they quoted stays quoted.
  */
 export function notebookWithModel(notebook: Notebook, model: string | undefined): EditResult {
+  return notebookWithFrontmatter(
+    notebook,
+    frontmatterWithModel(editOf(notebook).frontmatter, model),
+  );
+}
+
+/**
+ * The Notebook with its `mode` set or cleared, and nothing else rewritten: the
+ * cells keep the fences they had. A `mode` the Notebook already has is left
+ * to the caller to notice, so a line they quoted stays quoted.
+ */
+export function notebookWithMode(notebook: Notebook, mode: string | undefined): EditResult {
+  return notebookWithFrontmatter(notebook, frontmatterWithMode(editOf(notebook).frontmatter, mode));
+}
+
+/** The Notebook as it stands, with only its frontmatter text replaced. */
+function notebookWithFrontmatter(notebook: Notebook, frontmatter: string | undefined): EditResult {
   const current = editOf(notebook);
-  const frontmatter = frontmatterWithModel(current.frontmatter, model);
   return applyEdit(notebook, {
     segments: current.segments,
     ...(frontmatter !== undefined ? { frontmatter } : {}),

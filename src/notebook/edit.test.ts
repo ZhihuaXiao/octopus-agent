@@ -6,6 +6,7 @@ import {
   applyEdit,
   branchAt,
   editOf,
+  notebookWithMode,
   notebookWithModel,
 } from "./edit.js";
 import { type Notebook, cellsOf, formatDiagnostics, parseNotebook } from "./notebook.js";
@@ -552,6 +553,61 @@ describe("setting a notebook's model", () => {
     expect(made.source).toContain(
       'model: "Oracle1/gemini-3.8-flash-high, gemini-3.7-flash-high"\n',
     );
+  });
+});
+
+describe("setting a notebook's mode", () => {
+  const bare = "```prompt id=greet\nSay hello.\n```\n";
+
+  it("adds the mode and leaves the cells as they were written", () => {
+    const made = notebookWithMode(valid(source), "work");
+    if (!made.ok) throw new Error(formatDiagnostics(made.errors));
+
+    expect(made.source).toBe(
+      source.replace("    default: src\n", "    default: src\nmode: work\n"),
+    );
+    expect(made.notebook.metadata.mode).toBe("work");
+    expect(made.source).toContain("```prompt id=first isolated model=openai/gpt-5");
+    expect(made.source).toContain("```bash id=second uses=first timeout=30s");
+  });
+
+  it("replaces a mode the notebook already names, and can clear it", () => {
+    const named = valid(
+      "---\ntitle: Hello\nmode: code\n---\n\n```prompt id=greet\nSay hello.\n```\n",
+    );
+    const replaced = notebookWithMode(named, "work");
+    if (!replaced.ok) throw new Error(formatDiagnostics(replaced.errors));
+    expect(replaced.source).toBe(
+      "---\ntitle: Hello\nmode: work\n---\n\n```prompt id=greet\nSay hello.\n```\n",
+    );
+
+    const cleared = notebookWithMode(replaced.notebook, undefined);
+    if (!cleared.ok) throw new Error(formatDiagnostics(cleared.errors));
+    expect(cleared.source).toBe("---\ntitle: Hello\n---\n\n```prompt id=greet\nSay hello.\n```\n");
+    expect(cleared.notebook.metadata.mode).toBeUndefined();
+  });
+
+  it("writes a frontmatter block when the notebook had none, and removes it when the mode was all it held", () => {
+    const made = notebookWithMode(valid(bare), "code");
+    if (!made.ok) throw new Error(formatDiagnostics(made.errors));
+    expect(made.source).toBe(`---\nmode: code\n---\n${bare}`);
+
+    const cleared = notebookWithMode(made.notebook, undefined);
+    if (!cleared.ok) throw new Error(formatDiagnostics(cleared.errors));
+    expect(cleared.source).toBe(bare);
+  });
+
+  it("leaves a model the notebook names where it is", () => {
+    const named = valid(
+      "---\ntitle: Hello\nmodel: ollama/llama3.1:8b\n---\n\n```prompt id=greet\nSay hello.\n```\n",
+    );
+    const made = notebookWithMode(named, "work");
+    if (!made.ok) throw new Error(formatDiagnostics(made.errors));
+    expect(made.source).toBe(
+      "---\ntitle: Hello\nmodel: ollama/llama3.1:8b\nmode: work\n---\n\n```prompt id=greet\nSay hello.\n```\n",
+    );
+    expect(made.notebook.metadata.model).toBe("ollama/llama3.1:8b");
+    expect(made.notebook.metadata.mode).toBe("work");
   });
 });
 

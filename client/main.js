@@ -14,8 +14,8 @@
  *
  * Beside whichever is shown, the served directory is drawn as a tree of its
  * folders and the Notebooks in them, the one open marked, with a way to make
- * a new Notebook and a way to choose the model that Notebook runs on, from
- * the models its user can already call; and under an open Notebook are the ways to add a Prompt
+ * a new Notebook. The list of Notebooks, and an open one, choose the mode it
+ * runs in and the model it runs on; and under an open Notebook are the ways to add a Prompt
  * Cell or a Bash Cell to it, which begin the editing when it has not begun.
  *
  * The same Session is shown a second way, as the Run View: the Cells hidden,
@@ -47,7 +47,8 @@
  */
 
 /**
- * @typedef {{ path: string, title: string, model?: string }} NotebookEntry
+ * @typedef {{ path: string, title: string, model?: string, mode?: string }} NotebookEntry
+ * @typedef {{ modes: string[] }} ModeList
  * @typedef {{ directory: string, notebooks: NotebookEntry[] }} NotebookList
  * @typedef {{
  *   id: string,
@@ -88,6 +89,7 @@
  *   notebook: string,
  *   title: string,
  *   model?: string,
+ *   mode?: string,
  *   revision: string,
  *   frontmatter?: string,
  *   inputs: InputView[],
@@ -272,8 +274,119 @@ function renderEntry(entry) {
   // The other way in, for whoever is here to run it rather than read it.
   const run = make("a", "run-link", "Run view");
   run.href = hashFor(entry.path, "run");
-  item.append(link, modelButton(entry.path, entry.model), run);
+  item.append(link, modeControl(entry.path, entry.mode), modelButton(entry.path, entry.model), run);
   return item;
+}
+
+/** The modes a notebook can be set to, once they have been loaded. */
+/** @type {string[]} */
+let knownModes = [];
+
+/**
+ * @returns {Promise<string[]>}
+ */
+async function fetchModes() {
+  const response = await request("/api/modes");
+  if (!response.ok) {
+    throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+  }
+  const page = /** @type {ModeList} */ (await response.json());
+  knownModes = page.modes;
+  return knownModes;
+}
+
+/**
+ * The menu of modes for one notebook. An empty choice clears the mode, so the
+ * notebook runs on pi's defaults.
+ * @param {string} notebook
+ * @param {string} [mode]
+ * @returns {HTMLElement}
+ */
+function modeControl(notebook, mode) {
+  const select = document.createElement("select");
+  select.className = "notebook-mode";
+  select.setAttribute("aria-label", "Mode");
+  fillModeSelect(select, mode);
+  select.disabled = draft !== undefined && watching?.state.notebook === notebook;
+  select.title = select.disabled
+    ? "Save or cancel the draft before choosing a mode."
+    : "The mode this notebook runs in. Default uses pi's own settings.";
+  select.addEventListener("click", (event) => event.stopPropagation());
+  select.addEventListener("change", () => void chooseNotebookMode(notebook, select));
+  const label = document.createElement("label");
+  label.className = "mode-choice";
+  label.append(select);
+  return label;
+}
+
+/**
+ * @param {HTMLSelectElement} select
+ * @param {string} [mode]
+ */
+function fillModeSelect(select, mode) {
+  const names = [...knownModes];
+  if (mode !== undefined && mode !== "" && !names.includes(mode)) names.push(mode);
+  const wanted = ["", ...names];
+  const have = [...select.options].map((option) => option.value);
+  const same =
+    have.length === wanted.length && have.every((value, index) => value === wanted[index]);
+  if (!same) {
+    select.replaceChildren(
+      ...wanted.map((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value === "" ? "Default" : value;
+        return option;
+      }),
+    );
+  }
+  const chosen = mode ?? "";
+  if (select.value !== chosen && document.activeElement !== select) select.value = chosen;
+  select.dataset.mode = chosen;
+}
+
+/**
+ * @param {string} notebook
+ * @param {HTMLSelectElement} select
+ */
+async function chooseNotebookMode(notebook, select) {
+  const mode = select.value;
+  const previous = select.dataset.mode ?? "";
+  if (mode === previous) return;
+  const status = notebookStatus(notebook);
+  if (draft !== undefined && watching?.state.notebook === notebook) {
+    select.value = previous;
+    status.textContent = "Save or cancel the draft before choosing a mode.";
+    return;
+  }
+  status.textContent = "";
+  try {
+    const entry = /** @type {NotebookEntry} */ (
+      await (await post("/api/notebooks/mode", { notebook, mode })).json()
+    );
+    if (watching?.state.notebook === entry.path) {
+      if (entry.mode !== undefined) watching.state.mode = entry.mode;
+      else delete watching.state.mode;
+      renderSession();
+    }
+    if (!element("list").hidden) await showList();
+    else await refreshTree();
+  } catch (cause) {
+    select.value = previous;
+    status.textContent = `Could not set the mode: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Where a problem choosing a mode is said, for the notebook it was chosen on.
+ * @param {string} notebook
+ */
+function notebookStatus(notebook) {
+  if (watching?.state.notebook === notebook && !element("session").hidden) {
+    return element("session-status");
+  }
+  if (!element("list").hidden) return element("status");
+  return element("tree-status");
 }
 
 /**
@@ -281,10 +394,9 @@ function renderEntry(entry) {
  * the user can already call.
  * @param {string} notebook
  * @param {string} [model]
- * @param {string} [className]
  */
-function modelButton(notebook, model, className) {
-  const button = make("button", className ?? "notebook-model", model ?? "Model");
+function modelButton(notebook, model) {
+  const button = make("button", "notebook-model", model ?? "Model");
   button.type = "button";
   button.title = model ?? "Choose a configured model for this notebook";
   button.addEventListener("click", (event) => {
@@ -306,13 +418,21 @@ async function showList() {
   const status = element("status");
 
   try {
-    const found = await fetchNotebooks();
+    let modeProblem = "";
+    const [found] = await Promise.all([
+      fetchNotebooks(),
+      fetchModes().catch((cause) => {
+        modeProblem = `Could not list the modes: ${describe(cause)}`;
+      }),
+    ]);
     element("directory").textContent = found.directory;
     element("notebooks").replaceChildren(...found.notebooks.map(renderEntry));
     status.textContent =
-      found.notebooks.length === 0
-        ? "No notebooks found in this directory. Press New notebook to begin one."
-        : "";
+      modeProblem !== ""
+        ? modeProblem
+        : found.notebooks.length === 0
+          ? "No notebooks found in this directory. Press New notebook to begin one."
+          : "";
   } catch (cause) {
     status.textContent = `Could not list the notebooks: ${describe(cause)}`;
     element("tree-status").textContent = status.textContent;
@@ -324,7 +444,7 @@ async function showList() {
 /**
  * One entry of the served directory, as the sidebar lists it.
  * @typedef {{ name: string, path: string, kind: "directory", children: TreeNode[] }
- *   | { name: string, path: string, kind: "notebook", title: string, model?: string }
+ *   | { name: string, path: string, kind: "notebook", title: string, model?: string, mode?: string }
  *   | { name: string, path: string, kind: "file" }} TreeNode
  * @typedef {{ directory: string, entries: TreeNode[] }} FileTree
  */
@@ -400,7 +520,7 @@ function renderNodes(nodes) {
       link.href = hashFor(node.path, "author");
       link.title = node.title;
       if (node.path === asked) link.setAttribute("aria-current", "page");
-      item.append(link, modelButton(node.path, node.model, "tree-model"));
+      item.append(link);
       return item;
     }
     const item = make("li", "tree-file", node.name);
@@ -1510,6 +1630,13 @@ function renderSession() {
   }
   /** @type {HTMLButtonElement} */ (element("run-all")).disabled = state.running;
   /** @type {HTMLButtonElement} */ (element("interrupt")).disabled = !state.running;
+  const mode = /** @type {HTMLSelectElement} */ (element("notebook-mode"));
+  fillModeSelect(mode, state.mode);
+  mode.disabled = draft !== undefined;
+  mode.title =
+    draft !== undefined
+      ? "Save or cancel the draft before choosing a mode."
+      : "The mode this notebook runs in. Default uses pi's own settings.";
   const chosen = /** @type {HTMLButtonElement} */ (element("notebook-model"));
   chosen.textContent = state.model ?? "Model";
   chosen.title =
@@ -3080,7 +3207,10 @@ async function showSession(notebook) {
   /** @type {NotebookSessionState} */
   let state;
   try {
-    state = await (await post("/api/sessions", { notebook })).json();
+    const opened = post("/api/sessions", { notebook }).then((response) => response.json());
+    const modes = fetchModes().catch(() => undefined);
+    state = await opened;
+    await modes;
   } catch (cause) {
     if (asked !== notebook) return;
     element("title").textContent = notebook;
@@ -3737,6 +3867,13 @@ function addProvider() {
 element("tab-notebook").addEventListener("click", closeModels);
 element("tab-models").addEventListener("click", () => void openModels());
 element("models-close").addEventListener("click", closeModels);
+element("notebook-mode").addEventListener("change", () => {
+  if (watching === undefined) return;
+  void chooseNotebookMode(
+    watching.state.notebook,
+    /** @type {HTMLSelectElement} */ (element("notebook-mode")),
+  );
+});
 element("notebook-model").addEventListener("click", () => {
   if (watching === undefined) return;
   void openNotebookModel(watching.state.notebook, watching.state.model);

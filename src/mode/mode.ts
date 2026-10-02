@@ -138,6 +138,19 @@ async function modesIn(directory: string): Promise<string[]> {
     .filter(isName);
 }
 
+/**
+ * The modes a notebook can be set to here: the ones octo ships, and the user's
+ * own that do not reuse a shipped name. A name both directories have is left
+ * out, since neither file can be the one a run would use. A directory that is
+ * not there adds none. Sorted, so a menu drawn from this is the same each time.
+ */
+export async function availableModes(userDirectory: string): Promise<string[]> {
+  const shipped = await modesIn(SHIPPED_MODES);
+  const own = await modesIn(userDirectory);
+  const collided = new Set(shipped.filter((name) => own.includes(name)));
+  return [...shipped, ...own].filter((name) => !collided.has(name)).sort();
+}
+
 /** `a`, `a and b`, `a, b and c`: a list as a sentence says one. */
 const inWords = (names: readonly string[]) =>
   names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
