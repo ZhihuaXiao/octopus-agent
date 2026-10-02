@@ -57,6 +57,11 @@ export interface CellResult {
    * failed before the agent said anything.
    */
   anchor?: string;
+  /**
+   * The system prompt the turn was given. Absent when the agent recorded none,
+   * which a scripted turn does not: only a turn that ran through pi has one.
+   */
+  systemPrompt?: string;
 }
 
 /**
@@ -117,14 +122,23 @@ export class TurnFailure extends Error {
      * Cell that cost nothing. Zero when the agent never got as far as a request.
      */
     readonly usage: Usage = noUsage,
+    /**
+     * The system prompt the turn was given, when the agent had one by the time
+     * it failed. Empty when it recorded none.
+     */
+    readonly systemPrompt = "",
   ) {
     super(message);
     this.name = "TurnFailure";
   }
 
   /** The failure of a turn that was told to stop, after whatever it had retried and spent. */
-  static aborted(retries: readonly Retry[] = [], usage: Usage = noUsage): TurnFailure {
-    return new TurnFailure("The turn was aborted", retries, true, usage);
+  static aborted(
+    retries: readonly Retry[] = [],
+    usage: Usage = noUsage,
+    systemPrompt = "",
+  ): TurnFailure {
+    return new TurnFailure("The turn was aborted", retries, true, usage, systemPrompt);
   }
 }
 

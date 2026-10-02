@@ -3484,7 +3484,13 @@ describe("a cell's model rounds", () => {
     await browser.close();
 
     const later = await get(running, `/api/sessions/${opened.id}/cells/greet/rounds`);
-    expect(later.status).toBe(422);
-    expect(await later.text()).toMatch(/not on disk/);
+    expect(later.status).toBe(200);
+    expect(await later.json()).toMatchObject({
+      query: "Say hello.",
+      prompts: ["Say hello."],
+      rounds: [],
+      toolCalls: [],
+      roundsProblem: expect.stringMatching(/not on disk/),
+    });
   });
 });

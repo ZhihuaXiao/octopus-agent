@@ -46,7 +46,12 @@ import {
   titleOf,
 } from "../notebook/notebook.js";
 import type { CellRecord, CellStatus, RunEnvironment, RunRecord } from "../run/record.js";
-import { type RoundsResult, readCellRounds } from "../run/rounds.js";
+import {
+  type CellRounds,
+  type RoundsResult,
+  attachSystemPrompt,
+  readCellRounds,
+} from "../run/rounds.js";
 import {
   type RefusalKind,
   type RunEvent,
@@ -596,6 +601,26 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     return { kind: "saved" };
   };
 
+  /**
+   * What the Run recorded of a Prompt Cell when its Agent Session cannot be
+   * read: the question, the system prompt, and the tool calls. The rounds
+   * themselves stay empty; only the session holds those.
+   */
+  const recordedTurn = (cellId: string, cellRecord: CellRecord): CellRounds => {
+    const body = cellsOf(parsed).find((cell) => cell.id === cellId)?.body ?? "";
+    const text = body.replace(/\r?\n$/, "");
+    const calls = cellRecord.type === "prompt" ? cellRecord.toolCalls : [];
+    return attachSystemPrompt(
+      {
+        query: text,
+        prompts: text === "" ? [] : [text],
+        rounds: [],
+        toolCalls: calls.map((call) => ({ name: call.name, input: call.input })),
+      },
+      cellRecord.type === "prompt" ? cellRecord.systemPrompt : undefined,
+    );
+  };
+
   const interrupt = (): Promise<void> => {
     if (current === undefined) return Promise.resolve();
     current.controller.abort();
@@ -752,24 +777,36 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       if (found.record.type !== "prompt") {
         return { ok: false, problem: "A bash cell does not call a model." };
       }
+      const recorded = recordedTurn(cellId, found.record);
       const anchor = found.record.anchor;
       if (anchor === undefined) {
         return {
-          ok: false,
-          problem:
-            "This cell left no model rounds. An isolated cell's session is discarded when it finishes, and a cell that failed before the model answered has none.",
+          ok: true,
+          value: {
+            ...recorded,
+            roundsProblem:
+              "This cell left no model rounds. An isolated cell's session is discarded when it finishes, and a cell that failed before the model answered has none.",
+          },
         };
       }
       const record = await readRunRecord(path, found.run);
       if (record?.agentSession === undefined) {
-        return { ok: false, problem: "The agent session for this cell is not on disk." };
+        return {
+          ok: true,
+          value: { ...recorded, roundsProblem: "The agent session for this cell is not on disk." },
+        };
       }
-      return readCellRounds(
+      const read = readCellRounds(
         record.agentSession,
         { ...record.anchors, [cellId]: anchor },
         cellId,
         cellsOf(parsed),
       );
+      if (!read.ok) return { ok: true, value: { ...recorded, roundsProblem: read.problem } };
+      return {
+        ok: true,
+        value: attachSystemPrompt(read.value, found.record.systemPrompt),
+      };
     },
 
     relocate(nextPath, nextNotebook) {

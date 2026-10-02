@@ -241,6 +241,9 @@ export function createScriptedAgent(
             // which is what the script's word is there to stand in for.
             model: turn.model ?? model ?? "scripted",
             retries,
+            ...(turn.systemPrompt !== undefined && turn.systemPrompt !== ""
+              ? { systemPrompt: turn.systemPrompt }
+              : {}),
             anchor,
           };
         } finally {

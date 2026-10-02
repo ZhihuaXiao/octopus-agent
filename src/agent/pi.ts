@@ -238,11 +238,15 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       });
 
       const before = session.messages.length;
+      /** The system prompt the turn was given, read once the turn has settled. */
+      let systemPrompt = "";
       try {
         await session.prompt(body);
       } finally {
         unsubscribe();
         signal?.removeEventListener("abort", stop);
+        const given = session.systemPrompt;
+        systemPrompt = typeof given === "string" ? given.trim() : "";
         // However the turn went: the session is off its model only for as long
         // as the override's turn lasts. Recorded in the session after the turn's
         // messages, so that the Anchor read below is past it and a Run forking
@@ -256,10 +260,11 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       // Read off the stop rather than off the messages, because a turn stopped
       // while pi was waiting to retry leaves no message saying so. What the turn
       // had spent by then is on the messages it did leave, and is spent.
-      if (stopped) throw TurnFailure.aborted(retries, summary.usage);
+      if (stopped) throw TurnFailure.aborted(retries, summary.usage, systemPrompt);
 
       const ended = failureOf(turn);
-      if (ended !== undefined) throw new TurnFailure(ended, retries, false, summary.usage);
+      if (ended !== undefined)
+        throw new TurnFailure(ended, retries, false, summary.usage, systemPrompt);
 
       // The entry the turn left the session's leaf on, which is the Anchor: the
       // point a later Run forks at to put a Cell back in this context.
@@ -269,6 +274,7 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
         text: stream.text(),
         ...summary,
         retries,
+        ...(systemPrompt !== "" ? { systemPrompt } : {}),
         ...(anchor !== null ? { anchor } : {}),
       };
     },

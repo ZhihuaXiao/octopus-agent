@@ -77,7 +77,7 @@ If the server restarted, the old cookie is no longer valid. The page asks for th
 
 ### Author view
 
-Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. After a prompt cell has run, **Rounds** opens the model rounds of that turn: each reply, and the tool result between replies. Statuses you will see:
+Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. After a prompt cell has run, four buttons open that turn. **Rounds** shows each reply, and the tool result between replies. **System** shows the system prompt the turn was given. **Prompts** shows the other prompts: what you asked, any further prompt sent in that turn, and a prompt an extension injected. **Tools** shows the tool calls, and what each returned. Statuses you will see:
 
 | Status | Meaning |
 | --- | --- |

@@ -1179,18 +1179,42 @@ function markdownBlocks(text) {
   return blocks;
 }
 
+/** Which part of a prompt cell's turn a button opens. */
+/** @typedef {"rounds" | "system" | "prompts" | "tools"} TurnView */
+
 /**
- * Shown once a prompt cell has run. Opens the model rounds of that turn.
+ * Shown once a prompt cell has run. Each opens one part of that turn.
  * @param {CellView} cell
- * @returns {HTMLButtonElement | undefined}
+ * @returns {HTMLButtonElement[]}
  */
-function roundsButton(cell) {
-  if (cell.type !== "prompt" || cell.run === undefined) return undefined;
-  if (cell.status === "idle" || cell.status === "running") return undefined;
-  const button = make("button", "cell-rounds", "Rounds");
+function turnButtons(cell) {
+  if (cell.type !== "prompt" || cell.run === undefined) return [];
+  if (cell.status === "idle" || cell.status === "running") return [];
+  return [
+    turnButton(cell, "rounds", "Rounds", "The model rounds of this cell's turn"),
+    turnButton(cell, "system", "System", "The system prompt this cell's turn was given"),
+    turnButton(cell, "prompts", "Prompts", "The prompts other than the system prompt"),
+    turnButton(cell, "tools", "Tools", "The tool calls of this cell's turn"),
+  ];
+}
+
+/**
+ * @param {CellView} cell
+ * @param {TurnView} view
+ * @param {string} label
+ * @param {string} title
+ * @returns {HTMLButtonElement}
+ */
+function turnButton(cell, view, label, title) {
+  const button = /** @type {HTMLButtonElement} */ (make("button", "cell-turn", label));
   button.type = "button";
-  button.title = "The model rounds of this cell's turn";
-  button.addEventListener("click", () => void showRounds(cell.id));
+  button.title = title;
+  button.addEventListener("click", () => {
+    if (view === "system") void showSystemPrompt(cell.id);
+    else if (view === "prompts") void showPrompts(cell.id);
+    else if (view === "tools") void showToolCalls(cell.id);
+    else void showRounds(cell.id);
+  });
   return button;
 }
 
@@ -1207,6 +1231,10 @@ function roundText(value) {
 /**
  * @param {{
  *   query: string,
+ *   prompts?: string[],
+ *   systemPrompt?: string,
+ *   toolCalls?: { name: string, input: unknown, result?: string, isError?: boolean }[],
+ *   roundsProblem?: string,
  *   rounds: {
  *     kind: "model" | "you",
  *     text: string,
@@ -1225,7 +1253,7 @@ function renderRounds(value) {
   /** @type {Node[]} */
   const nodes = [query];
   if (value.rounds.length === 0) {
-    nodes.push(make("p", "", "The model did not answer."));
+    nodes.push(make("p", "", value.roundsProblem ?? "The model did not answer."));
   }
   let count = 0;
   for (const round of value.rounds) {
@@ -1269,11 +1297,91 @@ function renderRounds(value) {
   body.replaceChildren(...nodes);
 }
 
-/** @param {string} cell */
-async function showRounds(cell) {
+/**
+ * The prompts other than the system prompt, in the order they were sent.
+ * @param {{ query: string, prompts?: string[] }} value
+ */
+function promptsOf(value) {
+  if (value.prompts !== undefined) return value.prompts;
+  return value.query === "" ? [] : [value.query];
+}
+
+/**
+ * @param {{
+ *   toolCalls?: { name: string, input: unknown, result?: string, isError?: boolean }[],
+ *   rounds: { toolCalls: { name: string, input: unknown, result?: string, isError?: boolean }[] }[],
+ * }} value
+ */
+function toolCallsOf(value) {
+  if (value.toolCalls !== undefined) return value.toolCalls;
+  return value.rounds.flatMap((round) => round.toolCalls);
+}
+
+/** @param {string} text */
+function promptBlock(text) {
+  const block = make("section", "round");
+  block.append(make("pre", "prompt-text", text === "" ? "(empty)" : text));
+  return block;
+}
+
+/**
+ * @param {{ systemPrompt?: string }} value
+ */
+function renderSystemPrompt(value) {
+  const text = value.systemPrompt;
+  element("cell-rounds-body").replaceChildren(
+    text === undefined || text === ""
+      ? make("p", "", "This cell recorded no system prompt.")
+      : promptBlock(text),
+  );
+}
+
+/**
+ * @param {{ query: string, prompts?: string[] }} value
+ */
+function renderPrompts(value) {
+  const prompts = promptsOf(value);
+  element("cell-rounds-body").replaceChildren(
+    ...(prompts.length === 0
+      ? [make("p", "", "This turn sent no other prompt.")]
+      : prompts.map(promptBlock)),
+  );
+}
+
+/**
+ * @param {{
+ *   rounds: { toolCalls: { name: string, input: unknown, result?: string, isError?: boolean }[] }[],
+ * }} value
+ */
+function renderToolCalls(value) {
+  const calls = toolCallsOf(value);
+  if (calls.length === 0) {
+    element("cell-rounds-body").replaceChildren(make("p", "", "This turn called no tools."));
+    return;
+  }
+  const block = make("section", "round");
+  for (const call of calls) {
+    const tool = make("div", "round-tool");
+    tool.append(
+      make("p", "round-tool-name", call.isError === true ? `${call.name} failed` : call.name),
+    );
+    tool.append(make("pre", "", roundText(call.input)));
+    if (call.result !== undefined) tool.append(make("pre", "round-result", call.result));
+    block.append(tool);
+  }
+  element("cell-rounds-body").replaceChildren(block);
+}
+
+/**
+ * Opens one part of a prompt cell's turn.
+ * @param {string} cell
+ * @param {TurnView} view
+ */
+async function showTurn(cell, view) {
   if (watching === undefined) return;
   const dialog = /** @type {HTMLDialogElement} */ (element("cell-rounds-dialog"));
-  element("cell-rounds-title").textContent = cell;
+  const titles = { rounds: "Rounds", system: "System", prompts: "Prompts", tools: "Tools" };
+  element("cell-rounds-title").textContent = `${titles[view]} · ${cell}`;
   element("cell-rounds-body").replaceChildren(make("p", "", "Loading…"));
   if (!dialog.open) dialog.showModal();
   try {
@@ -1283,11 +1391,27 @@ async function showRounds(cell) {
     if (!response.ok) {
       throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
     }
-    renderRounds(await response.json());
+    const value = await response.json();
+    if (view === "system") renderSystemPrompt(value);
+    else if (view === "prompts") renderPrompts(value);
+    else if (view === "tools") renderToolCalls(value);
+    else renderRounds(value);
   } catch (cause) {
     element("cell-rounds-body").replaceChildren(make("p", "", describe(cause)));
   }
 }
+
+/** @param {string} cell */
+const showRounds = (cell) => showTurn(cell, "rounds");
+
+/** @param {string} cell */
+const showSystemPrompt = (cell) => showTurn(cell, "system");
+
+/** @param {string} cell */
+const showPrompts = (cell) => showTurn(cell, "prompts");
+
+/** @param {string} cell */
+const showToolCalls = (cell) => showTurn(cell, "tools");
 
 /**
  * Puts a Cell's reply into `node`: the characters as written, or Markdown.
@@ -1323,8 +1447,7 @@ function renderCell(cell, session, running) {
   if (cell.timeout !== undefined)
     heading.append(make("span", "cell-attribute", `timeout ${formatDuration(cell.timeout)}`));
   heading.append(make("span", "cell-status", cell.status));
-  const rounds = roundsButton(cell);
-  if (rounds !== undefined) heading.append(rounds);
+  heading.append(...turnButtons(cell));
   heading.append(branchButton(cell));
   const runOne = make("button", "cell-run", "Run");
   runOne.type = "button";
@@ -2443,8 +2566,7 @@ function renderStep(cell, session) {
     make("span", "run-step-name", cell.id),
     make("span", "run-step-state", STATE_WORDS[cell.status]),
   );
-  const rounds = roundsButton(cell);
-  if (rounds !== undefined) heading.append(rounds);
+  heading.append(...turnButtons(cell));
   const output = make("div", "run-step-output streamed");
   fillOutput(output, cell.text);
   item.append(heading, output);

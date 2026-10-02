@@ -45,6 +45,23 @@ export interface ModelRound {
 /** The Cell's question, then each model round that followed. */
 export interface CellRounds {
   readonly query: string;
+  /**
+   * The prompts other than the system prompt: the Cell's question, any further
+   * message the user sent in the turn, and any prompt an extension injected.
+   */
+  readonly prompts: readonly string[];
+  /** The system prompt the turn was given, when the Run recorded one. */
+  readonly systemPrompt?: string;
+  /**
+   * The tool calls as the Run recorded them, when the Agent Session itself
+   * cannot be read. Absent when `rounds` holds them, results included.
+   */
+  readonly toolCalls?: readonly RoundTool[];
+  /**
+   * Why the model rounds themselves could not be read. The prompts and tool
+   * calls above are what the Run recorded anyway.
+   */
+  readonly roundsProblem?: string;
   readonly rounds: readonly ModelRound[];
 }
 
@@ -197,14 +214,23 @@ export function readCellRounds(
   }
 
   let query = "";
+  const prompts: string[] = [];
   const rounds: DraftRound[] = [];
   for (const entry of entries) {
+    if (entry.type === "custom_message") {
+      const text = clip(
+        typeof entry.content === "string" ? entry.content : textBlocksOf(entry.content),
+      );
+      if (text !== "") prompts.push(text);
+      continue;
+    }
     if (entry.type !== "message") continue;
     const message = entry.message;
     if (!isRecord(message) || typeof message.role !== "string") continue;
 
     if (message.role === "user") {
       const text = clip(textBlocksOf(message.content));
+      if (text !== "") prompts.push(text);
       if (query === "" && rounds.length === 0) query = text;
       else rounds.push(roundOf(message, "you"));
       continue;
@@ -235,5 +261,18 @@ export function readCellRounds(
     }
   }
 
-  return { ok: true, value: { query, rounds: rounds.map(published) } };
+  return { ok: true, value: { query, prompts, rounds: rounds.map(published) } };
+}
+
+/**
+ * The rounds with the system prompt the Run recorded for the Cell, clipped the
+ * same way a round's text is. A Run that recorded none leaves the rounds as
+ * they were.
+ */
+export function attachSystemPrompt(
+  value: CellRounds,
+  systemPrompt: string | undefined,
+): CellRounds {
+  if (systemPrompt === undefined || systemPrompt === "") return value;
+  return { ...value, systemPrompt: clip(systemPrompt) };
 }

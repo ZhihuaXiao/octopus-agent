@@ -157,6 +157,9 @@ function promptFailure(cell: Cell, cause: unknown): Outcome<PromptCellRecord> {
     // then, when the agent got as far as either: a turn that failed after three
     // tries and a long think should not read like one that failed at once.
     ...(cause instanceof TurnFailure ? { retries: [...cause.retries], usage: cause.usage } : {}),
+    ...(cause instanceof TurnFailure && cause.systemPrompt !== ""
+      ? { systemPrompt: cause.systemPrompt }
+      : {}),
     error: cause instanceof Error ? cause.message : String(cause),
   };
 }

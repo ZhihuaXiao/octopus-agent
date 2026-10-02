@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { Cell } from "../notebook/notebook.js";
-import { readCellRounds } from "./rounds.js";
+import { attachSystemPrompt, readCellRounds } from "./rounds.js";
 
 type AppendableMessage = Parameters<SessionManager["appendMessage"]>[0];
 
@@ -108,6 +108,7 @@ describe("a cell's model rounds", () => {
     expect(read.ok).toBe(true);
     if (!read.ok) return;
     expect(read.value.query).toBe("what's there");
+    expect(read.value.prompts).toEqual(["what's there"]);
     expect(read.value.rounds).toEqual([
       {
         kind: "model",
@@ -133,6 +134,7 @@ describe("a cell's model rounds", () => {
     if (!earlier.ok) return;
     expect(earlier.value).toEqual({
       query: "first",
+      prompts: ["first"],
       rounds: [
         {
           kind: "model",
@@ -156,5 +158,22 @@ describe("a cell's model rounds", () => {
       ok: false,
       problem: "The agent session for this cell is not on disk.",
     });
+  });
+
+  it("counts an injected prompt among the prompts, and keeps a recorded system prompt", () => {
+    const manager = SessionManager.create(dir, dir);
+    manager.appendCustomMessageEntry("skill", "Follow the house style.", false);
+    const anchor = manager.appendMessage(userMessage("Say hello."));
+    manager.appendMessage(assistant("Hello."));
+    const file = manager.getSessionFile() ?? "";
+
+    const read = readCellRounds(file, { greet: anchor }, "greet", [cell("greet")]);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.prompts).toEqual(["Follow the house style.", "Say hello."]);
+
+    const noted = attachSystemPrompt(read.value, "You are a careful assistant.");
+    expect(noted.systemPrompt).toBe("You are a careful assistant.");
+    expect(attachSystemPrompt(read.value, undefined).systemPrompt).toBeUndefined();
   });
 });
