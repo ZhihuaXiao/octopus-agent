@@ -407,6 +407,7 @@ interface NotebookSessionState {
   run?: string;
   sequence: number;
   cells: CellView[];
+  reviews?: { path: string; kind: string; before?: string }[];
 }
 
 /** Opens a Notebook into a Notebook Session and returns what the server said of it. */
@@ -2742,6 +2743,7 @@ describe("the folder tree", () => {
       "essay.md": essay,
       "notes/plain.txt": "hello\n",
       "notes/readme.md": "Just notes.\n",
+      "notes/app.py": "print(1)\n",
       "notes/nested/empty.md": "",
       "node_modules/pkg/index.md": essay,
       ".git/config": "",
@@ -2763,16 +2765,178 @@ describe("the folder tree", () => {
               kind: "directory",
               name: "nested",
               path: "notes/nested",
-              children: [{ kind: "file", name: "empty.md", path: "notes/nested/empty.md" }],
+              children: [{ kind: "text", name: "empty.md", path: "notes/nested/empty.md" }],
             },
             { kind: "directory", name: "vacant", path: "notes/vacant", children: [] },
-            { kind: "file", name: "plain.txt", path: "notes/plain.txt" },
-            { kind: "file", name: "readme.md", path: "notes/readme.md" },
+            { kind: "text", name: "app.py", path: "notes/app.py" },
+            { kind: "text", name: "plain.txt", path: "notes/plain.txt" },
+            { kind: "text", name: "readme.md", path: "notes/readme.md" },
           ],
         },
         { kind: "notebook", name: "essay.md", path: "essay.md", title: "Essay" },
       ],
     });
+  });
+});
+
+describe("text files", () => {
+  const writer = [
+    "```bash id=write",
+    "printf 'print(1)\\n' > made.py",
+    "printf 'console.log(1)\\n' > made.js",
+    "printf 'class A {}\\n' > made.java",
+    "printf 'b,2\\n' > data.csv",
+    "printf 'b\\t2\\n' > made.tsv",
+    "printf '{}\\n' > made.json",
+    "printf 'a: 1\\n' > made.yaml",
+    "printf 'a: 1\\n' > made.yml",
+    "printf '# Notes\\n' > made.md",
+    "printf 'export {}\\n' > made.ts",
+    "printf 'hello\\n' > made.txt",
+    "printf 'no\\n' > made.bin",
+    "```",
+    "",
+  ].join("\n");
+
+  it("serves a text file, and reviews the ones a run creates or changes", async () => {
+    const server = await serve({ "hello.md": writer, "data.csv": "a,1\n" });
+    const session = await open(server, "hello.md");
+
+    expect(await (await get(server, "/api/text?path=data.csv")).json()).toEqual({
+      path: "data.csv",
+      text: "a,1\n",
+    });
+    expect((await get(server, "/api/text?path=../made.py")).status).toBe(400);
+    expect((await get(server, "/api/text?path=made.bin")).status).toBe(400);
+    expect((await get(server, "/api/text?path=missing.py")).status).toBe(404);
+    expect((await get(server, "/api/text")).status).toBe(400);
+
+    await run(server, session.id);
+    const state = await settled(server, session.id);
+
+    expect(state.reviews).toEqual([
+      { path: "data.csv", kind: "modified", before: "a,1\n" },
+      { path: "made.java", kind: "created" },
+      { path: "made.js", kind: "created" },
+      { path: "made.json", kind: "created" },
+      { path: "made.md", kind: "created" },
+      { path: "made.py", kind: "created" },
+      { path: "made.ts", kind: "created" },
+      { path: "made.tsv", kind: "created" },
+      { path: "made.txt", kind: "created" },
+      { path: "made.yaml", kind: "created" },
+      { path: "made.yml", kind: "created" },
+    ]);
+    expect(await readFile(join(server.directory, "made.bin"), "utf8")).toBe("no\n");
+
+    const rejected = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "made.py",
+      decision: "reject",
+    });
+    expect(rejected.status).toBe(200);
+    await expect(readFile(join(server.directory, "made.py"), "utf8")).rejects.toThrow();
+
+    const restored = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "data.csv",
+      decision: "reject",
+    });
+    expect(restored.status).toBe(200);
+    expect(await readFile(join(server.directory, "data.csv"), "utf8")).toBe("a,1\n");
+
+    const accepted = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "made.js",
+      decision: "accept",
+    });
+    expect(accepted.status).toBe(200);
+    expect(await readFile(join(server.directory, "made.js"), "utf8")).toBe("console.log(1)\n");
+    expect((await stateOf(server, session.id)).reviews?.map((review) => review.path)).toEqual([
+      "made.java",
+      "made.json",
+      "made.md",
+      "made.ts",
+      "made.tsv",
+      "made.txt",
+      "made.yaml",
+      "made.yml",
+    ]);
+
+    expect(
+      (
+        await post(server, `/api/sessions/${session.id}/text`, {
+          path: "made.py",
+          decision: "accept",
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (await post(server, `/api/sessions/${session.id}/text`, { path: "made.java" })).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(server, `/api/sessions/${session.id}/text`, {
+          path: "made.bin",
+          decision: "accept",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("remembers a review after a restart, and reject puts the file back", async () => {
+    const server = await serve({
+      "hello.md":
+        "```bash id=write\nprintf 'after\\n' > note.md\nprintf 'print(1)\\n' > kept.py\n```\n",
+      "note.md": "before\n",
+    });
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    const reviewed = await settled(server, session.id);
+    expect(reviewed.reviews).toEqual([
+      { path: "kept.py", kind: "created" },
+      { path: "note.md", kind: "modified", before: "before\n" },
+    ]);
+
+    const again = await restart(server);
+    expect((await stateOf(again, session.id)).reviews).toEqual(reviewed.reviews);
+
+    const rejected = await post(again, `/api/sessions/${session.id}/text`, {
+      path: "note.md",
+      decision: "reject",
+    });
+    expect(rejected.status).toBe(200);
+    expect(await readFile(join(again.directory, "note.md"), "utf8")).toBe("before\n");
+
+    const accepted = await post(again, `/api/sessions/${session.id}/text`, {
+      path: "kept.py",
+      decision: "accept",
+    });
+    expect(accepted.status).toBe(200);
+    expect(await readFile(join(again.directory, "kept.py"), "utf8")).toBe("print(1)\n");
+    expect(await stateOf(again, session.id)).not.toHaveProperty("reviews");
+  });
+
+  it("saves a text file, and reads a notebook a session holds again", async () => {
+    const server = await serve({ "hello.md": hello, "note.txt": "before\n" });
+    const session = await open(server, "hello.md");
+
+    const saved = await post(server, "/api/text", { path: "note.txt", text: "after\n" });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ path: "note.txt" });
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("after\n");
+
+    const notebook = await post(server, "/api/text", {
+      path: "hello.md",
+      text: hello.replace("Say hello.", "Say goodbye."),
+    });
+    expect(notebook.status).toBe(200);
+    expect((await stateOf(server, session.id)).cells[0]?.body).toBe("Say goodbye.\n");
+
+    expect((await post(server, "/api/text", { path: "missing.txt", text: "x\n" })).status).toBe(
+      404,
+    );
+    expect((await post(server, "/api/text", { path: "note.txt" })).status).toBe(400);
+    expect((await post(server, "/api/text", { path: "../note.txt", text: "x\n" })).status).toBe(
+      400,
+    );
   });
 });
 

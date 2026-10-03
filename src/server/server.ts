@@ -66,6 +66,7 @@ import {
   listNotebooks,
   listTree,
 } from "./notebooks.js";
+import { readTextFile, writeTextFile } from "./text-files.js";
 import { listInstalledSkills } from "./skills.js";
 import {
   type NotebookSessions,
@@ -99,6 +100,8 @@ const CONNECT_ROUTE = "/api/connect";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
 /** The served directory as folders and files, for the sidebar. */
 const TREE_ROUTE = "/api/tree";
+/** One text file under the served directory, for a subtab to show. */
+const TEXT_ROUTE = "/api/text";
 /** Skills installed for the user and, when a Notebook is named, for its Workspace. */
 const SKILLS_ROUTE = "/api/skills";
 /** A Notebook's file renamed, Runs included, the session following when one holds it. */
@@ -131,7 +134,7 @@ const PROMOTE_ROUTE = /^\/api\/chats\/([^/]+)\/promote$/;
 /** One of them, to be removed: its session file, and nothing already made from it. */
 const DELETE_CHAT_ROUTE = /^\/api\/chats\/([^/]+)$/;
 /** A Notebook Session by id, and what may be asked of it. */
-const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export))?$/;
+const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export|text))?$/;
 /** The model rounds of one Cell that has run, read from the Agent Session. */
 const ROUNDS_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/rounds$/;
 /** The query naming which Run an export is of, when not the latest. */
@@ -266,6 +269,71 @@ async function serveNotebooks(directory: string, response: ServerResponse): Prom
 /** The served directory as folders and the files in them, so the sidebar can open a folder. */
 async function serveTree(directory: string, response: ServerResponse): Promise<void> {
   json(response, 200, { directory, entries: await listTree(directory) });
+}
+
+/** One text file, as a subtab reads it. The path is the query `path`. */
+async function serveText(
+  directory: string,
+  searchParams: URLSearchParams,
+  response: ServerResponse,
+): Promise<void> {
+  const name = searchParams.get("path");
+  if (name === null || name === "") {
+    reply(response, 400, "The request must name a text file.\n");
+    return;
+  }
+  const read = await readTextFile(directory, name);
+  switch (read.kind) {
+    case "text":
+      json(response, 200, { path: read.path, text: read.text });
+      return;
+    case "absent":
+      notFound(response);
+      return;
+    case "too-large":
+      reply(response, 422, "That file is too large to open here.\n");
+      return;
+    case "invalid":
+      reply(response, 400, "That is not a text file under this directory.\n");
+      return;
+  }
+}
+
+/** Replaces a text file the notebook has open. The path and the new text are the body. */
+async function saveText(
+  served: Served,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["path", "text"]) ||
+    typeof body.path !== "string" ||
+    typeof body.text !== "string"
+  ) {
+    reply(response, 400, "The request must name a text file and its new text, as JSON.\n");
+    return;
+  }
+  const written = await writeTextFile(served.directory, body.path, body.text);
+  switch (written.kind) {
+    case "saved": {
+      // A Notebook a session holds is that session's file. Saving it here
+      // still has to show up there, when the result can be opened.
+      await served.sessions.held(written.path)?.reread();
+      json(response, 200, { path: written.path });
+      return;
+    }
+    case "absent":
+      notFound(response);
+      return;
+    case "too-large":
+      reply(response, 422, "That file is too large to save here.\n");
+      return;
+    case "invalid":
+      reply(response, 400, "That is not a text file under this directory.\n");
+      return;
+  }
 }
 
 /**
@@ -1105,7 +1173,11 @@ async function serveSession(
   const [, id = "", action] = matched;
   // The state, the events and an export are read; a run and an interrupt change things.
   const allowed =
-    action === undefined || action === "events" || action === "export" ? READS : WRITES;
+    action === "text"
+      ? WRITES
+      : action === undefined || action === "events" || action === "export"
+        ? READS
+        : WRITES;
   if (!permitted(allowed, request, response)) return;
 
   const session = sessions.get(id);
@@ -1166,6 +1238,37 @@ async function serveSession(
       // never arrives here, so whoever did is told what to connect with.
       reply(response, 426, "Connect to the events with a WebSocket.\n", { upgrade: "websocket" });
       return;
+    case "text": {
+      const body = await readJson(request);
+      if (
+        !isRecord(body) ||
+        !hasKeys(body, ["path", "decision"]) ||
+        typeof body.path !== "string" ||
+        (body.decision !== "accept" && body.decision !== "reject")
+      ) {
+        reply(
+          response,
+          400,
+          'The request must name a text file and a decision of "accept" or "reject", as JSON.\n',
+        );
+        return;
+      }
+      const decided = await session.decideText(body.path, body.decision);
+      switch (decided.kind) {
+        case "invalid":
+          reply(response, 400, "That is not a text file under this directory.\n");
+          return;
+        case "absent":
+          reply(response, 404, "That file is not waiting to be accepted or rejected.\n");
+          return;
+        case "refused":
+          reply(response, 422, `${decided.problem}\n`);
+          return;
+        case "decided":
+          json(response, 200, session.state());
+          return;
+      }
+    }
     case "export": {
       const asked = searchParams.get(RUN_QUERY);
       const run = asked === null || asked === "" ? undefined : asked;
@@ -1497,6 +1600,12 @@ async function handle(
   }
   if (pathname === TREE_ROUTE) {
     if (permitted(READS, request, response)) await serveTree(served.directory, response);
+    return;
+  }
+  if (pathname === TEXT_ROUTE) {
+    if (!permitted([...READS, ...WRITES], request, response)) return;
+    if (WRITES.includes(request.method ?? "")) await saveText(served, request, response);
+    else await serveText(served.directory, searchParams, response);
     return;
   }
   if (pathname === SKILLS_ROUTE) {

@@ -200,6 +200,168 @@ h2 {
   font-weight: 600;
 }
 
+/* The Notebook, and each text file open beside it. */
+.subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: end;
+  margin: 0 0 1rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.subtab,
+.subtab-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0.3rem 0.3rem 0 0;
+  background: transparent;
+  margin-bottom: -1px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.subtab-wrap[aria-current="page"],
+.subtab[aria-current="page"] {
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.subtab.pending,
+.subtab-wrap.pending .subtab {
+  color: #b45309;
+}
+
+.subtab-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0 0.2rem;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.tree-open {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.15rem 0.4rem;
+  border: none;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  opacity: 1;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.tree-open:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.tree-open[aria-current="page"] {
+  background: color-mix(in srgb, #3b82f6 18%, transparent);
+  font-weight: 600;
+}
+
+.tree-open.pending {
+  box-shadow: inset 3px 0 #d97706;
+}
+
+.file-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.file-toolbar .path {
+  margin: 0;
+  flex: 1;
+  min-width: 8rem;
+}
+
+.file-kind {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.file-body {
+  overflow: auto;
+  max-height: 70vh;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.file-body.diff {
+  white-space: normal;
+}
+
+.file-editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 24rem;
+  max-height: 70vh;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+.file-editor.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#file-wrap[aria-pressed="true"] {
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
+.diff-line {
+  white-space: pre-wrap;
+  min-height: 1.25em;
+  padding: 0 0.25rem;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, #16a34a 22%, transparent);
+}
+
+.diff-line.del {
+  background: color-mix(in srgb, #dc2626 20%, transparent);
+}
+
+.diff-line.skip {
+  opacity: 0.55;
+}
+
 .models {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 0.4rem;
@@ -372,6 +534,12 @@ h2 {
 #cell-rounds-dialog {
   max-width: 44rem;
   width: calc(100vw - 2rem);
+  max-height: 85vh;
+  overflow: auto;
+}
+
+#notebook-model-dialog {
+  width: min(32rem, calc(100vw - 2rem));
   max-height: 85vh;
   overflow: auto;
 }

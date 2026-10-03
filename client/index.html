@@ -99,6 +99,34 @@
           </div>
         </div>
         <p id="session-status" class="status"></p>
+        <div id="subtabs" class="subtabs" role="tablist" aria-label="Notebook and files"></div>
+        <section id="file-view" class="file-view" hidden>
+          <div class="file-toolbar">
+            <p id="file-path" class="path"></p>
+            <span id="file-kind" class="file-kind"></span>
+            <button id="file-edit" type="button" hidden>Edit</button>
+            <button id="file-wrap" type="button" hidden aria-pressed="false" title="Wrap long lines">
+              Wrap
+            </button>
+            <button id="file-save" type="button" hidden>Save</button>
+            <button id="file-cancel-edit" type="button" hidden>Cancel</button>
+            <button id="file-accept" type="button" hidden title="Keep this file as it is now">
+              Accept
+            </button>
+            <button
+              id="file-reject"
+              type="button"
+              hidden
+              title="Put back the previous text, or remove a file that is new"
+            >
+              Reject
+            </button>
+            <button id="file-close" type="button">Close</button>
+          </div>
+          <p id="file-status" class="status"></p>
+          <div id="file-body" class="file-body"></div>
+          <textarea id="file-editor" class="file-editor" hidden spellcheck="false"></textarea>
+        </section>
         <ol id="segments" class="segments"></ol>
         <form id="editor" class="editor" hidden>
           <div class="editor-controls">
@@ -244,7 +272,10 @@
       <div id="cell-rounds-body"></div>
     </dialog>
     <dialog id="notebook-model-dialog">
-      <h2 id="notebook-model-title">Model</h2>
+      <div class="rounds-heading">
+        <h2 id="notebook-model-title">Model</h2>
+        <button id="notebook-model-close" type="button">Close</button>
+      </div>
       <p class="hint">
         Models whose provider has a stored API key, and models from custom providers you added. The
         one you pick is written into this notebook. A cell that names its own model still uses that.
@@ -255,6 +286,7 @@
         >Search
         <input id="notebook-model-search" type="search" placeholder="provider or model" />
       </label>
+      <p id="notebook-model-chosen" class="models-chosen">No model chosen yet.</p>
       <ul id="notebook-model-list" class="models-matches"></ul>
       <p id="notebook-model-status" class="status"></p>
       <button id="notebook-model-cancel" type="button">Cancel</button>

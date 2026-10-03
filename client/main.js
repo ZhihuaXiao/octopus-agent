@@ -14,7 +14,12 @@
  *
  * Beside whichever is shown, the served directory is drawn as a tree of its
  * folders and the Notebooks in them, the one open marked, with a way to make
- * a new Notebook. The list of Notebooks, and an open one, choose the mode it
+ * a new Notebook. A text or source file in that tree — plain text, Markdown
+ * that is not a Notebook, data such as CSV or JSON, or code such as Python,
+ * JavaScript, TypeScript, or Java — opens in a subtab of
+ * the Notebook. A Run that creates or changes one of those files leaves it
+ * under review: Accept keeps the new text, and Reject puts back what was
+ * there, or removes a file that was new. The list of Notebooks, and an open one, choose the mode it
  * runs in and the model it runs on; and under an open Notebook are the ways to add a Prompt
  * Cell or a Bash Cell to it, which begin the editing when it has not begun.
  *
@@ -105,7 +110,9 @@
  *   running: boolean,
  *   sequence: number,
  *   cells: CellView[],
+ *   reviews?: TextReview[],
  * }} NotebookSessionState
+ * @typedef {{ path: string, kind: "created" | "modified", before?: string }} TextReview
  * @typedef {"notebook" | "inputs" | "cells" | "workspace" | "agent" | "environment"} RefusalKind
  * @typedef {{ kind: RefusalKind, problems: string[] }} Refusal
  * @typedef {{
@@ -127,6 +134,7 @@
  *   | { type: "run-ended", record: { id: string, stale: string[] } }
  *   | { type: "run-refused", error: string, refusal?: Refusal }
  *   | { type: "notebook-changed", session: NotebookSessionState }
+ *   | { type: "text-changed", reviews: TextReview[] }
  * )} NumberedEvent
  * @typedef {(
  *   | { type: "notebook-session", session: NotebookSessionState }
@@ -409,7 +417,7 @@ function notebookStatus(notebook) {
  * @param {string} [model]
  */
 function modelButton(notebook, model) {
-  const button = make("button", "notebook-model", model ?? "Model");
+  const button = make("button", "notebook-model", "Model");
   button.type = "button";
   button.title = model ?? "Choose a configured model for this notebook";
   button.addEventListener("click", (event) => {
@@ -458,6 +466,7 @@ async function showList() {
  * One entry of the served directory, as the sidebar lists it.
  * @typedef {{ name: string, path: string, kind: "directory", children: TreeNode[] }
  *   | { name: string, path: string, kind: "notebook", title: string, model?: string, mode?: string }
+ *   | { name: string, path: string, kind: "text" }
  *   | { name: string, path: string, kind: "file" }} TreeNode
  * @typedef {{ directory: string, entries: TreeNode[] }} FileTree
  */
@@ -501,8 +510,8 @@ function reveal(notebook) {
 }
 
 /**
- * What one folder holds: its folders, then its files, a Notebook opening and
- * any other file only listed.
+ * What one folder holds: its folders, then its files. A Notebook opens as a
+ * Notebook. A text file opens in a subtab. Any other file is only listed.
  * @param {TreeNode[]} nodes
  * @returns {HTMLLIElement[]}
  */
@@ -534,6 +543,17 @@ function renderNodes(nodes) {
       link.title = node.title;
       if (node.path === asked) link.setAttribute("aria-current", "page");
       item.append(link);
+      return item;
+    }
+    if (node.kind === "text") {
+      const item = make("li", "tree-text");
+      const button = make("button", "tree-open", node.name);
+      button.type = "button";
+      button.title = node.path;
+      if (node.path === openPane) button.setAttribute("aria-current", "page");
+      if (reviewsOf().some((review) => review.path === node.path)) button.classList.add("pending");
+      button.addEventListener("click", () => openText(node.path));
+      item.append(button);
       return item;
     }
     const item = make("li", "tree-file", node.name);
@@ -770,6 +790,79 @@ let watching;
  */
 /** @type {View} */
 let view = "author";
+
+/** Text files open as subtabs, in the order they were opened. */
+/** @type {string[]} */
+let textTabs = [];
+
+/** The subtab on show: "notebook", or the path of a text file. */
+/** @type {string} */
+let openPane = "notebook";
+
+/** Which load of the open text file is current, so a slower answer cannot replace a newer one. */
+let fileLoad = 0;
+
+/** The text last drawn for the file on show, before any diff marks. */
+let fileSource = "";
+
+/** Unsaved text of files being edited, by path, so changing subtab does not drop it. */
+/** @type {Map<string, string>} */
+const fileDrafts = new Map();
+
+/** Whether the file editor breaks long lines. Kept while the page is open. */
+let fileWrap = false;
+
+/** @type {Record<string, string>} */
+const TEXT_LABELS = {
+  txt: "Text",
+  text: "Text",
+  log: "Text",
+  md: "Markdown",
+  markdown: "Markdown",
+  csv: "CSV",
+  tsv: "TSV",
+  json: "JSON",
+  jsonc: "JSON",
+  yaml: "YAML",
+  yml: "YAML",
+  toml: "TOML",
+  xml: "XML",
+  html: "HTML",
+  htm: "HTML",
+  css: "CSS",
+  scss: "CSS",
+  sql: "SQL",
+  py: "Python",
+  pyi: "Python",
+  js: "JavaScript",
+  mjs: "JavaScript",
+  cjs: "JavaScript",
+  jsx: "JavaScript",
+  ts: "TypeScript",
+  tsx: "TypeScript",
+  mts: "TypeScript",
+  cts: "TypeScript",
+  java: "Java",
+  c: "C",
+  h: "C",
+  cpp: "C++",
+  cc: "C++",
+  hpp: "C++",
+  cs: "C#",
+  go: "Go",
+  rs: "Rust",
+  rb: "Ruby",
+  php: "PHP",
+  swift: "Swift",
+  kt: "Kotlin",
+  scala: "Scala",
+  sh: "Shell",
+  bash: "Shell",
+  lua: "Lua",
+  dart: "Dart",
+  vue: "Vue",
+  svelte: "Svelte",
+};
 
 /** What the fragment begins with when it names the Run View; a Notebook's own path is encoded, so it never does. */
 const RUN_VIEW_PREFIX = "run/";
@@ -1620,8 +1713,390 @@ function renderSegments(state) {
   });
 }
 
+/** Reviews still open on the Notebook in view. */
+function reviewsOf() {
+  return watching?.state.reviews ?? [];
+}
+
+/** Opens a subtab for each file still under review, without closing one the reader opened. */
+function rememberReviews() {
+  for (const review of reviewsOf()) {
+    if (!textTabs.includes(review.path)) textTabs.push(review.path);
+  }
+}
+
+/**
+ * @param {string} path
+ * @returns {string}
+ */
+function textLabel(path) {
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  return TEXT_LABELS[extension] ?? "Text";
+}
+
+/** The subtab bar: the Notebook, then each open text file. */
+function renderSubtabs() {
+  const bar = element("subtabs");
+  /** @type {HTMLElement[]} */
+  const tabs = [];
+  if (watching !== undefined) {
+    const count = reviewsOf().length;
+    const notebookTab = make("button", "subtab", count > 0 ? `Notebook (${count})` : "Notebook");
+    notebookTab.type = "button";
+    notebookTab.setAttribute("role", "tab");
+    notebookTab.title = count > 0 ? `${count} files to accept or reject` : "The notebook";
+    if (openPane === "notebook") notebookTab.setAttribute("aria-current", "page");
+    notebookTab.addEventListener("click", () => {
+      openPane = "notebook";
+      renderSession();
+    });
+    tabs.push(notebookTab);
+  }
+  for (const path of textTabs) {
+    const wrap = make("span", "subtab-wrap");
+    wrap.setAttribute("role", "tab");
+    const pending = reviewsOf().some((review) => review.path === path);
+    if (pending) wrap.classList.add("pending");
+    if (openPane === path) wrap.setAttribute("aria-current", "page");
+    const button = make("button", "subtab", path.split("/").pop() ?? path);
+    button.type = "button";
+    button.title = path;
+    button.addEventListener("click", () => openText(path));
+    const close = make("button", "subtab-close", "×");
+    close.type = "button";
+    close.title = `Close ${path}`;
+    close.setAttribute("aria-label", `Close ${path}`);
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeText(path);
+    });
+    wrap.append(button, close);
+    tabs.push(wrap);
+  }
+  bar.replaceChildren(...tabs);
+}
+
+/**
+ * Opens `path` in a subtab. With a Notebook open, the subtab sits beside it;
+ * otherwise the file is the page until it is closed.
+ * @param {string} path
+ */
+function openText(path) {
+  if (!textTabs.includes(path)) textTabs.push(path);
+  openPane = path;
+  if (watching === undefined) {
+    element("list").hidden = true;
+    element("session").hidden = false;
+    element("author-controls").hidden = true;
+    element("run-controls").hidden = true;
+    element("segments").hidden = true;
+    element("editor").hidden = true;
+    element("add-cells").hidden = true;
+    element("run-view").hidden = true;
+    element("title").textContent = path.split("/").pop() ?? path;
+    element("notebook").textContent = path;
+    element("session-status").textContent = "";
+    element("file-view").hidden = false;
+    renderSubtabs();
+    void showFile(path);
+    return;
+  }
+  if (element("session").hidden) {
+    element("list").hidden = true;
+    element("session").hidden = false;
+  }
+  renderSession();
+}
+
+/**
+ * Closes the subtab for `path` and leaves the others open. The review, if
+ * there is one, stays until it is decided. The file that was beside the one
+ * closed is what is shown next; the view itself closes only when no file
+ * subtab remains and no Notebook is open.
+ * @param {string} path
+ */
+function closeText(path) {
+  const index = textTabs.indexOf(path);
+  textTabs = textTabs.filter((tab) => tab !== path);
+  fileDrafts.delete(path);
+  if (openPane === path) {
+    const neighbor = textTabs[Math.min(Math.max(index, 0), textTabs.length - 1)];
+    openPane = neighbor ?? "notebook";
+  }
+  if (watching === undefined) {
+    if (openPane === "notebook") {
+      element("session").hidden = true;
+      element("list").hidden = false;
+      element("file-view").hidden = true;
+      return;
+    }
+    element("title").textContent = openPane.split("/").pop() ?? openPane;
+    element("notebook").textContent = openPane;
+    element("file-view").hidden = false;
+    renderSubtabs();
+    void showFile(openPane);
+    return;
+  }
+  renderSession();
+}
+
+/**
+ * Lines a change is best read as: the shared start and end, and the middle
+ * that differs. A long unchanged stretch is one skipped line.
+ * @param {string} before
+ * @param {string} after
+ * @returns {{ kind: "same" | "add" | "del" | "skip", text: string }[]}
+ */
+function lineDiff(before, after) {
+  const older = before.split("\n");
+  const newer = after.split("\n");
+  let start = 0;
+  while (start < older.length && start < newer.length && older[start] === newer[start]) start += 1;
+  let endOlder = older.length - 1;
+  let endNewer = newer.length - 1;
+  while (endOlder >= start && endNewer >= start && older[endOlder] === newer[endNewer]) {
+    endOlder -= 1;
+    endNewer -= 1;
+  }
+  /** @type {{ kind: "same" | "add" | "del", text: string }[]} */
+  const rows = [];
+  for (let index = 0; index < start; index += 1) {
+    const text = older[index];
+    if (text !== undefined) rows.push({ kind: "same", text });
+  }
+  for (let index = start; index <= endOlder; index += 1) {
+    const text = older[index];
+    if (text !== undefined) rows.push({ kind: "del", text });
+  }
+  for (let index = start; index <= endNewer; index += 1) {
+    const text = newer[index];
+    if (text !== undefined) rows.push({ kind: "add", text });
+  }
+  for (let index = endOlder + 1; index < older.length; index += 1) {
+    const text = older[index];
+    if (text !== undefined) rows.push({ kind: "same", text });
+  }
+  if (rows.length <= 400) return rows;
+  const keep = new Set();
+  rows.forEach((row, index) => {
+    if (row.kind === "same") return;
+    for (let at = Math.max(0, index - 3); at <= Math.min(rows.length - 1, index + 3); at += 1) {
+      keep.add(at);
+    }
+  });
+  /** @type {{ kind: "same" | "add" | "del" | "skip", text: string }[]} */
+  const shown = [];
+  let skipped = false;
+  rows.forEach((row, index) => {
+    if (keep.has(index)) {
+      skipped = false;
+      shown.push(row);
+    } else if (!skipped) {
+      skipped = true;
+      shown.push({ kind: "skip", text: "…" });
+    }
+  });
+  return shown;
+}
+
+/**
+ * @param {string} text
+ * @param {TextReview | undefined} review
+ */
+function renderFileBody(text, review) {
+  const body = element("file-body");
+  if (review === undefined || review.kind !== "modified" || review.before === undefined) {
+    body.classList.remove("diff");
+    body.textContent = text;
+    return;
+  }
+  body.classList.add("diff");
+  const mark = { same: "  ", add: "+ ", del: "- ", skip: "" };
+  body.replaceChildren(
+    ...lineDiff(review.before, text).map((row) =>
+      make("div", `diff-line ${row.kind}`, `${mark[row.kind]}${row.text === "" ? " " : row.text}`),
+    ),
+  );
+}
+
+/** @returns {HTMLTextAreaElement} */
+function fileEditor() {
+  const found = element("file-editor");
+  if (!(found instanceof HTMLTextAreaElement))
+    throw new Error("The file editor is not a text field.");
+  return found;
+}
+
+/**
+ * Shows Edit, or Save and Cancel, and Accept and Reject only while reading a review.
+ * @param {string} path
+ * @param {boolean} editing
+ * @param {TextReview | undefined} review
+ */
+function showFileChrome(path, editing, review) {
+  element("file-path").textContent = path;
+  element("file-kind").textContent = editing
+    ? textLabel(path)
+    : review === undefined
+      ? textLabel(path)
+      : review.kind === "created"
+        ? "New file"
+        : "Modified";
+  element("file-edit").hidden = editing;
+  element("file-wrap").hidden = !editing;
+  element("file-save").hidden = !editing;
+  element("file-cancel-edit").hidden = !editing;
+  const reviewing = !editing && review !== undefined && watching !== undefined;
+  element("file-accept").hidden = !reviewing;
+  element("file-reject").hidden = !reviewing;
+  element("file-body").hidden = editing;
+  element("file-editor").hidden = !editing;
+}
+
+/**
+ * Puts the unsaved text of `path` in the editor.
+ * @param {string} path
+ */
+function presentFileEditor(path) {
+  const editor = fileEditor();
+  const draft = fileDrafts.get(path) ?? "";
+  if (editor.value !== draft) editor.value = draft;
+  applyFileWrap();
+  showFileChrome(
+    path,
+    true,
+    reviewsOf().find((item) => item.path === path),
+  );
+  element("file-status").textContent = "";
+}
+
+/** Breaks long lines in the editor, or leaves each one on its own row. */
+function applyFileWrap() {
+  const editor = fileEditor();
+  editor.classList.toggle("wrap", fileWrap);
+  editor.wrap = fileWrap ? "soft" : "off";
+  element("file-wrap").setAttribute("aria-pressed", fileWrap ? "true" : "false");
+}
+
+function toggleFileWrap() {
+  fileWrap = !fileWrap;
+  applyFileWrap();
+}
+
+/** Starts editing the file on show, from the text that was loaded. */
+function beginFileEdit() {
+  if (openPane === "notebook" || element("file-view").hidden) return;
+  fileDrafts.set(openPane, fileSource);
+  presentFileEditor(openPane);
+  fileEditor().focus();
+}
+
+/** Drops the unsaved text and shows the file as it is on disk. */
+function cancelFileEdit() {
+  if (openPane === "notebook") return;
+  fileDrafts.delete(openPane);
+  void showFile(openPane);
+}
+
+/** Writes the editor's text over the file on show. */
+async function saveFileEdit() {
+  if (openPane === "notebook") return;
+  const path = openPane;
+  const text = fileEditor().value;
+  fileDrafts.set(path, text);
+  const status = element("file-status");
+  status.textContent = "Saving…";
+  try {
+    await post("/api/text", { path, text });
+    if (openPane !== path) {
+      fileDrafts.delete(path);
+      return;
+    }
+    fileSource = text;
+    fileDrafts.delete(path);
+    status.textContent = "";
+    void showFile(path);
+  } catch (cause) {
+    if (openPane === path) status.textContent = `Could not save: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Draws the text file `path`, and Accept and Reject when a Run left it under review.
+ * An edit in progress is left as the reader has it.
+ * @param {string} path
+ */
+async function showFile(path) {
+  if (fileDrafts.has(path)) {
+    presentFileEditor(path);
+    return;
+  }
+  const load = ++fileLoad;
+  const status = element("file-status");
+  element("file-path").textContent = path;
+  element("file-body").hidden = false;
+  element("file-editor").hidden = true;
+  element("file-edit").hidden = true;
+  element("file-wrap").hidden = true;
+  element("file-save").hidden = true;
+  element("file-cancel-edit").hidden = true;
+  const review = reviewsOf().find((item) => item.path === path);
+  element("file-kind").textContent =
+    review === undefined ? textLabel(path) : review.kind === "created" ? "New file" : "Modified";
+  element("file-accept").hidden = review === undefined || watching === undefined;
+  element("file-reject").hidden = review === undefined || watching === undefined;
+  status.textContent = "Loading…";
+  try {
+    const response = await request(`/api/text?${new URLSearchParams({ path })}`);
+    if (load !== fileLoad || openPane !== path || fileDrafts.has(path)) return;
+    if (!response.ok) {
+      element("file-body").replaceChildren();
+      element("file-edit").hidden = true;
+      status.textContent =
+        response.status === 404 ? "This file is not there." : (await response.text()).trim();
+      return;
+    }
+    const body = /** @type {{ path: string, text: string }} */ (await response.json());
+    if (load !== fileLoad || openPane !== path || fileDrafts.has(path)) return;
+    fileSource = body.text;
+    status.textContent = "";
+    showFileChrome(path, false, review);
+    renderFileBody(body.text, review);
+  } catch (cause) {
+    if (load !== fileLoad) return;
+    element("file-edit").hidden = true;
+    status.textContent = describe(cause);
+  }
+}
+
+/**
+ * Keeps or puts back the text file on show.
+ * @param {"accept" | "reject"} decision
+ */
+async function decideOpenFile(decision) {
+  if (watching === undefined || openPane === "notebook") return;
+  const path = openPane;
+  const review = reviewsOf().find((item) => item.path === path);
+  const status = element("file-status");
+  status.textContent = "";
+  try {
+    const response = await post(`/api/sessions/${watching.state.id}/text`, { path, decision });
+    const state = /** @type {NotebookSessionState} */ (await response.json());
+    if (watching !== undefined && state.sequence >= watching.sequence) {
+      watching.state = state;
+      watching.sequence = state.sequence;
+    }
+    if (decision === "reject" && review?.kind === "created") closeText(path);
+    else renderSession();
+    void refreshTree();
+  } catch (cause) {
+    status.textContent = `Could not ${decision} this file: ${describe(cause)}`;
+  }
+}
+
 function renderSession() {
   if (watching === undefined) return;
+  rememberReviews();
   const { state } = watching;
   element("title").textContent = state.title;
   element("notebook").textContent = state.notebook;
@@ -1633,12 +2108,15 @@ function renderSession() {
     state.notebook,
     "author",
   );
-  element("run-view").hidden = authoring;
-  element("add-cells").hidden = !authoring;
+  element("run-view").hidden = authoring || openPane !== "notebook";
+  element("add-cells").hidden = !authoring || openPane !== "notebook";
+  element("file-view").hidden = openPane === "notebook";
+  renderSubtabs();
   if (!authoring) {
     element("segments").hidden = true;
     element("editor").hidden = true;
-    renderRunView(state);
+    if (openPane !== "notebook") void showFile(openPane);
+    else renderRunView(state);
     return;
   }
   /** @type {HTMLButtonElement} */ (element("run-all")).disabled = state.running;
@@ -1651,13 +2129,19 @@ function renderSession() {
       ? "Save or cancel the draft before choosing a mode."
       : "The mode this notebook runs in. Default uses pi's own settings.";
   const chosen = /** @type {HTMLButtonElement} */ (element("notebook-model"));
-  chosen.textContent = state.model ?? "Model";
+  chosen.textContent = "Model";
   chosen.title =
     draft !== undefined
       ? "Save or cancel the draft before choosing a model."
       : (state.model ?? "Choose a configured model for this notebook");
   chosen.disabled = draft !== undefined;
   element("edit").hidden = draft !== undefined;
+  if (openPane !== "notebook") {
+    element("segments").hidden = true;
+    element("editor").hidden = true;
+    void showFile(openPane);
+    return;
+  }
   element("segments").hidden = draft !== undefined;
   element("editor").hidden = draft === undefined;
   // While the Notebook is being edited the draft is what is on the page; the
@@ -1763,7 +2247,18 @@ function apply(event) {
         const cell = cellNamed(id);
         if (cell !== undefined) cell.status = "stale";
       }
+      // The files this Run created or changed are there to be accepted or
+      // rejected, once the Run is over and the Notebook is what was on show.
+      const firstReview = state.reviews?.[0];
+      if (openPane === "notebook" && firstReview !== undefined) openPane = firstReview.path;
       renderSession();
+      void refreshTree();
+      return;
+    case "text-changed":
+      if (event.reviews.length === 0) delete state.reviews;
+      else state.reviews = event.reviews;
+      renderSession();
+      void refreshTree();
       return;
     case "run-refused":
       state.running = false;
@@ -2484,6 +2979,7 @@ function renderEditor() {
 
 function beginEditing() {
   if (watching === undefined || draft !== undefined) return;
+  openPane = "notebook";
   draft = draftOf(watching.state);
   element("editor-status").textContent = "";
   cellModels = undefined;
@@ -3192,6 +3688,7 @@ let asked = "";
 
 /** @param {string} notebook */
 async function showSession(notebook) {
+  if (watching?.state.notebook !== notebook) openPane = "notebook";
   const editing = editOnOpen === notebook && view === "author";
   editOnOpen = undefined;
   draft = undefined;
@@ -3694,6 +4191,8 @@ async function openNotebookModel(notebook, current) {
   const status = element("notebook-model-status");
   status.textContent = "Loading…";
   element("notebook-model-list").replaceChildren();
+  element("notebook-model-chosen").textContent =
+    current === undefined ? "No model chosen yet." : current;
   /** @type {HTMLInputElement} */ (element("notebook-model-search")).value = "";
   if (!dialog.open) dialog.showModal();
   try {
@@ -3718,7 +4217,12 @@ function renderNotebookModelChoices(models, query) {
   const needle = query.trim().toLowerCase();
   const matched = models
     .filter((model) => needle === "" || modelLabel(model).toLowerCase().includes(needle))
-    .sort((a, b) => rank(a, needle) - rank(b, needle));
+    .sort((a, b) => {
+      const aCurrent = `${a.provider}/${a.id}` === modelCurrent;
+      const bCurrent = `${b.provider}/${b.id}` === modelCurrent;
+      if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
+      return rank(a, needle) - rank(b, needle);
+    });
 
   const clear = make("button", "", "Use the default");
   clear.type = "button";
@@ -4061,6 +4565,9 @@ element("cell-rounds-close").addEventListener("click", () => {
 element("notebook-model-cancel").addEventListener("click", () => {
   /** @type {HTMLDialogElement} */ (element("notebook-model-dialog")).close();
 });
+element("notebook-model-close").addEventListener("click", () => {
+  /** @type {HTMLDialogElement} */ (element("notebook-model-dialog")).close();
+});
 element("notebook-model-search").addEventListener("input", () => {
   if (notebookModels === undefined) return;
   renderNotebookModelChoices(
@@ -4092,6 +4599,18 @@ element("run-form").addEventListener("submit", (event) => {
 });
 element("run-stop").addEventListener("click", () => void interrupt());
 element("edit").addEventListener("click", beginEditing);
+element("file-accept").addEventListener("click", () => void decideOpenFile("accept"));
+element("file-reject").addEventListener("click", () => void decideOpenFile("reject"));
+element("file-edit").addEventListener("click", beginFileEdit);
+element("file-wrap").addEventListener("click", toggleFileWrap);
+element("file-save").addEventListener("click", () => void saveFileEdit());
+element("file-cancel-edit").addEventListener("click", cancelFileEdit);
+element("file-editor").addEventListener("input", () => {
+  if (openPane !== "notebook") fileDrafts.set(openPane, fileEditor().value);
+});
+element("file-close").addEventListener("click", () => {
+  if (openPane !== "notebook") closeText(openPane);
+});
 element("duplicate").addEventListener("click", () => void duplicate());
 element("rename").addEventListener("click", () => void renameNotebook());
 element("export").addEventListener("click", () => void exportRun());

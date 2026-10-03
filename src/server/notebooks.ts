@@ -26,6 +26,7 @@ import {
 import { type Notebook, cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
 import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
+import { isTextFile } from "./text-files.js";
 
 export interface NotebookEntry {
   /** Relative to the served directory, with forward slashes whatever the platform. */
@@ -288,8 +289,10 @@ export async function createNotebook(directory: string, to: string): Promise<Cre
 /**
  * One entry of the served directory, as the sidebar draws it. A directory
  * holds its children; a Notebook is a Markdown file with a Cell in it, which
- * is what opens; anything else is a file, listed so a folder can be looked
- * into, and not opened.
+ * is what opens as a Notebook. A text or source file — plain text, Markdown
+ * that is not a Notebook, data such as CSV or JSON, or code such as Python,
+ * JavaScript, TypeScript, or Java — opens in a subtab.
+ * Anything else is a file, listed so a folder can be looked into, and not opened.
  */
 export type TreeEntry =
   | {
@@ -308,6 +311,7 @@ export type TreeEntry =
       /** The mode the Notebook names, when it names one. */
       readonly mode?: string;
     }
+  | { readonly kind: "text"; readonly name: string; readonly path: string }
   | { readonly kind: "file"; readonly name: string; readonly path: string };
 
 /** Whether a path is on disk. A missing one is the absence, not an error. */
@@ -358,7 +362,9 @@ async function readTree(directory: string, root: string): Promise<TreeEntry[]> {
               ...(notebook.model !== undefined ? { model: notebook.model } : {}),
               ...(notebook.mode !== undefined ? { mode: notebook.mode } : {}),
             }
-          : { kind: "file", name: dirent.name, path: relativePath },
+          : isTextFile(dirent.name)
+            ? { kind: "text", name: dirent.name, path: relativePath }
+            : { kind: "file", name: dirent.name, path: relativePath },
       );
     }
   }

@@ -84,6 +84,15 @@ import {
   pathWithin,
   renameNotebook,
 } from "./notebooks.js";
+import {
+  type TextReview,
+  baselineUnder,
+  readTextFile,
+  readTextFiles,
+  revertText,
+  reviewsBetween,
+  textPath,
+} from "./text-files.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -187,6 +196,12 @@ export interface NotebookSessionState {
    */
   readonly sequence: number;
   readonly cells: readonly CellView[];
+  /**
+   * Text files a Run has created or changed and nobody has accepted or
+   * rejected yet. A created file has no `before`. Absent when there are none,
+   * so a session that has never reviewed a file says nothing about it.
+   */
+  readonly reviews?: readonly TextReview[];
 }
 
 /**
@@ -203,7 +218,13 @@ export type NotebookSessionEvent =
   | { readonly type: "run-ended"; readonly record: RunRecord }
   | { readonly type: "run-refused"; readonly error: string; readonly refusal?: Refusal }
   /** The Notebook itself changed — saved from a browser, or found changed on disk — and this is it now. */
-  | { readonly type: "notebook-changed"; readonly session: NotebookSessionState };
+  | { readonly type: "notebook-changed"; readonly session: NotebookSessionState }
+  /**
+   * The text files still waiting to be accepted or rejected: the whole list,
+   * so whoever is listening can draw it from this event alone. Empty once the
+   * last of them has been decided.
+   */
+  | { readonly type: "text-changed"; readonly reviews: readonly TextReview[] };
 
 /**
  * An event as a listener hears it: numbered in the order the Notebook Session
@@ -313,7 +334,27 @@ export interface NotebookSession {
    * has fallen behind.
    */
   setMode(mode: string | undefined): Promise<Saved>;
+  /**
+   * Keeps a text file a Run created or changed, or puts it back. Accepting
+   * leaves the bytes on disk and drops the review. Rejecting writes the
+   * previous bytes, or removes a file that was new. A Notebook that does not
+   * parse after it is accepted is left under review.
+   */
+  decideText(name: string, decision: "accept" | "reject"): Promise<TextDecided>;
+  /**
+   * Reads the Notebook from disk again after a text save wrote it. A file
+   * that no longer parses is left as the session held it; the bytes stay on
+   * disk for the text subtab.
+   */
+  reread(): Promise<void>;
 }
+
+/** How deciding a text file went. */
+export type TextDecided =
+  | { readonly kind: "decided" }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "refused"; readonly problem: string };
 
 interface NotebookSessionSetup {
   readonly id: string;
@@ -327,6 +368,8 @@ interface NotebookSessionSetup {
   readonly agent: AgentFactory;
   /** Where the session writes what happens to it, for a server after this one. */
   readonly journal: Journal;
+  /** The served directory, which is where text files are read and reviewed. */
+  readonly directory: string;
   /**
    * What a session before this one journaled, for this one to stand where it
    * stood: absent for a session being made rather than recovered.
@@ -373,8 +416,25 @@ interface InProgress {
  */
 const LOST = "The server stopped while this cell was running";
 
+/** Says a review failed without stopping the Run that noticed it. */
+const noteFailure = (cause: unknown) => {
+  process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
+};
+
+const sameReviewList = (a: readonly TextReview[], b: readonly TextReview[]): boolean =>
+  a.length === b.length &&
+  a.every((review, index) => {
+    const other = b[index];
+    return (
+      other !== undefined &&
+      review.path === other.path &&
+      review.kind === other.kind &&
+      review.before === other.before
+    );
+  });
+
 async function createNotebookSession(setup: NotebookSessionSetup): Promise<NotebookSession> {
-  const { id, agent, journal } = setup;
+  const { id, agent, journal, directory } = setup;
   /** Where the file is now. A rename moves both, and everything after it reads these. */
   let path = setup.path;
   let notebook = setup.notebook;
@@ -416,6 +476,43 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   let ended: CellRecord[] = [];
   /** The Run in progress: the way to interrupt it, and when it is over. */
   let current: { readonly controller: AbortController; readonly over: Promise<void> } | undefined;
+  /**
+   * Text files as they were when the open reviews were taken. A review still
+   * waiting keeps its original bytes here, so the next look does not treat
+   * the unaccepted file as the starting point. Absent until a Run has looked.
+   */
+  let baseline: Map<string, string> | undefined;
+  /** Text files still waiting to be accepted or rejected, by path. */
+  let reviews = new Map<string, TextReview>();
+  /**
+   * Reviews are read and written one at a time: a Run publishing what a Cell
+   * changed, and a decision to accept or reject, both rewrite the same map.
+   */
+  let reviewLock: Promise<unknown> = Promise.resolve();
+  const withReviews = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = reviewLock.then(work, work);
+    reviewLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+
+  const listedReviews = (): TextReview[] =>
+    [...reviews.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+  /** Notices text files the Run has created or changed, and says so when the list moved. */
+  const publishReviews = async (): Promise<void> => {
+    if (baseline === undefined) return;
+    const next = reviewsBetween(baseline, await readTextFiles(directory));
+    if (sameReviewList(listedReviews(), next)) return;
+    reviews = new Map(next.map((review) => [review.path, review]));
+    observe({ type: "text-changed", reviews: next });
+  };
+
+  const takeBaseline = async (): Promise<void> => {
+    baseline = baselineUnder(await readTextFiles(directory), listedReviews());
+  };
 
   const dispatch = (numbered: NumberedEvent) => {
     events.push(numbered);
@@ -532,6 +629,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         // The Notebook is read from its file, here and on recovery; the event
         // carries what it was for whoever was watching, not for the session.
         break;
+      case "text-changed":
+        reviews = new Map(event.reviews.map((review) => [review.path, review]));
+        break;
     }
   };
 
@@ -558,6 +658,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     ...(inProgress !== undefined ? { run: inProgress.run } : {}),
     sequence,
     cells: cellsOf(parsed).map(viewOf),
+    ...(reviews.size > 0 ? { reviews: listedReviews() } : {}),
   });
 
   /** Makes `bytes` the Notebook the session holds, and tells whoever is watching. */
@@ -568,7 +669,15 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     emit(() => ({ type: "notebook-changed", session: state() }));
   };
 
+  /** A Run's unaccepted edit of the Notebook itself, which a save must not write over. */
+  const blockedByReview = (): string | undefined =>
+    reviews.has(notebook)
+      ? `${notebook} was changed by a run. Accept or reject that change before saving.`
+      : undefined;
+
   const save = async (request: SaveRequest): Promise<Saved> => {
+    const blocked = blockedByReview();
+    if (blocked !== undefined) return { kind: "refused", problem: blocked };
     // The file first: a Notebook is edited in any editor (ADR-0002), and one
     // that changed under the session is what the session should hold, whether
     // or not the draft is then written over it. A file that is gone has
@@ -606,6 +715,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     value: string | undefined,
     rewrite: (notebook: Notebook, value: string | undefined) => EditResult,
   ): Promise<Saved> => {
+    const blocked = blockedByReview();
+    if (blocked !== undefined) return { kind: "refused", problem: blocked };
     const onDisk = await readFile(path, "utf8").catch((cause: NodeJS.ErrnoException) => {
       if (cause.code === "ENOENT") return undefined;
       throw cause;
@@ -726,6 +837,72 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   // as much a change as one saved from another browser, and is said to be.
   if (held !== undefined && held !== revision) adopt(source, parsed);
 
+  /**
+   * Accepts or rejects one open review. The Notebook file, when it is the
+   * file decided, is taken up by the session once the bytes are the ones the
+   * decision left — except an acceptance that would leave a Notebook the
+   * session cannot open, which stays under review and changes nothing.
+   */
+  const decide = async (name: string, decision: "accept" | "reject"): Promise<TextDecided> => {
+    const named = textPath(directory, name);
+    if (named === undefined) return { kind: "invalid" };
+    const review = reviews.get(named);
+    if (review === undefined) return { kind: "absent" };
+
+    let adopting: { readonly bytes: string; readonly notebook: Notebook } | undefined;
+    if (decision === "accept" && named === notebook) {
+      const read = await readTextFile(directory, named);
+      if (read.kind === "text" && read.text !== source) {
+        const found = readable(parseNotebook(read.text), `Cannot open ${notebook}`);
+        if (!found.ok) return { kind: "refused", problem: found.problem };
+        adopting = { bytes: read.text, notebook: found.notebook };
+      }
+    }
+
+    if (decision === "reject") {
+      const reverted = await revertText(directory, review);
+      if (reverted === "invalid") return { kind: "invalid" };
+    }
+
+    if (baseline !== undefined) {
+      if (decision === "accept") {
+        const read = await readTextFile(directory, named);
+        if (read.kind === "text") baseline.set(named, read.text);
+        else baseline.delete(named);
+      } else if (review.kind === "created") baseline.delete(named);
+      else if (review.before !== undefined) baseline.set(named, review.before);
+    }
+    reviews.delete(named);
+
+    if (decision === "reject" && named === notebook) {
+      const read = await readTextFile(directory, named);
+      if (read.kind === "text" && read.text !== source) {
+        const found = readable(parseNotebook(read.text), `Cannot open ${notebook}`);
+        if (found.ok) adopting = { bytes: read.text, notebook: found.notebook };
+      }
+    }
+
+    if (adopting !== undefined) adopt(adopting.bytes, adopting.notebook);
+    observe({ type: "text-changed", reviews: listedReviews() });
+    return { kind: "decided" };
+  };
+
+  /** Takes up a text save of this Notebook, when the result can still be opened. */
+  const readNotebookFromDisk = async (): Promise<void> => {
+    let bytes: string;
+    try {
+      bytes = await readFile(path, "utf8");
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EISDIR" || code === "ENOTDIR") return;
+      throw cause;
+    }
+    if (bytes === source) return;
+    const found = readable(parseNotebook(bytes), `Cannot open ${notebook}`);
+    if (!found.ok) return;
+    adopt(bytes, found.notebook);
+  };
+
   return {
     id,
 
@@ -754,36 +931,70 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       if (current !== undefined) return false;
       const controller = new AbortController();
 
-      const over = runNotebook(path, {
-        agent,
-        observe,
-        signal: controller.signal,
-        ...(request.cells !== undefined ? { cells: request.cells } : {}),
-        ...(request.inputs !== undefined ? { inputs: request.inputs } : {}),
-        ...(last !== undefined ? { continues: last } : {}),
-      }).then(
-        (record) => {
-          // Settled before the end is announced, so a listener that asks for
-          // the state on hearing it finds the session already at rest.
-          current = undefined;
-          observe({ type: "run-ended", record });
-        },
-        (cause: unknown) => {
+      const observeRun = (event: RunEvent) => {
+        observe(event);
+        // A Cell has finished writing. The review is published beside the
+        // Run, and a failure to read the tree must not stop the Cell.
+        if (event.type === "cell-ended") void withReviews(publishReviews).catch(noteFailure);
+      };
+
+      const over = (async () => {
+        try {
+          await withReviews(takeBaseline);
+        } catch (cause) {
           current = undefined;
           observe({
             type: "run-refused",
             error: cause instanceof Error ? cause.message : String(cause),
-            ...(cause instanceof RunRefusal
-              ? { refusal: { kind: cause.kind, problems: cause.problems } }
-              : {}),
           });
-        },
-      );
+          return;
+        }
+
+        const finish = async (settle: () => void) => {
+          // Still running while the review is taken, so a browser that asks
+          // once the session is at rest finds the files the Run changed.
+          await withReviews(publishReviews).catch(noteFailure);
+          current = undefined;
+          settle();
+        };
+
+        try {
+          const record = await runNotebook(path, {
+            agent,
+            observe: observeRun,
+            signal: controller.signal,
+            ...(request.cells !== undefined ? { cells: request.cells } : {}),
+            ...(request.inputs !== undefined ? { inputs: request.inputs } : {}),
+            ...(last !== undefined ? { continues: last } : {}),
+          });
+          await finish(() => observe({ type: "run-ended", record }));
+        } catch (cause) {
+          await finish(() =>
+            observe({
+              type: "run-refused",
+              error: cause instanceof Error ? cause.message : String(cause),
+              ...(cause instanceof RunRefusal
+                ? { refusal: { kind: cause.kind, problems: cause.problems } }
+                : {}),
+            }),
+          );
+        }
+      })();
       current = { controller, over };
       // The Run names itself, with its id and the Cells in their order, once it
       // is cleared to run; until then the state alone says the session is running.
 
       return true;
+    },
+
+    decideText(name, decision) {
+      return withReviews(() => decide(name, decision));
+    },
+
+    reread() {
+      const read = saving.then(() => readNotebookFromDisk());
+      saving = read.catch(() => undefined);
+      return read;
     },
 
     interrupt,
@@ -907,6 +1118,8 @@ export interface NotebookSessions {
    */
   setMode(notebook: string, mode: string | undefined): Promise<Assigned>;
   get(id: string): NotebookSession | undefined;
+  /** The session that already holds `notebook`, when one does. */
+  held(notebook: string): NotebookSession | undefined;
   /**
    * Interrupts every Run in progress and resolves once each has stopped,
    * written its record and journaled its end: nothing outlives the server it
@@ -977,6 +1190,7 @@ export async function createNotebookSessions(
       parsed: found.notebook,
       agent,
       journal,
+      directory,
       ...(before !== undefined ? { recovered: before } : {}),
     });
     // Taken up only now: a recovery that failed halfway — the record of a Run
@@ -1073,6 +1287,11 @@ export async function createNotebookSessions(
     },
 
     get: (id) => byId.get(id),
+
+    held(notebook) {
+      const path = fileWithin(directory, notebook);
+      return path === undefined ? undefined : byPath.get(path);
+    },
 
     async close() {
       await Promise.all([...byId.values()].map((session) => session.interrupt()));
