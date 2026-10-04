@@ -14,7 +14,9 @@
  *
  * Beside whichever is shown, the served directory is drawn as a tree of its
  * folders and the Notebooks in them, the one open marked, with a way to make
- * a new Notebook. A text or source file in that tree — plain text, Markdown
+ * a new Notebook. A small arrow between the columns folds that column away
+ * and brings it back; the choice stays in this browser. A text or source file in that
+ * tree — plain text, Markdown
  * that is not a Notebook, data such as CSV or JSON, or code such as Python,
  * JavaScript, TypeScript, or Java — opens in a subtab of
  * the Notebook. A Run that creates or changes one of those files leaves it
@@ -582,6 +584,42 @@ async function fetchTree() {
   const response = await request("/api/tree");
   if (!response.ok) throw new Error(`The server answered ${response.status}`);
   return response.json();
+}
+
+/** Whether the directory column is folded away. Kept in this browser. */
+const FOLDERS_HIDDEN_KEY = "octo-folders-hidden";
+
+/** @returns {boolean} */
+function storedFoldersHidden() {
+  try {
+    return localStorage.getItem(FOLDERS_HIDDEN_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Shows or hides the directory column. The arrow between the columns stays,
+ * pointing at the column it will open or close.
+ * @param {boolean} hidden
+ */
+function applyFoldersHidden(hidden) {
+  element("workspace").classList.toggle("folders-hidden", hidden);
+  const button = /** @type {HTMLButtonElement} */ (element("sidebar-toggle"));
+  button.setAttribute("aria-expanded", hidden ? "false" : "true");
+  button.textContent = hidden ? ">" : "<";
+  button.title = hidden ? "Show the directory" : "Hide the directory";
+  button.setAttribute("aria-label", button.title);
+}
+
+/** @param {boolean} hidden */
+function setFoldersHidden(hidden) {
+  try {
+    localStorage.setItem(FOLDERS_HIDDEN_KEY, hidden ? "true" : "false");
+  } catch {
+    // A browser that refuses storage still switches for this page.
+  }
+  applyFoldersHidden(hidden);
 }
 
 /** Lists the directory again for the sidebar, as a folder may have gained a file since. */
@@ -1793,8 +1831,7 @@ function openText(path) {
     element("editor").hidden = true;
     element("add-cells").hidden = true;
     element("run-view").hidden = true;
-    element("title").textContent = path.split("/").pop() ?? path;
-    element("notebook").textContent = path;
+    showHeading(path.split("/").pop() ?? path, path);
     element("session-status").textContent = "";
     element("file-view").hidden = false;
     renderSubtabs();
@@ -1830,8 +1867,7 @@ function closeText(path) {
       element("file-view").hidden = true;
       return;
     }
-    element("title").textContent = openPane.split("/").pop() ?? openPane;
-    element("notebook").textContent = openPane;
+    showHeading(openPane.split("/").pop() ?? openPane, openPane);
     element("file-view").hidden = false;
     renderSubtabs();
     void showFile(openPane);
@@ -1928,13 +1964,25 @@ function fileEditor() {
 }
 
 /**
+ * The subtab already names a file in this directory. The path line is kept
+ * only when it says which folder the file is in.
+ * @param {string} path
+ */
+function showFileName(path) {
+  const named = element("file-path");
+  const file = path.split("/").pop() ?? path;
+  named.hidden = path === file;
+  named.textContent = path;
+}
+
+/**
  * Shows Edit, or Save and Cancel, and Accept and Reject only while reading a review.
  * @param {string} path
  * @param {boolean} editing
  * @param {TextReview | undefined} review
  */
 function showFileChrome(path, editing, review) {
-  element("file-path").textContent = path;
+  showFileName(path);
   element("file-kind").textContent = editing
     ? textLabel(path)
     : review === undefined
@@ -2033,7 +2081,7 @@ async function showFile(path) {
   }
   const load = ++fileLoad;
   const status = element("file-status");
-  element("file-path").textContent = path;
+  showFileName(path);
   element("file-body").hidden = false;
   element("file-editor").hidden = true;
   element("file-edit").hidden = true;
@@ -2094,12 +2142,31 @@ async function decideOpenFile(decision) {
   }
 }
 
+/**
+ * The path already names the file. A title that is only that name, with or
+ * without its extension, is the same name twice, so only the path is shown.
+ * @param {string} title
+ * @param {string} path
+ */
+function showHeading(title, path) {
+  const file = path.split("/").pop() ?? path;
+  const stem = file.replace(/\.[^.]+$/, "");
+  const folded = title.toLowerCase();
+  const same =
+    folded === file.toLowerCase() || folded === stem.toLowerCase() || folded === path.toLowerCase();
+  const heading = element("title");
+  heading.hidden = same;
+  heading.textContent = same ? "" : title;
+  const named = element("notebook");
+  named.textContent = path;
+  named.classList.toggle("sole", same && path !== "");
+}
+
 function renderSession() {
   if (watching === undefined) return;
   rememberReviews();
   const { state } = watching;
-  element("title").textContent = state.title;
-  element("notebook").textContent = state.notebook;
+  showHeading(state.title, state.notebook);
   const authoring = view === "author";
   element("author-controls").hidden = !authoring;
   element("run-controls").hidden = authoring;
@@ -4617,7 +4684,18 @@ element("export").addEventListener("click", () => void exportRun());
 element("cancel").addEventListener("click", stopEditing);
 element("add-prompt").addEventListener("click", () => addCell("prompt"));
 element("add-bash").addEventListener("click", () => addCell("bash"));
-element("tree-new").addEventListener("click", () => void newNotebook(element("tree-status")));
+applyFoldersHidden(storedFoldersHidden());
+element("sidebar-toggle").addEventListener("click", () => {
+  setFoldersHidden(!element("workspace").classList.contains("folders-hidden"));
+});
+element("tree-new").addEventListener("click", () => {
+  const status = !element("list").hidden
+    ? element("status")
+    : !element("session").hidden
+      ? element("session-status")
+      : element("tree-status");
+  void newNotebook(status);
+});
 element("list-new").addEventListener("click", () => void newNotebook(element("status")));
 element("editor").addEventListener("submit", (event) => {
   event.preventDefault();

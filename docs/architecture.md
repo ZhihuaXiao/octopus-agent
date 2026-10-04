@@ -137,7 +137,7 @@ Every event a Notebook Session emits is numbered and appended, synchronously, to
 
 ## The client
 
-`client/main.js` is the page. The Notebook in view is the URL fragment, with `#run/` selecting Run View.
+`client/main.js` is the page. The Notebook in view is the URL fragment, with `#run/` selecting Run View. The served directory is drawn beside it, and a small arrow between the columns folds that column away; the choice stays in the browser.
 
 Author View draws the Notebook as written: Prose, each Cell, streaming text, tool calls, and artifacts. It can run one Cell or all of them, interrupt, edit, duplicate, and export. Edit mode is a form of the whole Notebook — frontmatter, Prose, and Cells — saved in one request.
 
