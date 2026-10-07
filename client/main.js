@@ -6,7 +6,9 @@
  * produced: its text as it is spoken, shown as plain text or as Markdown,
  * each tool the agent invokes as it
  * invokes it, and the files it left — and a way to run one Cell or all of
- * them, or to stop; and, while editing, the whole Notebook as a form —
+ * them, or to stop. A prompt cell, a bash cell, or a block of prose can be
+ * collapsed and expanded; the choice stays while this notebook is open, and a
+ * saved edit keeps it. While editing, the whole Notebook is a form —
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
  * saved whole, based on the revision it was drawn from. Typing / in a Prompt
  * Cell lists the Skills installed for the user and for that Notebook's
@@ -1695,6 +1697,88 @@ function fillOutput(node, text) {
 }
 
 /**
+ * Pieces of a notebook the reader has collapsed. A cell is remembered by its
+ * id (`cell:<id>`). Prose has no id, so it is remembered by its place
+ * (`prose:<index>`). The choice lasts while this page has the notebook open,
+ * and a redraw puts it back. While editing, the draft piece remembers it, and
+ * a save writes that back here.
+ * @type {Map<string, Set<string>>}
+ */
+const foldedPieces = new Map();
+
+/** @returns {Set<string>} */
+function foldsForOpenNotebook() {
+  const notebook = watching?.state.notebook ?? "";
+  let found = foldedPieces.get(notebook);
+  if (found === undefined) {
+    found = new Set();
+    foldedPieces.set(notebook, found);
+  }
+  return found;
+}
+
+/** @param {string} id */
+const cellFoldKey = (id) => `cell:${id}`;
+
+/** @param {number} index */
+const proseFoldKey = (index) => `prose:${index}`;
+
+/** @param {string} key */
+const isFolded = (key) => foldsForOpenNotebook().has(key);
+
+/**
+ * The first line of a folded piece, so it can be told from the next.
+ * @param {string} text
+ */
+function foldPreview(text) {
+  const line = text
+    .replace(/\r?\n$/, "")
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => part !== "");
+  if (line === undefined) return "";
+  return line.length > 96 ? `${line.slice(0, 95)}…` : line;
+}
+
+/**
+ * Collapses or expands one prompt cell, bash cell, or prose block.
+ * @param {HTMLElement} item the piece on the page
+ * @param {string} key how that piece is remembered for this notebook
+ * @param {boolean} folded
+ * @param {HTMLButtonElement} button
+ * @param {string} name what the button calls it, such as "this bash cell"
+ */
+function setFolded(item, key, folded, button, name) {
+  item.classList.toggle("folded", folded);
+  const folds = foldsForOpenNotebook();
+  if (folded) folds.add(key);
+  else folds.delete(key);
+  button.textContent = folded ? "Expand" : "Collapse";
+  button.setAttribute("aria-expanded", folded ? "false" : "true");
+  button.title = `${folded ? "Expand" : "Collapse"} ${name}`;
+  button.setAttribute("aria-label", button.title);
+}
+
+/**
+ * The button that collapses and expands `item`.
+ * @param {HTMLElement} item
+ * @param {string} key
+ * @param {string} name
+ * @param {boolean} folded
+ */
+function foldButton(item, key, name, folded) {
+  const button = make("button", "fold", folded ? "Expand" : "Collapse");
+  button.type = "button";
+  button.setAttribute("aria-expanded", folded ? "false" : "true");
+  button.title = `${folded ? "Expand" : "Collapse"} ${name}`;
+  button.setAttribute("aria-label", button.title);
+  button.addEventListener("click", () => {
+    setFolded(item, key, !item.classList.contains("folded"), button, name);
+  });
+  return button;
+}
+
+/**
  * @param {CellView} cell
  * @param {string} session
  * @param {boolean} running
@@ -1703,8 +1787,12 @@ function fillOutput(node, text) {
 function renderCell(cell, session, running) {
   const item = make("li", `cell ${cell.type} ${cell.status}`);
   item.dataset.cell = cell.id;
+  const key = cellFoldKey(cell.id);
+  const folded = isFolded(key);
+  if (folded) item.classList.add("folded");
 
   const heading = make("div", "cell-header");
+  heading.append(foldButton(item, key, `this ${cell.type} cell`, folded));
   heading.append(make("span", "cell-id", cell.id), make("span", "cell-type", cell.type));
   if (cell.isolated) heading.append(make("span", "cell-attribute", "isolated"));
   if (cell.uses.length > 0)
@@ -1720,7 +1808,7 @@ function renderCell(cell, session, running) {
   runOne.title = `Run ${cell.id} alone, carrying on from the last run`;
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
-  heading.append(runOne);
+  heading.append(runOne, make("span", "cell-preview", foldPreview(cell.body)));
 
   const body = make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
   const calls = make("ol", "tool-calls");
@@ -1740,12 +1828,28 @@ function renderCell(cell, session, running) {
 }
 
 /**
+ * Prose as written. A blank line between cells stays blank, with nothing to fold.
+ * @param {string} text
+ * @param {number} index its place in the notebook, which is the only name it has
+ */
+function renderProse(text, index) {
+  const body = text.replace(/\r?\n$/, "");
+  if (body.trim() === "") return make("li", "prose");
+  const item = make("li", "prose");
+  const key = proseFoldKey(index);
+  const folded = isFolded(key);
+  if (folded) item.classList.add("folded");
+  item.append(foldButton(item, key, "this prose", folded), make("div", "prose-text", body));
+  return item;
+}
+
+/**
  * The Notebook in order: its Prose as written, and each Cell where it sits.
  * @param {NotebookSessionState} state
  */
 function renderSegments(state) {
-  return state.segments.map((segment) => {
-    if (segment.kind === "prose") return make("li", "prose", segment.text.replace(/\r?\n$/, ""));
+  return state.segments.map((segment, index) => {
+    if (segment.kind === "prose") return renderProse(segment.text, index);
     const cell = state.cells.find((candidate) => candidate.id === segment.id);
     return cell === undefined ? make("li", "prose", "") : renderCell(cell, state.id, state.running);
   });
@@ -2420,8 +2524,9 @@ async function interrupt() {
  *   isolated: boolean,
  *   model: string,
  *   timeout: string,
+ *   folded: boolean,
  * }} DraftCell
- * @typedef {{ kind: "prose", text: string }} DraftProse
+ * @typedef {{ kind: "prose", text: string, folded: boolean }} DraftProse
  * @typedef {DraftCell | DraftProse} DraftSegment
  * @typedef {{
  *   base: string,
@@ -2454,27 +2559,91 @@ function draftOf(state) {
   return {
     base: state.revision,
     frontmatter: state.frontmatter ?? "",
-    segments: state.segments.flatMap(
-      /** @returns {DraftSegment[]} */ (segment) => {
-        if (segment.kind === "prose") return [{ kind: "prose", text: segment.text }];
-        const cell = state.cells.find((candidate) => candidate.id === segment.id);
-        if (cell === undefined) return [];
-        return [
-          {
-            kind: "cell",
-            id: cell.id,
-            type: cell.type,
-            body: cell.body.replace(/\r?\n$/, ""),
-            uses: cell.uses.join(", "),
-            isolated: cell.isolated,
-            model: cell.model ?? "",
-            timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
-          },
-        ];
-      },
-    ),
+    segments: draftSegments(state),
     saving: false,
   };
+}
+
+/**
+ * The notebook's pieces as the form edits them, each already collapsed when
+ * the reader had collapsed it.
+ * @param {NotebookSessionState} state
+ * @returns {DraftSegment[]}
+ */
+function draftSegments(state) {
+  /** @type {DraftSegment[]} */
+  const segments = [];
+  for (const segment of state.segments) {
+    if (segment.kind === "prose") {
+      segments.push({
+        kind: "prose",
+        text: segment.text,
+        folded: isFolded(proseFoldKey(segments.length)),
+      });
+      continue;
+    }
+    const cell = state.cells.find((candidate) => candidate.id === segment.id);
+    if (cell === undefined) continue;
+    segments.push({
+      kind: "cell",
+      id: cell.id,
+      type: cell.type,
+      body: cell.body.replace(/\r?\n$/, ""),
+      uses: cell.uses.join(", "),
+      isolated: cell.isolated,
+      model: cell.model ?? "",
+      timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
+      folded: isFolded(cellFoldKey(cell.id)),
+    });
+  }
+  return segments;
+}
+
+/**
+ * Writes the draft's collapsed pieces back onto the open notebook, in the
+ * order the draft will save them. A cell with no id yet has nothing to
+ * remember it by until it is given one.
+ */
+function syncDraftFolds() {
+  if (draft === undefined) return;
+  const folds = foldsForOpenNotebook();
+  folds.clear();
+  draft.segments.forEach((segment, index) => {
+    if (!segment.folded) return;
+    if (segment.kind === "prose") folds.add(proseFoldKey(index));
+    else if (segment.id.trim() !== "") folds.add(cellFoldKey(segment.id.trim()));
+  });
+}
+
+/**
+ * Collapses or expands a prompt cell, bash cell, or prose block in the draft.
+ * The piece remembers it, so a later redraw of the form keeps it.
+ * @param {DraftSegment} segment
+ */
+function draftFoldButton(segment) {
+  const name = () => (segment.kind === "cell" ? `this ${segment.type} cell` : "this prose");
+  const button = make("button", "fold", segment.folded ? "Expand" : "Collapse");
+  button.type = "button";
+  const retitle = () => {
+    button.textContent = segment.folded ? "Expand" : "Collapse";
+    button.setAttribute("aria-expanded", segment.folded ? "false" : "true");
+    button.title = `${segment.folded ? "Expand" : "Collapse"} ${name()}`;
+    button.setAttribute("aria-label", button.title);
+  };
+  retitle();
+  button.addEventListener("click", () => {
+    segment.folded = !segment.folded;
+    const card = button.closest(".draft-segment");
+    if (card instanceof HTMLElement) {
+      card.classList.toggle("folded", segment.folded);
+      const preview = card.querySelector(".fold-preview");
+      if (preview !== null) {
+        preview.textContent = foldPreview(segment.kind === "cell" ? segment.body : segment.text);
+      }
+    }
+    retitle();
+  });
+  return button;
 }
 
 /**
@@ -2488,7 +2657,7 @@ function saveRequestOf(edited) {
     base: edited.base,
     ...(edited.frontmatter === "" ? {} : { frontmatter: edited.frontmatter }),
     segments: edited.segments.map((segment) => {
-      if (segment.kind === "prose") return segment;
+      if (segment.kind === "prose") return { kind: "prose", text: segment.text };
       const model = segment.model.trim();
       const timeout = segment.timeout.trim();
       return {
@@ -2848,8 +3017,9 @@ function blankCell(type, before) {
     isolated: false,
     model: "",
     timeout: "",
+    folded: false,
   };
-  return before?.kind === "cell" ? [{ kind: "prose", text: "\n" }, cell] : [cell];
+  return before?.kind === "cell" ? [{ kind: "prose", text: "\n", folded: false }, cell] : [cell];
 }
 
 /**
@@ -2905,6 +3075,7 @@ function actionsFor(at) {
 
   if (at >= 0) {
     const segment = segments[at];
+    if (segment !== undefined) actions.append(draftFoldButton(segment));
     actions.append(
       button("↑", () => swap(at, at - 1), at === 0),
       button("↓", () => swap(at, at + 1), at === segments.length - 1),
@@ -2930,7 +3101,7 @@ function actionsFor(at) {
   inserts.append(
     button("prompt cell", () => insert(blankCell("prompt", segments[at]))),
     button("bash cell", () => insert(blankCell("bash", segments[at]))),
-    button("prose", () => insert([{ kind: "prose", text: "\n" }])),
+    button("prose", () => insert([{ kind: "prose", text: "\n", folded: false }])),
   );
   actions.append(inserts);
   return actions;
@@ -2956,7 +3127,7 @@ function swap(from, to) {
  * @param {number} at
  */
 function renderDraftCell(cell, at) {
-  const card = make("li", `draft-segment cell ${cell.type}`);
+  const card = make("li", `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`);
   const declaration = make("div", "draft-declaration");
 
   const type = document.createElement("select");
@@ -2969,7 +3140,12 @@ function renderDraftCell(cell, at) {
   }
   type.addEventListener("change", () => {
     cell.type = type.value === "bash" ? "bash" : "prompt";
-    card.className = `draft-segment cell ${cell.type}`;
+    card.className = `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`;
+    const fold = card.querySelector("button.fold");
+    if (fold instanceof HTMLButtonElement) {
+      fold.title = `${cell.folded ? "Expand" : "Collapse"} this ${cell.type} cell`;
+      fold.setAttribute("aria-label", fold.title);
+    }
     const body = card.querySelector("textarea");
     if (body instanceof HTMLTextAreaElement) {
       body.placeholder =
@@ -3003,7 +3179,12 @@ function renderDraftCell(cell, at) {
     modelSelect(cell.model, (value) => (cell.model = value)),
     field("timeout", cell.timeout, (value) => (cell.timeout = value)),
   );
-  card.append(declaration, cellBody(cell), actionsFor(at));
+  card.append(
+    declaration,
+    make("p", "fold-preview", foldPreview(cell.body)),
+    cellBody(cell),
+    actionsFor(at),
+  );
   return card;
 }
 
@@ -3012,9 +3193,10 @@ function renderDraftCell(cell, at) {
  * @param {number} at
  */
 function renderDraftProse(prose, at) {
-  const card = make("li", "draft-segment prose");
+  const card = make("li", `draft-segment prose${prose.folded ? " folded" : ""}`);
   card.append(
     make("span", "draft-label", "Prose"),
+    make("p", "fold-preview", foldPreview(prose.text)),
     textarea(prose.text, (value) => (prose.text = value), "Markdown between the cells"),
     actionsFor(at),
   );
@@ -3243,6 +3425,7 @@ async function saveDraft() {
     });
     if (draft !== edited || watching?.state.id !== state.id) return false;
     if (response.ok) {
+      syncDraftFolds();
       watching.state = /** @type {NotebookSessionState} */ (await response.json());
       stopEditing();
       element("session-status").textContent = "";
