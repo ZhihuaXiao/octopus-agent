@@ -6,9 +6,10 @@
  * produced: its text as it is spoken, shown as plain text or as Markdown,
  * each tool the agent invokes as it
  * invokes it, and the files it left — and a way to run one Cell or all of
- * them, or to stop. A prompt cell, a bash cell, or a block of prose can be
- * collapsed and expanded; the choice stays while this notebook is open, and a
- * saved edit keeps it. While editing, the whole Notebook is a form —
+ * them, or to stop. A prompt cell, a bash cell, or a block of prose starts
+ * collapsed, and can be expanded on its own or all at once; the choice stays
+ * while this notebook is open, and a saved edit keeps it. While editing, the
+ * whole Notebook is a form —
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
  * saved whole, based on the revision it was drawn from. Typing / in a Prompt
  * Cell lists the Skills installed for the user and for that Notebook's
@@ -1697,22 +1698,23 @@ function fillOutput(node, text) {
 }
 
 /**
- * Pieces of a notebook the reader has collapsed. A cell is remembered by its
+ * Pieces of a notebook the reader has expanded. A cell is remembered by its
  * id (`cell:<id>`). Prose has no id, so it is remembered by its place
- * (`prose:<index>`). The choice lasts while this page has the notebook open,
- * and a redraw puts it back. While editing, the draft piece remembers it, and
- * a save writes that back here.
+ * (`prose:<index>`). Anything absent is collapsed, which is how a notebook
+ * opens. The choice lasts while this page has the notebook open, and a redraw
+ * puts it back. While editing, the draft piece remembers it, and a save
+ * writes that back here.
  * @type {Map<string, Set<string>>}
  */
-const foldedPieces = new Map();
+const openedPieces = new Map();
 
 /** @returns {Set<string>} */
-function foldsForOpenNotebook() {
+function openedForNotebook() {
   const notebook = watching?.state.notebook ?? "";
-  let found = foldedPieces.get(notebook);
+  let found = openedPieces.get(notebook);
   if (found === undefined) {
     found = new Set();
-    foldedPieces.set(notebook, found);
+    openedPieces.set(notebook, found);
   }
   return found;
 }
@@ -1724,7 +1726,63 @@ const cellFoldKey = (id) => `cell:${id}`;
 const proseFoldKey = (index) => `prose:${index}`;
 
 /** @param {string} key */
-const isFolded = (key) => foldsForOpenNotebook().has(key);
+const isFolded = (key) => !openedForNotebook().has(key);
+
+/**
+ * Keys of the pieces that fold: each cell, and each block of prose that is
+ * not a blank line.
+ * @param {NotebookSessionState} state
+ * @returns {string[]}
+ */
+function foldKeys(state) {
+  /** @type {string[]} */
+  const keys = [];
+  state.segments.forEach((segment, index) => {
+    if (segment.kind === "prose") {
+      if (segment.text.replace(/\r?\n$/, "").trim() !== "") keys.push(proseFoldKey(index));
+      return;
+    }
+    keys.push(cellFoldKey(segment.id));
+  });
+  return keys;
+}
+
+/** Whether every prompt cell, bash cell, and block of prose is expanded. */
+function allExpanded() {
+  if (draft !== undefined) return draft.segments.every((segment) => !segment.folded);
+  if (watching === undefined) return false;
+  const opened = openedForNotebook();
+  return foldKeys(watching.state).every((key) => opened.has(key));
+}
+
+/** Brings Expand all / Collapse all into line with the pieces on the page. */
+function syncFoldAllButton() {
+  const button = /** @type {HTMLButtonElement} */ (element("fold-all"));
+  const collapse = allExpanded();
+  button.textContent = collapse ? "Collapse all" : "Expand all";
+  button.title = collapse
+    ? "Collapse every prompt cell, bash cell, and block of prose"
+    : "Expand every prompt cell, bash cell, and block of prose";
+  button.setAttribute("aria-label", button.title);
+}
+
+/**
+ * Collapses or expands every prompt cell, bash cell, and block of prose.
+ * @param {boolean} folded
+ */
+function setAllFolded(folded) {
+  if (draft !== undefined) {
+    for (const segment of draft.segments) segment.folded = folded;
+    renderEditor();
+    return;
+  }
+  const opened = openedForNotebook();
+  opened.clear();
+  if (!folded && watching !== undefined) {
+    for (const key of foldKeys(watching.state)) opened.add(key);
+  }
+  if (watching !== undefined) renderSession();
+}
 
 /**
  * The first line of a folded piece, so it can be told from the next.
@@ -1750,13 +1808,14 @@ function foldPreview(text) {
  */
 function setFolded(item, key, folded, button, name) {
   item.classList.toggle("folded", folded);
-  const folds = foldsForOpenNotebook();
-  if (folded) folds.add(key);
-  else folds.delete(key);
+  const opened = openedForNotebook();
+  if (folded) opened.delete(key);
+  else opened.add(key);
   button.textContent = folded ? "Expand" : "Collapse";
   button.setAttribute("aria-expanded", folded ? "false" : "true");
   button.title = `${folded ? "Expand" : "Collapse"} ${name}`;
   button.setAttribute("aria-label", button.title);
+  syncFoldAllButton();
 }
 
 /**
@@ -2283,6 +2342,7 @@ function renderSession() {
   element("add-cells").hidden = !authoring || openPane !== "notebook";
   element("file-view").hidden = openPane === "notebook";
   renderSubtabs();
+  syncFoldAllButton();
   if (!authoring) {
     element("segments").hidden = true;
     element("editor").hidden = true;
@@ -2565,8 +2625,8 @@ function draftOf(state) {
 }
 
 /**
- * The notebook's pieces as the form edits them, each already collapsed when
- * the reader had collapsed it.
+ * The notebook's pieces as the form edits them. Each starts collapsed, and
+ * is open when the reader had expanded it.
  * @param {NotebookSessionState} state
  * @returns {DraftSegment[]}
  */
@@ -2600,18 +2660,19 @@ function draftSegments(state) {
 }
 
 /**
- * Writes the draft's collapsed pieces back onto the open notebook, in the
- * order the draft will save them. A cell with no id yet has nothing to
- * remember it by until it is given one.
+ * Writes the draft's expanded pieces back onto the open notebook, in the
+ * order the draft will save them. A collapsed piece is remembered by being
+ * left out. A cell with no id yet has nothing to remember it by until it is
+ * given one, so it stays collapsed.
  */
 function syncDraftFolds() {
   if (draft === undefined) return;
-  const folds = foldsForOpenNotebook();
-  folds.clear();
+  const opened = openedForNotebook();
+  opened.clear();
   draft.segments.forEach((segment, index) => {
-    if (!segment.folded) return;
-    if (segment.kind === "prose") folds.add(proseFoldKey(index));
-    else if (segment.id.trim() !== "") folds.add(cellFoldKey(segment.id.trim()));
+    if (segment.folded) return;
+    if (segment.kind === "prose") opened.add(proseFoldKey(index));
+    else if (segment.id.trim() !== "") opened.add(cellFoldKey(segment.id.trim()));
   });
 }
 
@@ -2642,6 +2703,7 @@ function draftFoldButton(segment) {
       }
     }
     retitle();
+    syncFoldAllButton();
   });
   return button;
 }
@@ -3019,7 +3081,7 @@ function blankCell(type, before) {
     timeout: "",
     folded: false,
   };
-  return before?.kind === "cell" ? [{ kind: "prose", text: "\n", folded: false }, cell] : [cell];
+  return before?.kind === "cell" ? [{ kind: "prose", text: "\n", folded: true }, cell] : [cell];
 }
 
 /**
@@ -3224,6 +3286,7 @@ function renderEditor() {
     ),
   );
   element("draft").replaceChildren(frontmatter, list);
+  syncFoldAllButton();
 }
 
 function beginEditing() {
@@ -4841,6 +4904,7 @@ element("models-form").addEventListener("submit", (event) => event.preventDefaul
 element("format-plain").addEventListener("click", () => setOutputFormat("plain"));
 element("format-markdown").addEventListener("click", () => setOutputFormat("markdown"));
 syncFormatButtons();
+element("fold-all").addEventListener("click", () => setAllFolded(allExpanded()));
 element("run-all").addEventListener("click", () => void startRun());
 element("interrupt").addEventListener("click", () => void interrupt());
 element("run-form").addEventListener("submit", (event) => {
