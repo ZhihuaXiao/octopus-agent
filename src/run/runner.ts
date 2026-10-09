@@ -90,6 +90,12 @@ export interface RunOptions {
    */
   signal?: AbortSignal;
   /**
+   * Filled, while a Bash Cell runs, with the way to stop that Cell's command
+   * and the processes it started. The session removes nothing itself: the Cell
+   * deletes its entry when the command has ended.
+   */
+  bashStops?: Map<string, () => void>;
+  /**
    * Makes the agent this Run's Prompt Cells go to. A factory rather than an
    * agent, because how the agent is set up is the Notebook's to say and the
    * Notebook has not been read yet when a Run is asked for.
@@ -308,6 +314,7 @@ async function runBashCell(
     stdout: result.stdout,
     stderr: result.stderr,
     exitCode: result.exitCode,
+    ...(result.servicePids !== undefined ? { servicePids: result.servicePids } : {}),
     ...(error !== undefined ? { error } : {}),
     // Stopped by the Run rather than ended on its own, which the shell says
     // more plainly than the signal the command died of.
@@ -353,6 +360,8 @@ interface Cleared {
   readonly observe: (event: RunEvent) => void;
   /** Fires when the Run is interrupted, when it can be. */
   readonly interrupt?: AbortSignal;
+  /** Where a running Bash Cell registers the way to stop its command. */
+  readonly bashStops?: Map<string, () => void>;
 }
 
 /** Runs the Cells of a Notebook that has already been cleared to run. */
@@ -403,9 +412,22 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     }
     const timeout = cleared.timeoutOf(cell);
 
-    // A command's work begins here, with no context to make first.
-    if (cell.type === "bash")
-      return runBashCell(cell, body, workspace, stopsFor(timeout, interrupt));
+    // A command's work begins here, with no context to make first. Its own
+    // signal, so this Cell's service can be stopped without stopping a Cell
+    // running beside it; the Run's signal stops it too.
+    if (cell.type === "bash") {
+      const cellStop = new AbortController();
+      const fromRun = () => cellStop.abort();
+      if (interrupt?.aborted) cellStop.abort();
+      else interrupt?.addEventListener("abort", fromRun, { once: true });
+      cleared.bashStops?.set(cell.id, () => cellStop.abort());
+      try {
+        return await runBashCell(cell, body, workspace, stopsFor(timeout, cellStop.signal));
+      } finally {
+        cleared.bashStops?.delete(cell.id);
+        interrupt?.removeEventListener("abort", fromRun);
+      }
+    }
 
     const model = cleared.modelOf(cell);
     const turn: Turn = {
@@ -696,6 +718,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       ...(options.continues !== undefined ? { continues: options.continues } : {}),
       observe: options.observe ?? (() => undefined),
       ...(options.signal !== undefined ? { interrupt: options.signal } : {}),
+      ...(options.bashStops !== undefined ? { bashStops: options.bashStops } : {}),
     });
   } finally {
     await shared.dispose();

@@ -7,6 +7,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 
 export interface ShellResult {
   readonly stdout: string;
@@ -28,6 +29,12 @@ export interface ShellResult {
    * whose exit stands: a signal that stopped nothing is not what ended it.
    */
   readonly stopped: boolean;
+  /**
+   * Processes the command left running after its shell exited: a service it
+   * started that did not end with it. Absent when it left none. Stopping the
+   * Cell, or stopping the service later, ends these.
+   */
+  readonly servicePids?: readonly number[];
 }
 
 /**
@@ -37,9 +44,10 @@ export interface ShellResult {
  * as one that ran and failed, because either way the caller has to record the
  * outcome against the Cell rather than abandon the Run.
  *
- * @param signal stops the command where it is. Everything it started is killed
- *   with it, so a script's own children cannot outlive the Cell — or hold its
- *   output open, which is what would keep this from ever resolving.
+ * @param signal stops the command where it is. Everything it started in its
+ *   process group is killed with it. A service that has left that group is
+ *   named on the result instead, so it can be stopped afterwards rather than
+ *   holding the Cell open.
  */
 export function runShellCommand(
   command: string,
@@ -69,13 +77,10 @@ export function runShellCommand(
       // Nothing to read from: a Run is headless, so a command that waits on
       // input would otherwise wedge it forever rather than see end of file.
       stdio: ["ignore", "pipe", "pipe"],
-      // A process group of its own when there is a signal to honour, so that
-      // stopping the command can stop the processes it started as well: `bash
-      // -c` forks a child per command of a multi-line body, and killing bash
-      // alone would leave them running and holding the output open. Only then,
-      // because a group of its own is also out of reach of the terminal's
-      // Ctrl-C, and a command nothing will stop early should stay within it.
-      detached: signal !== undefined,
+      // A process group of its own, so the processes this command starts can
+      // be told from everything else and stopped with it. A service that
+      // leaves the group is still noticed, and named on the result.
+      detached: true,
     });
 
     const stdout: Buffer[] = [];
@@ -85,6 +90,46 @@ export function runShellCommand(
 
     const text = (chunks: Buffer[]) => Buffer.concat(chunks).toString("utf8");
     const captured = () => ({ stdout: text(stdout), stderr: text(stderr) });
+
+    // Processes seen in this command's group, or as its children, while it
+    // runs. A service that calls setsid leaves the group; having seen it is
+    // what lets it be named after the shell has gone.
+    const seen = new Set<number>();
+    const note = () => {
+      if (child.pid === undefined) return;
+      for (const pid of relatedTo(child.pid)) seen.add(pid);
+    };
+    const watch = setInterval(note, 50);
+    watch.unref();
+
+    let settled = false;
+    const finish = (exitCode: number | null, killedBy: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(watch);
+      signal?.removeEventListener("abort", stop);
+      note();
+      const servicePids = [...seen].filter((pid) => pid !== child.pid && processAlive(pid));
+      // A service left running keeps the pipes open, which would keep this
+      // from resolving and the process from exiting. The Cell has its output;
+      // the service is stopped later, on its own.
+      if (servicePids.length > 0) {
+        for (const stream of [child.stdout, child.stderr]) {
+          if (stream !== null && "unref" in stream && typeof stream.unref === "function") {
+            stream.unref();
+          }
+        }
+        child.unref();
+      }
+      settle({
+        ...captured(),
+        exitCode,
+        signal: killedBy,
+        startupError: null,
+        stopped,
+        ...(servicePids.length > 0 ? { servicePids } : {}),
+      });
+    };
 
     let stopped = false;
     const stop = () => {
@@ -100,6 +145,9 @@ export function runShellCommand(
     signal?.addEventListener("abort", stop, { once: true });
 
     child.on("error", (cause) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(watch);
       signal?.removeEventListener("abort", stop);
       settle({
         ...captured(),
@@ -110,11 +158,121 @@ export function runShellCommand(
       });
     });
 
+    child.on("exit", (exitCode, killedBy) => {
+      note();
+      const leader = child.pid;
+      const left = leader === undefined ? [] : relatedTo(leader).filter((pid) => pid !== leader);
+      // Nothing outlived the shell: wait for its output to finish draining.
+      // Something did: give it a moment to exec, then end the Cell and name it.
+      if (left.length === 0) return;
+      setTimeout(() => {
+        note();
+        const still =
+          leader === undefined
+            ? []
+            : [...seen].filter((pid) => pid !== leader && processAlive(pid));
+        // They exited with the shell after all; let its output finish draining.
+        if (still.length > 0) finish(exitCode, killedBy);
+      }, 50).unref();
+    });
+
     child.on("close", (exitCode, killedBy) => {
-      signal?.removeEventListener("abort", stop);
-      settle({ ...captured(), exitCode, signal: killedBy, startupError: null, stopped });
+      finish(exitCode, killedBy);
     });
   });
+}
+
+/**
+ * Ends processes a Bash Cell left running. The group each one leads or belongs
+ * to goes with it, so a service's own children do not outlive the stop. Never
+ * this process, and never its group.
+ */
+export function stopService(pids: readonly number[]): void {
+  const own = procOf(process.pid)?.pgrp;
+  const groups = new Set<number>();
+  for (const pid of pids) {
+    if (pid <= 1 || pid === process.pid) continue;
+    const proc = procOf(pid);
+    if (proc === undefined || proc.state === "Z") continue;
+    if (proc.pgrp > 1 && proc.pgrp !== own) groups.add(proc.pgrp);
+  }
+  for (const group of groups) killGroup(group);
+  for (const pid of pids) {
+    if (pid <= 1 || pid === process.pid) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone, which is the outcome being asked for.
+    }
+  }
+}
+
+/** Whether `pid` is a process that is still running. */
+export function serviceAlive(pids: readonly number[]): boolean {
+  return pids.some((pid) => processAlive(pid));
+}
+
+/** Processes in `leader`'s group, and those descended from it, besides itself. */
+function relatedTo(leader: number): number[] {
+  const procs = processes();
+  const ids = new Set<number>();
+  for (const proc of procs) if (proc.pgrp === leader) ids.add(proc.pid);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const proc of procs) {
+      if (ids.has(proc.ppid) && !ids.has(proc.pid)) {
+        ids.add(proc.pid);
+        grew = true;
+      }
+    }
+  }
+  ids.delete(leader);
+  return [...ids];
+}
+
+function processAlive(pid: number): boolean {
+  const proc = procOf(pid);
+  return proc !== undefined && proc.state !== "Z";
+}
+
+interface Proc {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly pgrp: number;
+  readonly state: string;
+}
+
+function procOf(pid: number): Proc | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const end = stat.lastIndexOf(")");
+    if (end < 0) return undefined;
+    const rest = stat.slice(end + 2).split(" ");
+    const state = rest[0];
+    const ppid = Number(rest[1]);
+    const pgrp = Number(rest[2]);
+    if (state === undefined || !Number.isInteger(ppid) || !Number.isInteger(pgrp)) return undefined;
+    return { pid, ppid, pgrp, state };
+  } catch {
+    return undefined;
+  }
+}
+
+function processes(): Proc[] {
+  let names: string[];
+  try {
+    names = readdirSync("/proc");
+  } catch {
+    return [];
+  }
+  const found: Proc[] = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const proc = procOf(Number(name));
+    if (proc !== undefined) found.push(proc);
+  }
+  return found;
 }
 
 function killGroup(leader: number): void {

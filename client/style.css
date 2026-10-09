@@ -1049,6 +1049,7 @@ button:disabled {
 .cell-rounds,
 .cell-turn,
 .cell-branch,
+.cell-stop,
 .fold {
   font-size: 0.8rem;
   padding: 0.1rem 0.6rem;

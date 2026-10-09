@@ -6,8 +6,10 @@
  * produced: its text as it is spoken, shown as plain text or as Markdown,
  * each tool the agent invokes as it
  * invokes it, and the files it left — and a way to run one Cell or all of
- * them, or to stop. A prompt cell, a bash cell, or a block of prose starts
- * collapsed, and can be expanded on its own or all at once; the choice stays
+ * them, or to stop. A Bash Cell that is still running, or that left a service
+ * running, has Stop on it, which ends that service. A prompt cell, a bash
+ * cell, or a block of prose starts collapsed, and can be expanded on its own
+ * or all at once; the choice stays
  * while this notebook is open, and a saved edit keeps it. While editing, the
  * whole Notebook is a form —
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
@@ -93,6 +95,7 @@
  *   artifacts: string[],
  *   run?: string,
  *   error?: string,
+ *   service?: boolean,
  * }} CellView
  * @typedef {{ kind: "prose", text: string } | { kind: "cell", id: string }} SegmentView
  * @typedef {"string" | "number" | "boolean"} InputType
@@ -129,6 +132,7 @@
  *   toolCalls?: ToolCall[],
  *   artifacts: string[],
  *   error?: string,
+ *   servicePids?: number[],
  * }} CellRecord
  * @typedef {{ sequence: number } & (
  *   | { type: "run-started", run: string, cells: string[] }
@@ -1862,6 +1866,9 @@ function renderCell(cell, session, running) {
   heading.append(make("span", "cell-status", cell.status));
   heading.append(...turnButtons(cell));
   heading.append(branchButton(cell));
+  if (cell.service === true && cell.status !== "running")
+    heading.append(make("span", "cell-attribute", "service"));
+  if (cell.service === true) heading.append(serviceStopButton(cell.id));
   const runOne = make("button", "cell-run", "Run");
   runOne.type = "button";
   runOne.title = `Run ${cell.id} alone, carrying on from the last run`;
@@ -2441,6 +2448,8 @@ function apply(event) {
       if (cell !== undefined) {
         Object.assign(cell, { status: "running", text: "", toolCalls: [], artifacts: [] });
         delete cell.error;
+        if (cell.type === "bash") cell.service = true;
+        else delete cell.service;
         if (watching.run !== undefined) cell.run = watching.run;
       }
       renderSession();
@@ -2467,6 +2476,9 @@ function apply(event) {
         cell.artifacts = event.record.artifacts;
         if (event.record.error !== undefined) cell.error = event.record.error;
         else delete cell.error;
+        if (cell.type === "bash" && (event.record.servicePids?.length ?? 0) > 0)
+          cell.service = true;
+        else delete cell.service;
       }
       renderSession();
       return;
@@ -2524,6 +2536,43 @@ function apply(event) {
       return;
     }
   }
+}
+
+/**
+ * Stops the service a Bash Cell is running, or left running.
+ * @param {string} cell
+ * @returns {Promise<boolean>} whether the server accepted the stop
+ */
+async function stopCell(cell) {
+  if (watching === undefined) return false;
+  try {
+    await post(
+      `/api/sessions/${encodeURIComponent(watching.state.id)}/cells/${encodeURIComponent(cell)}/stop`,
+    );
+    return true;
+  } catch (cause) {
+    element("session-status").textContent = `Could not stop: ${describe(cause)}`;
+    return false;
+  }
+}
+
+/**
+ * The button that stops a Bash Cell's service. `id` is the Cell's id.
+ * @param {string} id
+ * @returns {HTMLButtonElement}
+ */
+function serviceStopButton(id) {
+  const button = /** @type {HTMLButtonElement} */ (make("button", "cell-stop", "Stop"));
+  button.type = "button";
+  button.title = `Stop the service ${id} is running`;
+  button.addEventListener("click", () => {
+    void stopCell(id).then((stopped) => {
+      // The notebook view is drawn again from the session. The editor is not,
+      // so the button leaves once the stop has been accepted.
+      if (stopped) button.remove();
+    });
+  });
+  return button;
 }
 
 /**
@@ -3147,6 +3196,8 @@ function actionsFor(at) {
     // first, so the command just typed is what runs.
     if (segment?.kind === "cell") {
       const cell = segment;
+      const live = watching?.state.cells.find((item) => item.id === cell.id.trim());
+      if (live?.service === true) actions.append(serviceStopButton(live.id));
       actions.append(
         button(
           "Run",
@@ -3794,6 +3845,7 @@ function renderStep(cell, session) {
     make("span", "run-step-state", STATE_WORDS[cell.status]),
   );
   heading.append(...turnButtons(cell));
+  if (cell.service === true) heading.append(serviceStopButton(cell.id));
   const output = make("div", "run-step-output streamed");
   fillOutput(output, cell.text);
   item.append(heading, output);

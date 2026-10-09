@@ -18,38 +18,50 @@ import { type Command, readCommand } from "./launcher.js";
 /** Runs a Notebook headlessly against a real agent, reporting to the terminal. */
 async function run(command: Extract<Command, { kind: "run" }>): Promise<void> {
   const path = resolve(command.notebook);
+  // A Bash Cell runs in its own process group, so Ctrl-C has to be handed on
+  // or a service it started would outlive the terminal that asked it to stop.
+  const interrupt = new AbortController();
+  const stop = () => interrupt.abort();
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
 
-  const record = await runNotebook(path, {
-    agent: createPiAgent,
-    // What a terminal adds to a Run: somewhere for the reply to stream to.
-    observe: (event) => {
-      if (event.type === "cell-text") process.stdout.write(event.text);
-    },
-    inputs: command.inputs,
-    ...(command.trust !== undefined ? { trust: command.trust } : {}),
-  });
-  process.stdout.write(`\n\nRun ${record.id} → ${recordPath(path, record.id)}\n`);
+  try {
+    const record = await runNotebook(path, {
+      agent: createPiAgent,
+      // What a terminal adds to a Run: somewhere for the reply to stream to.
+      observe: (event) => {
+        if (event.type === "cell-text") process.stdout.write(event.text);
+      },
+      inputs: command.inputs,
+      signal: interrupt.signal,
+      ...(command.trust !== undefined ? { trust: command.trust } : {}),
+    });
+    process.stdout.write(`\n\nRun ${record.id} → ${recordPath(path, record.id)}\n`);
 
-  // Anything short of ok, since a timed-out cell is no more to be built on
-  // than an errored one; the two are named apart because their remedies are.
-  const failed = record.cells.filter((cell) => cell.status !== "ok");
-  for (const cell of failed) {
-    const what =
-      cell.status === "timeout"
-        ? "timed out"
-        : cell.status === "interrupted"
-          ? "was interrupted"
-          : "failed";
-    process.stderr.write(`Cell "${cell.id}" ${what}: ${cell.error}\n`);
-    if (cell.type === "prompt" && cell.retries.length > 0) {
-      const times = cell.retries.length === 1 ? "once" : `${cell.retries.length} times`;
-      process.stderr.write(`  (retried ${times} before that)\n`);
+    // Anything short of ok, since a timed-out cell is no more to be built on
+    // than an errored one; the two are named apart because their remedies are.
+    const failed = record.cells.filter((cell) => cell.status !== "ok");
+    for (const cell of failed) {
+      const what =
+        cell.status === "timeout"
+          ? "timed out"
+          : cell.status === "interrupted"
+            ? "was interrupted"
+            : "failed";
+      process.stderr.write(`Cell "${cell.id}" ${what}: ${cell.error}\n`);
+      if (cell.type === "prompt" && cell.retries.length > 0) {
+        const times = cell.retries.length === 1 ? "once" : `${cell.retries.length} times`;
+        process.stderr.write(`  (retried ${times} before that)\n`);
+      }
+      // A bash cell's output never streamed past, so the account of what went
+      // wrong is in the record and nowhere the reader has already seen.
+      if (cell.type === "bash" && cell.stderr !== "") process.stderr.write(cell.stderr);
     }
-    // A bash cell's output never streamed past, so the account of what went
-    // wrong is in the record and nowhere the reader has already seen.
-    if (cell.type === "bash" && cell.stderr !== "") process.stderr.write(cell.stderr);
+    if (failed.length > 0) process.exitCode = 1;
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
   }
-  if (failed.length > 0) process.exitCode = 1;
 }
 
 /**

@@ -137,6 +137,8 @@ const DELETE_CHAT_ROUTE = /^\/api\/chats\/([^/]+)$/;
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export|text))?$/;
 /** The model rounds of one Cell that has run, read from the Agent Session. */
 const ROUNDS_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/rounds$/;
+/** Stops one Bash Cell's command, or the service that command left running. */
+const STOP_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/stop$/;
 /** The query naming which Run an export is of, when not the latest. */
 const RUN_QUERY = "run";
 /** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
@@ -1163,6 +1165,29 @@ async function serveRounds(
   json(response, 200, read.value);
 }
 
+/** Stops a Bash Cell's command, or a service that command left running. */
+async function serveStop(
+  sessions: NotebookSessions,
+  matched: RegExpExecArray,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (!permitted(WRITES, request, response)) return;
+  const session = sessions.get(matched[1] ?? "");
+  const cell = decoded(matched[2] ?? "");
+  if (session === undefined || cell === undefined) {
+    notFound(response);
+    return;
+  }
+  const stopped = await session.stop(cell);
+  if (!stopped.ok) {
+    reply(response, stopped.status, `${stopped.problem}\n`);
+    return;
+  }
+  response.writeHead(204);
+  response.end();
+}
+
 async function serveSession(
   sessions: NotebookSessions,
   matched: RegExpExecArray,
@@ -1522,6 +1547,11 @@ async function handle(
     }
   }
 
+  const stop = STOP_ROUTE.exec(pathname);
+  if (stop !== null) {
+    await serveStop(served.sessions, stop, request, response);
+    return;
+  }
   const rounds = ROUNDS_ROUTE.exec(pathname);
   if (rounds !== null) {
     await serveRounds(served.sessions, rounds, request, response);

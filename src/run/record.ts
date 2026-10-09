@@ -60,6 +60,12 @@ export interface BashCellRecord extends CellRecordBase {
   stderr: string;
   /** Null when the command never got as far as exiting on its own. */
   exitCode: number | null;
+  /**
+   * Processes the command left running, when it started a service that did not
+   * exit with it. Absent when it left none. They are this machine's, and may
+   * already be gone by the time someone asks to stop them.
+   */
+  servicePids?: readonly number[];
 }
 
 /**

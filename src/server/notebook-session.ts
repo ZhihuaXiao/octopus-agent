@@ -65,6 +65,7 @@ import {
   concludeRun,
   runNotebook,
 } from "../run/runner.js";
+import { serviceAlive, stopService } from "../run/shell.js";
 import { listArtifacts, readRunRecord, runFile } from "../run/store.js";
 import {
   type FoundJournal,
@@ -134,6 +135,11 @@ export interface CellView {
   readonly run?: string;
   /** Why the Cell did not succeed, when it did not. */
   readonly error?: string;
+  /**
+   * A Bash Cell whose command is still running, or that left a service running
+   * after the shell exited. The way to end it is to stop that Cell.
+   */
+  readonly service?: boolean;
 }
 
 /**
@@ -284,6 +290,12 @@ export interface NotebookSession {
    * at once when there was none — so that afterwards nothing is running.
    */
   interrupt(): Promise<void>;
+  /**
+   * Stops a Bash Cell's command, or the service that command left running.
+   * A Prompt Cell has nothing of the kind. Resolves once a command that was
+   * still running has stopped.
+   */
+  stop(cellId: string): Promise<{ ok: true } | { ok: false; status: 404 | 422; problem: string }>;
   /**
    * Hears every event from now on, and first whatever it has to catch up on:
    * given `since` — the number of the last event the listener heard — every
@@ -476,6 +488,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   let ended: CellRecord[] = [];
   /** The Run in progress: the way to interrupt it, and when it is over. */
   let current: { readonly controller: AbortController; readonly over: Promise<void> } | undefined;
+  /** While a Bash Cell's command runs, the way to stop that command alone. */
+  const bashStops = new Map<string, () => void>();
   /**
    * Text files as they were when the open reviews were taken. A review still
    * waiting keeps its original bytes here, so the next look does not treat
@@ -558,6 +572,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         toolCalls: inFlight.calls,
         artifacts: [],
         ...(inProgress !== undefined ? { run: inProgress.run } : {}),
+        ...(cell.type === "bash" ? { service: true } : {}),
       };
     }
 
@@ -575,6 +590,11 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       artifacts: record.artifacts,
       run,
       ...(record.error !== undefined ? { error: record.error } : {}),
+      ...(record.type === "bash" &&
+      record.servicePids !== undefined &&
+      serviceAlive(record.servicePids)
+        ? { service: true }
+        : {}),
     };
   };
 
@@ -759,6 +779,39 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     if (current === undefined) return Promise.resolve();
     current.controller.abort();
     return current.over;
+  };
+
+  /**
+   * Stops one Bash Cell: the command, when it is still running, and any
+   * service that command left behind. A service stopped after the Cell has
+   * finished does not change what the Cell recorded; the processes are simply
+   * gone, and the Cell no longer offers to stop them.
+   */
+  const stop = async (
+    cellId: string,
+  ): Promise<{ ok: true } | { ok: false; status: 404 | 422; problem: string }> => {
+    const cell = cellsOf(parsed).find((item) => item.id === cellId);
+    if (cell === undefined) {
+      return { ok: false, status: 404, problem: `No cell named "${cellId}" in this notebook.` };
+    }
+    if (cell.type !== "bash") {
+      return { ok: false, status: 422, problem: "A prompt cell has no service to stop." };
+    }
+
+    const halt = bashStops.get(cellId);
+    if (halt !== undefined) halt();
+    const found = results.get(cellId);
+    if (found?.record.type === "bash" && found.record.servicePids !== undefined) {
+      const pids = found.record.servicePids;
+      stopService(pids);
+      const started = Date.now();
+      while (serviceAlive(pids) && Date.now() - started < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    if (halt !== undefined && current !== undefined) await current.over;
+    else emit(() => ({ type: "notebook-changed", session: state() }));
+    return { ok: true };
   };
 
   /**
@@ -963,6 +1016,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
             agent,
             observe: observeRun,
             signal: controller.signal,
+            bashStops,
             ...(request.cells !== undefined ? { cells: request.cells } : {}),
             ...(request.inputs !== undefined ? { inputs: request.inputs } : {}),
             ...(last !== undefined ? { continues: last } : {}),
@@ -998,6 +1052,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     },
 
     interrupt,
+
+    stop,
 
     subscribe(listener, since) {
       // Caught up and subscribed in one breath, with nothing emitted between:

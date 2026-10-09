@@ -387,6 +387,7 @@ interface CellView {
   artifacts: string[];
   run?: string;
   error?: string;
+  service?: boolean;
 }
 
 /** The document's layout: its Prose, and where each Cell sits among it. */
@@ -1402,6 +1403,67 @@ describe("interrupting a running cell", () => {
       { id: "greet", status: "ok", text: "Hello, at last" },
     ]);
     await browser.close();
+  });
+
+  it("stops a bash cell that is still running its command", async () => {
+    const server = await serve({ "slow.md": "```bash id=wait\necho begun\nsleep 30\n```\n" });
+    const session = await open(server, "slow.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    await browser.next("cell-started");
+    await new Promise((tick) => setTimeout(tick, 200));
+
+    expect((await stateOf(server, session.id)).cells[0]).toMatchObject({
+      id: "wait",
+      status: "running",
+      service: true,
+    });
+    const began = Date.now();
+    const response = await post(server, `/api/sessions/${session.id}/cells/wait/stop`);
+    await browser.next("run-ended");
+
+    expect(response.status).toBe(204);
+    expect(Date.now() - began).toBeLessThan(3000);
+    expect((await stateOf(server, session.id)).cells[0]).toMatchObject({
+      id: "wait",
+      status: "interrupted",
+    });
+    expect((await stateOf(server, session.id)).cells[0]?.service).toBeUndefined();
+    await browser.close();
+  });
+
+  it("stops a service a bash cell left running after the shell exited", async () => {
+    const server = await serve({
+      "serve.md": "```bash id=serve\nsleep 30 &\necho launched\n```\n",
+    });
+    const session = await open(server, "serve.md");
+    const browser = await watch(server, session.id);
+    try {
+      await run(server, session.id);
+      await browser.next("run-ended");
+
+      expect((await stateOf(server, session.id)).cells[0]).toMatchObject({
+        id: "serve",
+        status: "ok",
+        text: "launched\n",
+        service: true,
+      });
+      const response = await post(server, `/api/sessions/${session.id}/cells/serve/stop`);
+      expect(response.status).toBe(204);
+      expect((await stateOf(server, session.id)).cells[0]?.service).toBeUndefined();
+    } finally {
+      await post(server, `/api/sessions/${session.id}/cells/serve/stop`).catch(() => undefined);
+      await browser.close();
+    }
+  });
+
+  it("refuses to stop a prompt cell, which has no service", async () => {
+    const server = await serve({ "hello.md": hello });
+    const session = await open(server, "hello.md");
+
+    const response = await post(server, `/api/sessions/${session.id}/cells/greet/stop`);
+
+    expect(response.status).toBe(422);
   });
 });
 

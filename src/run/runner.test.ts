@@ -9,6 +9,7 @@ import type { AgentFactory } from "../agent/agent.js";
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import type { CellRecord, RunRecord } from "./record.js";
 import { type RunEvent, RunRefusal, runNotebook } from "./runner.js";
+import { serviceAlive, stopService } from "./shell.js";
 import { recordPath, runDirectory } from "./store.js";
 
 async function notebookFile(contents: string): Promise<string> {
@@ -185,6 +186,25 @@ describe("bash cells", () => {
         endedAt: expect.any(String),
       },
     ]);
+  });
+
+  it("names a service the command left running, so it can be stopped", async () => {
+    const path = await notebookFile(oneBashCell("sleep 30 &\necho launched"));
+    const cell = onlyCell(await runNotebook(path, { agent: unusedAgent().create }), "bash");
+    const pids = cell.servicePids ?? [];
+    try {
+      expect(cell).toMatchObject({ status: "ok", stdout: "launched\n", exitCode: 0 });
+      expect(pids.length).toBeGreaterThan(0);
+      expect(serviceAlive(pids)).toBe(true);
+      stopService(pids);
+      const started = Date.now();
+      while (serviceAlive(pids) && Date.now() - started < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(serviceAlive(pids)).toBe(false);
+    } finally {
+      stopService(pids);
+    }
   });
 
   it("spends no tokens, because it never reaches the agent", async () => {
