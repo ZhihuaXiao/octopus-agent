@@ -3104,6 +3104,71 @@ describe("renaming a notebook", () => {
   });
 });
 
+describe("renaming a file that is not a notebook", () => {
+  it("renames a text file and a file that is not text, and makes a folder the new name needs", async () => {
+    const server = await serve({ "note.txt": "hello\n", "picture.bin": "xyz" });
+
+    const text = await post(server, "/api/files/rename", {
+      from: "note.txt",
+      to: "notes/copy.txt",
+    });
+    expect(text.status).toBe(200);
+    expect(await text.json()).toEqual({ path: "notes/copy.txt" });
+    expect(await readFile(join(server.directory, "notes/copy.txt"), "utf8")).toBe("hello\n");
+    await expect(readFile(join(server.directory, "note.txt"), "utf8")).rejects.toThrow();
+
+    const binary = await post(server, "/api/files/rename", {
+      from: "picture.bin",
+      to: "picture.dat",
+    });
+    expect(binary.status).toBe(200);
+    expect(await readFile(join(server.directory, "picture.dat"), "utf8")).toBe("xyz");
+  });
+
+  it("leaves a notebook to its own rename, and will not overwrite or climb out", async () => {
+    const server = await serve({ "hello.md": hello, "note.txt": "a\n", "other.txt": "b\n" });
+    const renameTo = (body: unknown) => post(server, "/api/files/rename", body);
+
+    expect((await renameTo({ from: "hello.md", to: "away.md" })).status).toBe(400);
+    expect((await renameTo({ from: "note.txt", to: "other.txt" })).status).toBe(409);
+    expect((await renameTo({ from: "missing.txt", to: "copy.txt" })).status).toBe(404);
+    expect((await renameTo({ from: "../note.txt", to: "copy.txt" })).status).toBe(404);
+    expect((await renameTo({ from: "note.txt", to: "../copy.txt" })).status).toBe(400);
+    expect((await renameTo({ from: "note.txt", to: ".hidden/note.txt" })).status).toBe(400);
+    expect((await renameTo({ from: "note.txt" })).status).toBe(400);
+    expect(await readFile(join(server.directory, "hello.md"), "utf8")).toBe(hello);
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("a\n");
+  });
+
+  it("moves a review onto the file's new name", async () => {
+    const server = await serve({
+      "write.md": "```bash id=write\nprintf 'after\\n' > note.txt\n```\n",
+      "note.txt": "before\n",
+    });
+    const session = await open(server, "write.md");
+    const browser = await watch(server, session.id);
+    expect(await run(server, session.id)).toBe(202);
+    await browser.next("run-ended");
+    expect((await stateOf(server, session.id)).reviews).toEqual([
+      { path: "note.txt", kind: "modified", before: "before\n" },
+    ]);
+
+    const renamed = await post(server, "/api/files/rename", { from: "note.txt", to: "copy.txt" });
+    expect(renamed.status).toBe(200);
+    expect((await stateOf(server, session.id)).reviews).toEqual([
+      { path: "copy.txt", kind: "modified", before: "before\n" },
+    ]);
+
+    const rejected = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "copy.txt",
+      decision: "reject",
+    });
+    expect(rejected.status).toBe(200);
+    expect(await readFile(join(server.directory, "copy.txt"), "utf8")).toBe("before\n");
+    await browser.close();
+  });
+});
+
 // Derived from pi's own signature rather than imported: the message types live
 // in @earendil-works/pi-ai, which is pi's dependency and not ours to pin.
 type AppendableMessage = Parameters<SessionManager["appendMessage"]>[0];

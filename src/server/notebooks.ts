@@ -12,7 +12,16 @@
  */
 
 import { constants } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import { formatDiagnostics } from "../notebook/diagnostic.js";
@@ -452,6 +461,77 @@ export async function renameNotebook(
       ...(entry.mode !== undefined ? { mode: entry.mode } : {}),
     },
   };
+}
+
+/** How renaming a file that is not a Notebook went. */
+export type RenamedFile =
+  | { readonly kind: "renamed"; readonly path: string }
+  /** No such file under the served directory. */
+  | { readonly kind: "absent" }
+  /** The name is not one a file under the served directory can have. */
+  | { readonly kind: "invalid"; readonly problem: string }
+  /** A file is already there under the new name. */
+  | { readonly kind: "exists" }
+  /** The file is a Notebook, which is renamed on its own. */
+  | { readonly kind: "notebook" };
+
+/** A path the folder tree will not show: a tool's directory, or a dot-directory. */
+const isHiddenPath = (name: string) =>
+  name.split("/").some((part) => part === "node_modules" || part.startsWith("."));
+
+/**
+ * Renames the file at `from` to `to`, both relative to the served directory.
+ * A Notebook is left for its own rename, which also moves its Runs. Never
+ * over a file that is already there, and never out of the directory. A
+ * directory the new name needs is made.
+ */
+export async function renameFile(
+  directory: string,
+  from: string,
+  to: string,
+): Promise<RenamedFile> {
+  const source = fileWithin(directory, from);
+  const target = fileWithin(directory, to);
+  if (source === undefined || isHiddenPath(pathWithin(directory, source)))
+    return { kind: "absent" };
+  if (target === undefined || isHiddenPath(pathWithin(directory, target))) {
+    return {
+      kind: "invalid",
+      problem: `The new name must be a file under ${directory}.`,
+    };
+  }
+
+  let info;
+  try {
+    info = await lstat(source);
+  } catch (cause) {
+    const { code } = cause as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
+    throw cause;
+  }
+  // A link is not followed: it can name a file outside the directory.
+  if (!info.isFile()) return { kind: "absent" };
+  if (extname(source) === NOTEBOOK_EXTENSION) {
+    const entry = await readEntry(directory, source);
+    if (entry !== undefined) return { kind: "notebook" };
+  }
+
+  const path = pathWithin(directory, target);
+  if (source === target) return { kind: "renamed", path };
+  if (await isThere(target)) return { kind: "exists" };
+
+  await mkdir(dirname(target), { recursive: true });
+  try {
+    await rename(source, target);
+  } catch (cause) {
+    const { code } = cause as NodeJS.ErrnoException;
+    if (code === "EEXIST") return { kind: "exists" };
+    if (code === "ENOTDIR" || code === "EISDIR") {
+      return { kind: "invalid", problem: `The new name must be a file under ${directory}.` };
+    }
+    throw cause;
+  }
+  return { kind: "renamed", path };
 }
 
 /** How naming a Notebook's model went. */

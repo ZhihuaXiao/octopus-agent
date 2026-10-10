@@ -26,7 +26,8 @@
  * JavaScript, TypeScript, or Java — opens in a subtab of
  * the Notebook. A Run that creates or changes one of those files leaves it
  * under review: Accept keeps the new text, and Reject puts back what was
- * there, or removes a file that was new. The list of Notebooks, and an open one, choose the mode it
+ * there, or removes a file that was new. A text file that is not a Notebook
+ * is renamed from its own page, in the folder it is already in. The list of Notebooks, and an open one, choose the mode it
  * runs in and the model it runs on; and under an open Notebook are the ways to add a Prompt
  * Cell or a Bash Cell to it, which begin the editing when it has not begun.
  *
@@ -635,6 +636,100 @@ async function refreshTree() {
     drawTree(await fetchTree());
   } catch (cause) {
     element("tree-status").textContent = `Could not list the directory: ${describe(cause)}`;
+  }
+}
+
+/**
+ * The file's new path: the name typed, in the same folder. A name with no
+ * extension keeps the old one. A slash is a different folder, which this
+ * rename does not do.
+ * @param {string} current
+ * @param {string} given
+ * @returns {string | undefined}
+ */
+function renameTarget(current, given) {
+  if (given.includes("/") || given.includes("\\") || given === "." || given === "..") {
+    return undefined;
+  }
+  const parent = current.includes("/") ? current.slice(0, current.lastIndexOf("/") + 1) : "";
+  const old = current.split("/").pop() ?? current;
+  let name = given;
+  if (!name.includes(".")) {
+    const dot = old.lastIndexOf(".");
+    if (dot > 0) name = `${name}${old.slice(dot)}`;
+  }
+  return `${parent}${name}`;
+}
+
+/**
+ * The open file, and any subtab or review of it, follows a rename.
+ * @param {string} from
+ * @param {string} to
+ */
+function followRenamedFile(from, to) {
+  const index = textTabs.indexOf(from);
+  if (index >= 0) textTabs[index] = to;
+  if (fileDrafts.has(from)) {
+    const draft = fileDrafts.get(from);
+    if (draft !== undefined) fileDrafts.set(to, draft);
+    fileDrafts.delete(from);
+  }
+  if (watching?.state.reviews !== undefined) {
+    watching.state.reviews = watching.state.reviews.map((review) =>
+      review.path === from ? { ...review, path: to } : review,
+    );
+  }
+  if (openPane !== from) {
+    if (watching !== undefined) renderSession();
+    else renderSubtabs();
+    return;
+  }
+  openPane = to;
+  if (watching === undefined) {
+    showHeading(to.split("/").pop() ?? to, to);
+    element("file-view").hidden = false;
+    renderSubtabs();
+    void showFile(to);
+    return;
+  }
+  renderSession();
+}
+
+/**
+ * Where a rename of `path` reports itself: the file on show, or the tree.
+ * @param {string} path
+ * @returns {HTMLElement}
+ */
+function renameStatus(path) {
+  if (!element("file-view").hidden && openPane === path) return element("file-status");
+  if (!element("session").hidden) return element("session-status");
+  return element("tree-status");
+}
+
+/**
+ * Gives the open file a new name in its own folder. The page follows it.
+ * @param {string} from
+ */
+async function renameOtherFile(from) {
+  const fileName = from.split("/").pop() ?? from;
+  const given = window.prompt("Rename this file to:", fileName)?.trim();
+  if (given === undefined || given === "") return;
+  const status = renameStatus(from);
+  const to = renameTarget(from, given);
+  if (to === undefined) {
+    status.textContent = "Type a new file name, without a folder.";
+    return;
+  }
+  if (to === from) return;
+  try {
+    const made = /** @type {{ path: string }} */ (
+      await (await post("/api/files/rename", { from, to })).json()
+    );
+    followRenamedFile(from, made.path);
+    status.textContent = "";
+    await refreshTree();
+  } catch (cause) {
+    status.textContent = `Could not rename: ${describe(cause)}`;
   }
 }
 
@@ -4968,6 +5063,9 @@ element("edit").addEventListener("click", beginEditing);
 element("file-accept").addEventListener("click", () => void decideOpenFile("accept"));
 element("file-reject").addEventListener("click", () => void decideOpenFile("reject"));
 element("file-edit").addEventListener("click", beginFileEdit);
+element("file-rename").addEventListener("click", () => {
+  if (openPane !== "notebook" && !element("file-view").hidden) void renameOtherFile(openPane);
+});
 element("file-wrap").addEventListener("click", toggleFileWrap);
 element("file-save").addEventListener("click", () => void saveFileEdit());
 element("file-cancel-edit").addEventListener("click", cancelFileEdit);

@@ -106,6 +106,8 @@ const TEXT_ROUTE = "/api/text";
 const SKILLS_ROUTE = "/api/skills";
 /** A Notebook's file renamed, Runs included, the session following when one holds it. */
 const RENAME_ROUTE = "/api/notebooks/rename";
+/** A file that is not a Notebook, renamed in place. */
+const FILE_RENAME_ROUTE = "/api/files/rename";
 /** A new Notebook that keeps another through one Cell and drops what follows. */
 const BRANCH_ROUTE = "/api/notebooks/branch";
 /** The model a Notebook names, chosen from the models the user can already call. */
@@ -581,6 +583,43 @@ async function renameOpen(
       return;
     case "renamed":
       json(response, 200, renamed.entry);
+      return;
+  }
+}
+
+/** Renames a file that is not a Notebook. A review of that file follows it. */
+async function renameOther(
+  served: Served,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["from", "to"]) ||
+    typeof body.from !== "string" ||
+    typeof body.to !== "string"
+  ) {
+    reply(response, 400, "The request must name the file and the new name, as JSON.\n");
+    return;
+  }
+
+  const renamed = await served.sessions.renameFile(body.from, body.to);
+  switch (renamed.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "invalid":
+      reply(response, 400, `${renamed.problem}\n`);
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${body.to}.\n`);
+      return;
+    case "notebook":
+      reply(response, 400, "A notebook is renamed with its own Rename button.\n");
+      return;
+    case "renamed":
+      json(response, 200, { path: renamed.path });
       return;
   }
 }
@@ -1573,6 +1612,10 @@ async function handle(
   }
   if (pathname === RENAME_ROUTE) {
     if (permitted(WRITES, request, response)) await renameOpen(served, request, response);
+    return;
+  }
+  if (pathname === FILE_RENAME_ROUTE) {
+    if (permitted(WRITES, request, response)) await renameOther(served, request, response);
     return;
   }
   if (pathname === BRANCH_ROUTE) {

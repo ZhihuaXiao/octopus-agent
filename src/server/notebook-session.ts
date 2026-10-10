@@ -79,15 +79,18 @@ import {
   type Assigned,
   type NotebookEntry,
   type Renamed,
+  type RenamedFile,
   assignNotebookMode,
   assignNotebookModel,
   fileWithin,
   pathWithin,
+  renameFile,
   renameNotebook,
 } from "./notebooks.js";
 import {
   type TextReview,
   baselineUnder,
+  isTextFile,
   readTextFile,
   readTextFiles,
   revertText,
@@ -296,6 +299,12 @@ export interface NotebookSession {
    * still running has stopped.
    */
   stop(cellId: string): Promise<{ ok: true } | { ok: false; status: 404 | 422; problem: string }>;
+  /**
+   * The file at `from` is now at `to`. A review of it, and the bytes a later
+   * comparison holds for it, follow the file. A name that is no longer a text
+   * file drops the review: there is no text left to accept or reject.
+   */
+  retargetText(from: string, to: string): Promise<void>;
   /**
    * Hears every event from now on, and first whatever it has to catch up on:
    * given `since` — the number of the last event the listener heard — every
@@ -814,6 +823,21 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     return { ok: true };
   };
 
+  const retargetText = (from: string, to: string): Promise<void> =>
+    withReviews(async () => {
+      const review = reviews.get(from);
+      if (review !== undefined) {
+        reviews.delete(from);
+        if (isTextFile(to)) reviews.set(to, { ...review, path: to });
+      }
+      if (baseline !== undefined && baseline.has(from)) {
+        const bytes = baseline.get(from);
+        baseline.delete(from);
+        if (bytes !== undefined && isTextFile(to)) baseline.set(to, bytes);
+      }
+      if (review !== undefined) observe({ type: "text-changed", reviews: listedReviews() });
+    });
+
   /**
    * Ends a Run the server before this one died in the middle of, as far as it
    * got: each Cell still in flight is recorded as Interrupted — as one stopped
@@ -1055,6 +1079,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
 
     stop,
 
+    retargetText,
+
     subscribe(listener, since) {
       // Caught up and subscribed in one breath, with nothing emitted between:
       // an event that arrived meanwhile would be neither replayed nor heard.
@@ -1163,6 +1189,8 @@ export interface NotebookSessions {
    * busy with is left where it is.
    */
   rename(from: string, to: string): Promise<RenameResult>;
+  /** Renames a file that is not a Notebook, and points any open review at the new name. */
+  renameFile(from: string, to: string): Promise<RenamedFile>;
   /**
    * Sets the Notebook's model, or clears it. One a session holds is set there,
    * so a browser watching it is told; one that is only a file is written directly.
@@ -1339,6 +1367,19 @@ export async function createNotebookSessions(
       session.relocate(target, renamed.entry.path);
       byPath.delete(source);
       byPath.set(target, session);
+      return renamed;
+    },
+
+    async renameFile(from, to) {
+      const renamed = await renameFile(directory, from, to);
+      const source = fileWithin(directory, from);
+      const previous = source === undefined ? undefined : pathWithin(directory, source);
+      if (renamed.kind !== "renamed" || previous === undefined || previous === renamed.path) {
+        return renamed;
+      }
+      await Promise.all(
+        [...byId.values()].map((session) => session.retargetText(previous, renamed.path)),
+      );
       return renamed;
     },
 
