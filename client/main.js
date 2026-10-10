@@ -19,7 +19,9 @@
  *
  * Beside whichever is shown, the served directory is drawn as a tree of its
  * folders and the Notebooks in them, the one open marked, with a way to make
- * a new Notebook. A small arrow between the columns folds that column away
+ * a new Notebook. A small menu on the directory, on a folder, or on a file
+ * uploads into that folder, or edits, renames, downloads, or deletes a file.
+ * Upload never writes over a file already there. A small arrow between the columns folds that column away
  * and brings it back; the choice stays in this browser. A text or source file in that
  * tree — plain text, Markdown
  * that is not a Notebook, data such as CSV or JSON, or code such as Python,
@@ -522,6 +524,8 @@ function reveal(notebook) {
 /**
  * What one folder holds: its folders, then its files. A Notebook opens as a
  * Notebook. A text file opens in a subtab. Any other file is only listed.
+ * A small menu on a folder uploads into it. The same menu on a file edits it
+ * when it is text, renames it, downloads it, or deletes it.
  * @param {TreeNode[]} nodes
  * @returns {HTMLLIElement[]}
  */
@@ -542,7 +546,11 @@ function renderNodes(nodes) {
           ? [make("li", "tree-empty", "Empty")]
           : renderNodes(node.children)),
       );
-      details.append(make("summary", "", `${node.name}/`), contents);
+      const summary = document.createElement("summary");
+      const line = make("span", "tree-summary-line");
+      line.append(make("span", "tree-folder-name", `${node.name}/`), folderMenu(node.path));
+      summary.append(line);
+      details.append(summary, contents);
       item.append(details);
       return item;
     }
@@ -552,7 +560,7 @@ function renderNodes(nodes) {
       link.href = hashFor(node.path, "author");
       link.title = node.title;
       if (node.path === asked) link.setAttribute("aria-current", "page");
-      item.append(link);
+      item.append(treeRow(link, node.path, "notebook"));
       return item;
     }
     if (node.kind === "text") {
@@ -563,17 +571,315 @@ function renderNodes(nodes) {
       if (node.path === openPane) button.setAttribute("aria-current", "page");
       if (reviewsOf().some((review) => review.path === node.path)) button.classList.add("pending");
       button.addEventListener("click", () => openText(node.path));
-      item.append(button);
+      item.append(treeRow(button, node.path, "text"));
       return item;
     }
-    const item = make("li", "tree-file", node.name);
-    item.title = node.path;
+    const name = make("span", "tree-file-name", node.name);
+    name.title = node.path;
+    const item = make("li", "tree-file");
+    item.append(treeRow(name, node.path, "file"));
     return item;
   });
 }
 
+/**
+ * The name of one file, and the menu for it.
+ * @param {HTMLElement} name
+ * @param {string} path
+ * @param {"notebook" | "text" | "file"} kind
+ * @returns {HTMLDivElement}
+ */
+function treeRow(name, path, kind) {
+  const row = make("div", "tree-row");
+  row.append(name, fileMenu(path, kind));
+  return row;
+}
+
+/**
+ * One action in the directory menu.
+ * @typedef {{ label: string, run: () => void }} TreeAction
+ */
+
+/** The button whose menu is open, so opening it again closes it. */
+/** @type {HTMLButtonElement | null} */
+let menuOwner = null;
+
+/** Closes the directory menu, if one is open. */
+function closeTreeMenu() {
+  const menu = element("tree-menu");
+  menu.hidden = true;
+  menu.replaceChildren();
+  if (menuOwner !== null) menuOwner.setAttribute("aria-expanded", "false");
+  menuOwner = null;
+}
+
+/**
+ * Opens `actions` under `anchor`, or closes them when that menu is already open.
+ * @param {HTMLButtonElement} anchor
+ * @param {TreeAction[]} actions
+ */
+function openTreeMenu(anchor, actions) {
+  if (menuOwner === anchor) {
+    closeTreeMenu();
+    return;
+  }
+  closeTreeMenu();
+  const menu = element("tree-menu");
+  menu.replaceChildren(
+    ...actions.map((action) => {
+      const item = make("button", "tree-menu-item", action.label);
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeTreeMenu();
+        action.run();
+      });
+      return item;
+    }),
+  );
+  menu.hidden = false;
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  let left = rect.right - menuRect.width;
+  if (left < 8) left = 8;
+  let top = rect.bottom + 2;
+  if (top + menuRect.height > window.innerHeight - 8)
+    top = Math.max(8, rect.top - menuRect.height - 2);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  anchor.setAttribute("aria-expanded", "true");
+  menuOwner = anchor;
+}
+
+/**
+ * The small menu button for one directory entry.
+ * @param {string} label
+ * @param {TreeAction[]} actions
+ * @returns {HTMLButtonElement}
+ */
+function treeMenuButton(label, actions) {
+  const button = make("button", "tree-menu-button", "⋯");
+  button.type = "button";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openTreeMenu(button, actions);
+  });
+  return button;
+}
+
+/**
+ * Uploads into `folder`, from the menu on that folder.
+ * @param {string} folder
+ * @returns {HTMLButtonElement}
+ */
+function folderMenu(folder) {
+  return treeMenuButton(`Actions for ${folder}`, [
+    { label: "Upload", run: () => chooseUpload(folder) },
+  ]);
+}
+
+/**
+ * Edits, renames, downloads, or deletes the file at `path`. A file that is
+ * not text has no Edit: there is nothing to open as text.
+ * @param {string} path
+ * @param {"notebook" | "text" | "file"} kind
+ * @returns {HTMLButtonElement}
+ */
+function fileMenu(path, kind) {
+  /** @type {TreeAction[]} */
+  const actions = [];
+  if (kind !== "file") {
+    actions.push({ label: "Edit", run: () => editTreeFile(path, kind) });
+  }
+  actions.push(
+    { label: "Rename", run: () => void renameTreeFile(path, kind) },
+    { label: "Download", run: () => void downloadTreeFile(path) },
+    { label: "Delete", run: () => void deleteTreeFile(path) },
+  );
+  return treeMenuButton(path, actions);
+}
+
+/**
+ * Opens `path` for editing. A Notebook becomes the author form. A text file
+ * opens in its subtab with the editor focused.
+ * @param {string} path
+ * @param {"notebook" | "text"} kind
+ */
+function editTreeFile(path, kind) {
+  if (kind === "notebook") {
+    if (watching?.state.notebook === path && view === "author" && !element("session").hidden) {
+      openPane = "notebook";
+      if (draft === undefined) beginEditing();
+      else renderSession();
+      return;
+    }
+    editOnOpen = path;
+    const next = hashFor(path, "author");
+    if (location.hash !== next) location.hash = next;
+    else void showSession(path);
+    return;
+  }
+  editFileOnOpen = path;
+  openText(path);
+}
+
+/**
+ * Asks for a new name for `path`. A Notebook can move to another folder. Any
+ * other file stays in the folder it is already in.
+ * @param {string} path
+ * @param {"notebook" | "text" | "file"} kind
+ */
+function renameTreeFile(path, kind) {
+  if (kind === "notebook") void renameTreeNotebook(path);
+  else void renameOtherFile(path);
+}
+
+/** The folder the next chosen files are written into. Empty is the served directory itself. */
+let uploadInto = "";
+
+/**
+ * Asks for files to put in `folder`.
+ * @param {string} folder
+ */
+function chooseUpload(folder) {
+  uploadInto = folder;
+  const input = /** @type {HTMLInputElement} */ (element("tree-file-input"));
+  input.value = "";
+  input.click();
+}
+
+/**
+ * A name that can be joined onto a folder. A slash would name a different
+ * folder, which the file picker is not asked to choose.
+ * @param {string} folder
+ * @param {string} name
+ * @returns {string | undefined}
+ */
+function uploadPath(folder, name) {
+  if (name === "" || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
+    return undefined;
+  }
+  return folder === "" ? name : `${folder}/${name}`;
+}
+
+/**
+ * Puts `files` into `folder`. One that is already there is left as it is, and
+ * the column says which. The directory is listed again afterwards.
+ * @param {string} folder
+ * @param {File[]} files
+ */
+async function uploadTreeFiles(folder, files) {
+  const status = element("tree-status");
+  /** @type {string[]} */
+  const problems = [];
+  let saved = 0;
+  for (const file of files) {
+    const path = uploadPath(folder, file.name);
+    if (path === undefined) {
+      problems.push(`${file.name === "" ? "A file" : file.name} is not a file name.`);
+      continue;
+    }
+    try {
+      const response = await request(`/api/files?path=${encodeURIComponent(path)}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: file,
+      });
+      if (!response.ok) {
+        const message = (await response.text()).trim() || `The server answered ${response.status}`;
+        problems.push(message);
+        continue;
+      }
+      saved += 1;
+    } catch (cause) {
+      problems.push(`${file.name}: ${describe(cause)}`);
+    }
+  }
+  const listedAgain = await refreshTree();
+  if (!element("list").hidden) await refreshOpenList();
+  if (!listedAgain) return;
+  const savedText = saved === 1 ? "Uploaded 1 file." : `Uploaded ${saved} files.`;
+  status.textContent = problems.length === 0 ? savedText : `${savedText} ${problems.join(" ")}`;
+}
+
+/**
+ * The notebook list, when it is what is open, so a notebook just uploaded
+ * appears there too. An open notebook is left as it is.
+ */
+async function refreshOpenList() {
+  try {
+    const found = await fetchNotebooks();
+    element("notebooks").replaceChildren(...found.notebooks.map(renderEntry));
+    const listStatus = element("status");
+    if (found.notebooks.length > 0 && listStatus.textContent.startsWith("No notebooks")) {
+      listStatus.textContent = "";
+    }
+  } catch (cause) {
+    element("status").textContent = `Could not list the notebooks: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Saves the file at `path`. The server sends it as a download, never as a
+ * page, so a file written in the directory cannot run in this origin.
+ * @param {string} path
+ */
+async function downloadTreeFile(path) {
+  const status = element("tree-status");
+  try {
+    const response = await request(`/api/files?path=${encodeURIComponent(path)}`);
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    saveDownload(
+      await response.blob(),
+      filenameOf(response) ?? path.split("/").pop() ?? "download",
+    );
+    status.textContent = "";
+  } catch (cause) {
+    status.textContent = `Could not download: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Removes the file at `path`, after a confirmation. An open notebook is left,
+ * and a subtab of the file is closed. A notebook that is running is refused.
+ * @param {string} path
+ */
+async function deleteTreeFile(path) {
+  const name = path.split("/").pop() ?? path;
+  if (!window.confirm(`Delete “${name}”? The file is removed.`)) return;
+  const status = element("tree-status");
+  const opened = watching?.state.notebook === path;
+  try {
+    const response = await request(`/api/files?path=${encodeURIComponent(path)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    if (textTabs.includes(path)) closeText(path);
+    if (opened) location.hash = "";
+    else {
+      const listedAgain = await refreshTree();
+      if (!element("list").hidden) await refreshOpenList();
+      if (listedAgain) status.textContent = `Deleted ${name}.`;
+    }
+  } catch (cause) {
+    status.textContent = `Could not delete: ${describe(cause)}`;
+  }
+}
+
 /** @param {FileTree} found */
 function drawTree(found) {
+  closeTreeMenu();
   listed = notebooksIn(found.entries);
   if (asked !== "" && asked !== revealed) {
     reveal(asked);
@@ -630,12 +936,17 @@ function setFoldersHidden(hidden) {
   applyFoldersHidden(hidden);
 }
 
-/** Lists the directory again for the sidebar, as a folder may have gained a file since. */
+/**
+ * Lists the directory again for the sidebar, as a folder may have gained a file since.
+ * @returns {Promise<boolean>} whether the directory was listed
+ */
 async function refreshTree() {
   try {
     drawTree(await fetchTree());
+    return true;
   } catch (cause) {
     element("tree-status").textContent = `Could not list the directory: ${describe(cause)}`;
+    return false;
   }
 }
 
@@ -739,16 +1050,28 @@ async function renameOtherFile(from) {
  */
 async function renameNotebook() {
   if (watching === undefined) return;
-  const current = watching.state.notebook;
-  const given = window.prompt("Rename this notebook to:", current)?.trim();
-  if (given === undefined || given === "" || given === current) return;
+  await renameTreeNotebook(watching.state.notebook);
+}
+
+/**
+ * Gives the Notebook at `path` a new filename. The open session follows the
+ * file when it is that Notebook. `.md` is added when it is left off, and a
+ * path such as `notes/audit.md` moves it into that folder.
+ * @param {string} path
+ */
+async function renameTreeNotebook(path) {
+  const given = window.prompt("Rename this notebook to:", path)?.trim();
+  if (given === undefined || given === "" || given === path) return;
   const to = given.endsWith(".md") ? given : `${given}.md`;
-  const status = element("session-status");
+  const status =
+    watching?.state.notebook === path && !element("session").hidden
+      ? element("session-status")
+      : element("tree-status");
   try {
     const made = /** @type {NotebookEntry} */ (
-      await (await post("/api/notebooks/rename", { from: current, to })).json()
+      await (await post("/api/notebooks/rename", { from: path, to })).json()
     );
-    if (watching?.state.notebook === current) {
+    if (watching?.state.notebook === path) {
       watching.state.notebook = made.path;
       watching.state.title = made.title;
       const next = hashFor(made.path, view);
@@ -757,6 +1080,7 @@ async function renameNotebook() {
     }
     status.textContent = "";
     await refreshTree();
+    if (!element("list").hidden) await refreshOpenList();
   } catch (cause) {
     status.textContent = `Could not rename: ${describe(cause)}`;
   }
@@ -768,6 +1092,13 @@ async function renameNotebook() {
  * @type {string | undefined}
  */
 let editOnOpen;
+
+/**
+ * The text file to begin editing once it has loaded: one chosen from the
+ * directory menu, whose text is not on the page yet.
+ * @type {string | undefined}
+ */
+let editFileOnOpen;
 
 /** A name for a new Notebook that none of those listed has. */
 function untitledName() {
@@ -2085,6 +2416,7 @@ function renderSubtabs() {
  * @param {string} path
  */
 function openText(path) {
+  if (editFileOnOpen !== undefined && editFileOnOpen !== path) editFileOnOpen = undefined;
   if (!textTabs.includes(path)) textTabs.push(path);
   openPane = path;
   if (watching === undefined) {
@@ -2342,6 +2674,10 @@ async function saveFileEdit() {
 async function showFile(path) {
   if (fileDrafts.has(path)) {
     presentFileEditor(path);
+    if (editFileOnOpen === path) {
+      editFileOnOpen = undefined;
+      fileEditor().focus();
+    }
     return;
   }
   const load = ++fileLoad;
@@ -2363,6 +2699,7 @@ async function showFile(path) {
     const response = await request(`/api/text?${new URLSearchParams({ path })}`);
     if (load !== fileLoad || openPane !== path || fileDrafts.has(path)) return;
     if (!response.ok) {
+      if (editFileOnOpen === path) editFileOnOpen = undefined;
       element("file-body").replaceChildren();
       element("file-edit").hidden = true;
       status.textContent =
@@ -2373,10 +2710,16 @@ async function showFile(path) {
     if (load !== fileLoad || openPane !== path || fileDrafts.has(path)) return;
     fileSource = body.text;
     status.textContent = "";
+    if (editFileOnOpen === path) {
+      editFileOnOpen = undefined;
+      beginFileEdit();
+      return;
+    }
     showFileChrome(path, false, review);
     renderFileBody(body.text, review);
   } catch (cause) {
     if (load !== fileLoad) return;
+    if (editFileOnOpen === path) editFileOnOpen = undefined;
     element("file-edit").hidden = true;
     status.textContent = describe(cause);
   }
@@ -3691,6 +4034,23 @@ function filenameOf(response) {
 }
 
 /**
+ * Offers `blob` as a file the browser saves under `filename`.
+ * @param {Blob} blob
+ * @param {string} filename
+ */
+function saveDownload(blob, filename) {
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Not at once: some browsers are still reading the blob when `click` returns.
+  setTimeout(() => URL.revokeObjectURL(href), 60_000);
+}
+
+/**
  * Downloads the Export of the Notebook and its latest finished Run, the same
  * document `octo export` writes. A Notebook that has never been run has
  * nothing to export, and the server says so.
@@ -3704,15 +4064,7 @@ async function exportRun() {
     if (!response.ok) {
       throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
     }
-    const href = URL.createObjectURL(await response.blob());
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = filenameOf(response) ?? "notebook.html";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    // Not at once: some browsers are still reading the blob when `click` returns.
-    setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    saveDownload(await response.blob(), filenameOf(response) ?? "notebook.html");
     status.textContent = "";
   } catch (cause) {
     status.textContent = `Could not export: ${describe(cause)}`;
@@ -4168,6 +4520,10 @@ async function showSession(notebook) {
   if (watching?.state.notebook === notebook) {
     status.textContent = "";
     renderSession();
+    if (editing) {
+      beginEditing();
+      focusSegment(0);
+    }
     return;
   }
   watching?.socket.close();
@@ -5084,6 +5440,32 @@ element("add-bash").addEventListener("click", () => addCell("bash"));
 applyFoldersHidden(storedFoldersHidden());
 element("sidebar-toggle").addEventListener("click", () => {
   setFoldersHidden(!element("workspace").classList.contains("folders-hidden"));
+});
+element("tree-upload").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  openTreeMenu(/** @type {HTMLButtonElement} */ (element("tree-upload")), [
+    { label: "Upload", run: () => chooseUpload("") },
+  ]);
+});
+element("sidebar").addEventListener("scroll", closeTreeMenu);
+document.addEventListener("click", (event) => {
+  const menu = element("tree-menu");
+  if (menu.hidden) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (menu.contains(target) || (menuOwner !== null && menuOwner.contains(target))) return;
+  closeTreeMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeTreeMenu();
+});
+element("tree-file-input").addEventListener("change", () => {
+  const input = /** @type {HTMLInputElement} */ (element("tree-file-input"));
+  const files = [...(input.files ?? [])];
+  input.value = "";
+  if (files.length === 0) return;
+  void uploadTreeFiles(uploadInto, files);
 });
 element("tree-new").addEventListener("click", () => {
   const status = !element("list").hidden

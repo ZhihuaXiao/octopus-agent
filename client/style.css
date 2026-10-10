@@ -78,10 +78,8 @@ body {
   grid-column: 1;
 }
 
-.sidebar-header button {
+.sidebar-header .tree-menu-button {
   flex: none;
-  font-size: 0.8rem;
-  padding: 0.1rem 0.6rem;
 }
 
 .tree-root {
@@ -112,11 +110,26 @@ body {
 .tree summary {
   cursor: pointer;
   padding: 0.15rem 0;
-  font-family: ui-monospace, monospace;
-  opacity: 0.8;
 }
 
-.tree-notebook {
+/* A flex row inside the summary, not on it: a summary set to flex no longer hides its folder. */
+.tree-summary-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  width: calc(100% - 1.25rem);
+  vertical-align: bottom;
+}
+
+.tree-folder-name {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.tree-row {
   display: flex;
   align-items: baseline;
   gap: 0.25rem;
@@ -143,16 +156,73 @@ body {
   font-weight: 600;
 }
 
-.tree-file,
+.tree-file-name,
 .tree-empty {
   padding: 0.15rem 0.4rem;
   font-family: ui-monospace, monospace;
   opacity: 0.55;
 }
 
+.tree-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .tree-empty {
   font-family: inherit;
   font-style: italic;
+}
+
+.tree-menu-button {
+  flex: none;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 0.3rem;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.tree-row:hover .tree-menu-button,
+.tree-summary-line:hover .tree-menu-button,
+.tree-menu-button:hover,
+.tree-menu-button:focus,
+.tree-menu-button[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.tree-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 7rem;
+  margin: 0;
+  padding: 0.2rem;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 0.35rem 0.8rem color-mix(in srgb, black 18%, transparent);
+}
+
+.tree-menu-item {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.2rem 0.55rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  text-align: left;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.tree-menu-item:hover,
+.tree-menu-item:focus {
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 @media (max-width: 50rem) {
@@ -328,6 +398,12 @@ header #tree-new {
   font: inherit;
   line-height: 1;
   opacity: 0.7;
+}
+
+.tree-row > .tree-open {
+  flex: 1;
+  width: auto;
+  min-width: 0;
 }
 
 .tree-open {

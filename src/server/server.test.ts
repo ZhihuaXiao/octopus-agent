@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, request } from "node:http";
 import { createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
 import { hashPassword } from "./password.js";
+import { LONGEST_UPLOAD } from "./notebooks.js";
 import { type RunningServer, type ServerOptions, startServer } from "./server.js";
 
 const running: RunningServer[] = [];
@@ -3165,6 +3166,248 @@ describe("renaming a file that is not a notebook", () => {
     });
     expect(rejected.status).toBe(200);
     expect(await readFile(join(server.directory, "copy.txt"), "utf8")).toBe("before\n");
+    await browser.close();
+  });
+});
+
+/** Uploads `body` as the file `path`, the way the directory column does. */
+const upload = (server: RunningServer, path: string, body: string | Uint8Array) =>
+  get(server, `/api/files?path=${encodeURIComponent(path)}`, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body,
+  });
+
+/** Downloads the file `path`, the way the directory column does. */
+const download = (server: RunningServer, path: string) =>
+  get(server, `/api/files?path=${encodeURIComponent(path)}`);
+
+/** Deletes the file `path`, the way the directory column does. */
+const removeFile = (server: RunningServer, path: string) =>
+  get(server, `/api/files?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+
+describe("uploading and downloading a file", () => {
+  it("writes a file, including one in a new folder, and downloads those bytes", async () => {
+    const server = await serve();
+    const bytes = new Uint8Array([0, 255, 10, 0, 13]);
+
+    const created = await upload(server, "notes/picture.bin", bytes);
+    const empty = await upload(server, "notes/empty.txt", "");
+
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({ path: "notes/picture.bin" });
+    expect(empty.status).toBe(201);
+    expect(
+      Buffer.from(await readFile(join(server.directory, "notes/picture.bin"))).equals(
+        Buffer.from(bytes),
+      ),
+    ).toBe(true);
+    expect(await readFile(join(server.directory, "notes/empty.txt"), "utf8")).toBe("");
+
+    const response = await download(server, "notes/picture.bin");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="picture.bin"; filename*=UTF-8''picture.bin`,
+    );
+    expect(Buffer.from(await response.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true);
+
+    const head = await get(server, `/api/files?path=${encodeURIComponent("notes/picture.bin")}`, {
+      method: "HEAD",
+    });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-disposition")).toContain("picture.bin");
+    expect(await head.text()).toBe("");
+  });
+
+  it("offers a download under a name a header cannot carry as written, and never as a page", async () => {
+    const server = await serve({ "page.html": "<script>alert(1)</script>", "页面.txt": "你好\n" });
+
+    const page = await download(server, "page.html");
+    expect(page.headers.get("content-type")).toBe("application/octet-stream");
+    expect(page.headers.get("content-disposition")).toBe(
+      `attachment; filename="page.html"; filename*=UTF-8''page.html`,
+    );
+    expect(await page.text()).toBe("<script>alert(1)</script>");
+
+    const named = await download(server, "页面.txt");
+    expect(named.headers.get("content-disposition")).toBe(
+      `attachment; filename="__.txt"; filename*=UTF-8''${encodeURIComponent("页面.txt")}`,
+    );
+    expect(await named.text()).toBe("你好\n");
+  });
+
+  it("lists an uploaded notebook, text file, and other file in the directory", async () => {
+    const server = await serve();
+
+    expect((await upload(server, "made.md", hello)).status).toBe(201);
+    expect((await upload(server, "note.txt", "hello\n")).status).toBe(201);
+    expect((await upload(server, "picture.bin", "xyz")).status).toBe(201);
+
+    const tree = (await (await get(server, "/api/tree")).json()) as {
+      entries: { kind: string; path: string }[];
+    };
+    expect(tree.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "notebook", path: "made.md" }),
+        expect.objectContaining({ kind: "text", path: "note.txt" }),
+        expect.objectContaining({ kind: "file", path: "picture.bin" }),
+      ]),
+    );
+  });
+
+  it("never writes over a file, and refuses a name the directory column does not show", async () => {
+    const server = await serve({
+      "note.txt": "keep\n",
+      "node_modules/pkg/index.js": "module.exports = {}\n",
+    });
+    const uploadTo = (path: string, body = "nope\n") => upload(server, path, body);
+    const planted = `planted-${process.pid}.txt`;
+
+    expect((await uploadTo("note.txt")).status).toBe(409);
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("keep\n");
+    expect((await uploadTo("note.txt/child.txt")).status).toBe(400);
+    expect((await uploadTo("../" + planted)).status).toBe(400);
+    expect((await uploadTo(".env", "KEY=1\n")).status).toBe(400);
+    expect((await uploadTo(".secret/note.txt")).status).toBe(400);
+    expect((await uploadTo("node_modules/pkg/extra.js")).status).toBe(400);
+    expect((await uploadTo("a\0.txt")).status).toBe(400);
+    expect((await get(server, "/api/files")).status).toBe(400);
+    expect((await upload(server, "", "x")).status).toBe(400);
+
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("keep\n");
+    await expect(readFile(join(dirname(server.directory), planted))).rejects.toThrow();
+    await expect(readFile(join(server.directory, ".env"))).rejects.toThrow();
+    await expect(readFile(join(server.directory, "node_modules/pkg/extra.js"))).rejects.toThrow();
+    expect((await download(server, "note.txt")).status).toBe(200);
+    expect((await download(server, "missing.txt")).status).toBe(404);
+    expect((await download(server, "../note.txt")).status).toBe(400);
+    expect((await download(server, ".env")).status).toBe(400);
+    expect((await download(server, "node_modules/pkg/index.js")).status).toBe(400);
+    await mkdir(join(server.directory, "notes"));
+    expect((await download(server, "notes")).status).toBe(404);
+  });
+
+  it("follows no link, out of the directory or to a file inside it", async () => {
+    const server = await serve({ "note.txt": "hello\n" });
+    const outside = await mkdtemp(join(tmpdir(), "octo-outside-"));
+    try {
+      await writeFile(join(outside, "secret.txt"), "secret\n");
+      await symlink(outside, join(server.directory, "linked"));
+      await symlink(join(outside, "secret.txt"), join(server.directory, "secret.txt"));
+      await symlink(join(server.directory, "note.txt"), join(server.directory, "alias.txt"));
+
+      expect((await download(server, "secret.txt")).status).toBe(404);
+      expect((await download(server, "linked/secret.txt")).status).toBe(404);
+      expect((await download(server, "alias.txt")).status).toBe(404);
+
+      expect((await upload(server, "linked/planted.txt", "planted\n")).status).toBe(400);
+      expect((await upload(server, "alias.txt", "replaced\n")).status).toBe(409);
+      expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("hello\n");
+      await expect(readFile(join(outside, "planted.txt"))).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a file larger than the upload allows, and takes one at the limit", async () => {
+    const server = await serve();
+
+    const tooBig = await upload(server, "big.bin", new Uint8Array(LONGEST_UPLOAD + 1));
+    expect(tooBig.status).toBe(413);
+    await expect(readFile(join(server.directory, "big.bin"))).rejects.toThrow();
+
+    const fits = await upload(server, "fits.bin", new Uint8Array(LONGEST_UPLOAD));
+    expect(fits.status).toBe(201);
+    expect((await readFile(join(server.directory, "fits.bin"))).length).toBe(LONGEST_UPLOAD);
+  });
+
+  it("is read or written, and only with a connection", async () => {
+    const server = await serve({ "note.txt": "hello\n" });
+
+    expect((await fetch(new URL("/api/files?path=note.txt", server.url))).status).toBe(401);
+    const replaced = await fetch(new URL("/api/files?path=note.txt", server.url), {
+      method: "PUT",
+      headers: authorized(server),
+    });
+    expect(replaced.status).toBe(405);
+    expect(replaced.headers.get("allow")).toBe("GET, HEAD, POST, DELETE");
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("hello\n");
+  });
+
+  it("deletes a file, and a notebook that was open can no longer be opened", async () => {
+    const server = await serve({
+      "hello.md": hello,
+      "note.txt": "hello\n",
+      "notes/data.csv": "a,b\n",
+    });
+    await open(server, "hello.md");
+
+    expect((await removeFile(server, "note.txt")).status).toBe(204);
+    expect((await removeFile(server, "notes/data.csv")).status).toBe(204);
+    expect((await removeFile(server, "hello.md")).status).toBe(204);
+
+    await expect(readFile(join(server.directory, "note.txt"))).rejects.toThrow();
+    await expect(readFile(join(server.directory, "notes/data.csv"))).rejects.toThrow();
+    await expect(readFile(join(server.directory, "hello.md"))).rejects.toThrow();
+    expect((await post(server, "/api/sessions", { notebook: "hello.md" })).status).toBe(404);
+    expect((await removeFile(server, "note.txt")).status).toBe(404);
+    expect((await removeFile(server, "notes")).status).toBe(404);
+  });
+
+  it("does not delete through a link, or outside the directory", async () => {
+    const server = await serve({ "note.txt": "hello\n" });
+    const outside = await mkdtemp(join(tmpdir(), "octo-outside-"));
+    try {
+      await writeFile(join(outside, "secret.txt"), "secret\n");
+      await symlink(outside, join(server.directory, "linked"));
+      await symlink(join(server.directory, "note.txt"), join(server.directory, "alias.txt"));
+
+      expect((await removeFile(server, "alias.txt")).status).toBe(404);
+      expect((await removeFile(server, "linked/secret.txt")).status).toBe(404);
+      expect((await removeFile(server, "../note.txt")).status).toBe(400);
+      expect((await removeFile(server, ".env")).status).toBe(400);
+      expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe("hello\n");
+      expect(await readFile(join(outside, "secret.txt"), "utf8")).toBe("secret\n");
+      expect((await lstat(join(server.directory, "alias.txt"))).isSymbolicLink()).toBe(true);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a notebook that is running", async () => {
+    const server = await serve({ "essay.md": essay }, createScriptedAgent([{ hangs: true }]));
+    const session = await open(server, "essay.md");
+    expect(await run(server, session.id)).toBe(202);
+    for (;;) {
+      if ((await stateOf(server, session.id)).running) break;
+      await new Promise((tick) => setTimeout(tick, 20));
+    }
+
+    const response = await removeFile(server, "essay.md");
+
+    expect(response.status).toBe(409);
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+  });
+
+  it("drops the review of a file it deletes", async () => {
+    const server = await serve({
+      "write.md": "```bash id=write\nprintf 'after\\n' > note.txt\n```\n",
+      "note.txt": "before\n",
+    });
+    const session = await open(server, "write.md");
+    const browser = await watch(server, session.id);
+    expect(await run(server, session.id)).toBe(202);
+    await browser.next("run-ended");
+    expect((await stateOf(server, session.id)).reviews).toEqual([
+      { path: "note.txt", kind: "modified", before: "before\n" },
+    ]);
+
+    expect((await removeFile(server, "note.txt")).status).toBe(204);
+
+    expect((await stateOf(server, session.id)).reviews).toBeUndefined();
+    await expect(readFile(join(server.directory, "note.txt"))).rejects.toThrow();
     await browser.close();
   });
 });

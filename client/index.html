@@ -34,9 +34,22 @@
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
           <h2 id="tree-root" class="tree-root"></h2>
+          <button
+            id="tree-upload"
+            class="tree-menu-button"
+            type="button"
+            title="Directory actions"
+            aria-label="Directory actions"
+            aria-haspopup="menu"
+            aria-expanded="false"
+          >
+            ⋯
+          </button>
         </div>
         <p id="tree-status" class="status"></p>
         <ul id="tree" class="tree"></ul>
+        <div id="tree-menu" class="tree-menu" role="menu" hidden></div>
+        <input id="tree-file-input" type="file" multiple hidden />
       </aside>
       <button
         id="sidebar-toggle"

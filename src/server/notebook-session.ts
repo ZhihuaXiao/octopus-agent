@@ -306,6 +306,12 @@ export interface NotebookSession {
    */
   retargetText(from: string, to: string): Promise<void>;
   /**
+   * The file at `name` is gone. A review of it is dropped, and so are the
+   * bytes a later comparison held for it: there is nothing left to accept
+   * or reject.
+   */
+  forgetText(name: string): Promise<void>;
+  /**
    * Hears every event from now on, and first whatever it has to catch up on:
    * given `since` — the number of the last event the listener heard — every
    * event after it, in order, so that a browser coming back is told what
@@ -838,6 +844,15 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       if (review !== undefined) observe({ type: "text-changed", reviews: listedReviews() });
     });
 
+  const forgetText = (name: string): Promise<void> =>
+    withReviews(async () => {
+      const review = reviews.get(name);
+      baseline?.delete(name);
+      if (review === undefined) return;
+      reviews.delete(name);
+      observe({ type: "text-changed", reviews: listedReviews() });
+    });
+
   /**
    * Ends a Run the server before this one died in the middle of, as far as it
    * got: each Cell still in flight is recorded as Interrupted — as one stopped
@@ -1080,6 +1095,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     stop,
 
     retargetText,
+    forgetText,
 
     subscribe(listener, since) {
       // Caught up and subscribed in one breath, with nothing emitted between:
@@ -1191,6 +1207,11 @@ export interface NotebookSessions {
   rename(from: string, to: string): Promise<RenameResult>;
   /** Renames a file that is not a Notebook, and points any open review at the new name. */
   renameFile(from: string, to: string): Promise<RenamedFile>;
+  /**
+   * The file at `name` has been removed. A review of it is dropped. A session
+   * that held that Notebook, and is not running, no longer answers for the path.
+   */
+  dropFile(name: string): Promise<void>;
   /**
    * Sets the Notebook's model, or clears it. One a session holds is set there,
    * so a browser watching it is told; one that is only a file is written directly.
@@ -1381,6 +1402,17 @@ export async function createNotebookSessions(
         [...byId.values()].map((session) => session.retargetText(previous, renamed.path)),
       );
       return renamed;
+    },
+
+    async dropFile(name) {
+      const file = fileWithin(directory, name);
+      const path = file === undefined ? undefined : pathWithin(directory, file);
+      if (file !== undefined) {
+        const session = byPath.get(file);
+        if (session !== undefined && !session.state().running) byPath.delete(file);
+      }
+      if (path === undefined) return;
+      await Promise.all([...byId.values()].map((session) => session.forgetText(path)));
     },
 
     get: (id) => byId.get(id),

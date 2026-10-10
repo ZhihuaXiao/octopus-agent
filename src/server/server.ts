@@ -10,7 +10,9 @@
  * the browser over a WebSocket; what a Run leaves — its Artifacts, its record
  * — is served from under the Run's directory, so the browser can show a file
  * where the record names it. An Export is the Notebook and a Run as one
- * document to download and send on. A save writes the Notebook's file, and only
+ * document to download and send on. A file the directory column lists can be
+ * downloaded, and a file can be uploaded into a folder that column shows,
+ * never over one already there. A save writes the Notebook's file, and only
  * the bytes the edit changed, so a diff of the file shows what the author did
  * and no more.
  * Loopback unless told otherwise, because starting it must never expose the
@@ -65,6 +67,10 @@ import {
   fileWithin,
   listNotebooks,
   listTree,
+  LONGEST_UPLOAD,
+  readWorkspaceFile,
+  removeWorkspaceFile,
+  storeWorkspaceFile,
 } from "./notebooks.js";
 import { readTextFile, writeTextFile } from "./text-files.js";
 import { listInstalledSkills } from "./skills.js";
@@ -108,6 +114,8 @@ const SKILLS_ROUTE = "/api/skills";
 const RENAME_ROUTE = "/api/notebooks/rename";
 /** A file that is not a Notebook, renamed in place. */
 const FILE_RENAME_ROUTE = "/api/files/rename";
+/** A file under the served directory: downloaded, or uploaded into a folder. */
+const FILES_ROUTE = "/api/files";
 /** A new Notebook that keeps another through one Cell and drops what follows. */
 const BRANCH_ROUTE = "/api/notebooks/branch";
 /** The model a Notebook names, chosen from the models the user can already call. */
@@ -336,6 +344,117 @@ async function saveText(
       return;
     case "invalid":
       reply(response, 400, "That is not a text file under this directory.\n");
+      return;
+  }
+}
+
+/**
+ * One file the directory column lists: downloaded, uploaded into a folder, or
+ * deleted. A download is never a page: the file shares an origin with the
+ * client, and a page served as one could read whatever the client holds.
+ */
+async function serveWorkspaceFile(
+  served: Served,
+  searchParams: URLSearchParams,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const name = searchParams.get("path");
+  if (name === null || name === "") {
+    reply(response, 400, "The request must name a file under this directory.\n");
+    return;
+  }
+  if (request.method === "DELETE") {
+    await deleteWorkspaceFile(served, name, response);
+    return;
+  }
+  if (WRITES.includes(request.method ?? "")) {
+    await uploadWorkspaceFile(served.directory, name, request, response);
+    return;
+  }
+  await downloadWorkspaceFile(served.directory, name, response);
+}
+
+/**
+ * Removes the file `name` names. A Notebook a Run is busy with is left until
+ * that Run stops. A review of the file is dropped, and a session that held
+ * the Notebook no longer answers for that path.
+ */
+async function deleteWorkspaceFile(
+  served: Served,
+  name: string,
+  response: ServerResponse,
+): Promise<void> {
+  if (served.sessions.held(name)?.state().running) {
+    reply(response, 409, "This notebook is running; interrupt it or wait, then delete it.\n");
+    return;
+  }
+  const removed = await removeWorkspaceFile(served.directory, name);
+  switch (removed.kind) {
+    case "removed":
+      await served.sessions.dropFile(removed.path);
+      response.writeHead(204);
+      response.end();
+      return;
+    case "absent":
+      notFound(response);
+      return;
+    case "invalid":
+      reply(response, 400, `${removed.problem}\n`);
+      return;
+  }
+}
+
+/** The file `name` names, offered for download under its own name. */
+async function downloadWorkspaceFile(
+  directory: string,
+  name: string,
+  response: ServerResponse,
+): Promise<void> {
+  const read = await readWorkspaceFile(directory, name);
+  switch (read.kind) {
+    case "invalid":
+      reply(response, 400, "That is not a file under this directory.\n");
+      return;
+    case "absent":
+      notFound(response);
+      return;
+    case "file":
+      response.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "x-content-type-options": "nosniff",
+        "content-disposition": attachment(read.name),
+      });
+      response.end(read.bytes);
+      return;
+  }
+}
+
+/** Writes the body to `name`, when that name is a file the column could list. */
+async function uploadWorkspaceFile(
+  directory: string,
+  name: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const bytes = await readLimited(request, LONGEST_UPLOAD);
+  if (bytes === undefined) {
+    reply(response, 413, "That file is too large to upload here.\n");
+    return;
+  }
+  const stored = await storeWorkspaceFile(directory, name, bytes);
+  switch (stored.kind) {
+    case "saved":
+      json(response, 201, { path: stored.path });
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file named ${stored.path}.\n`);
+      return;
+    case "too-large":
+      reply(response, 413, "That file is too large to upload here.\n");
+      return;
+    case "invalid":
+      reply(response, 400, `${stored.problem}\n`);
       return;
   }
 }
@@ -1066,6 +1185,23 @@ async function removeChat(
   }
 }
 
+/**
+ * The body, or nothing when it is longer than `longest`. Either way the body
+ * is read to the end, so the connection is not left waiting on the rest.
+ */
+async function readLimited(request: IncomingMessage, longest: number): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  let over = false;
+  for await (const chunk of request) {
+    const buffer = chunk as Buffer;
+    length += buffer.length;
+    if (over || length > longest) over = true;
+    else chunks.push(buffer);
+  }
+  return over ? undefined : Buffer.concat(chunks);
+}
+
 /** A request's body read as JSON, or nothing when it is not JSON. Too long a body is a mistake too. */
 async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -1668,6 +1804,12 @@ async function handle(
   if (pathname === MODELS_TEST_ROUTE) {
     if (permitted(WRITES, request, response)) {
       await testModel(served.agentDirectory, request, response);
+    }
+    return;
+  }
+  if (pathname === FILES_ROUTE) {
+    if (permitted([...READS, ...WRITES, "DELETE"], request, response)) {
+      await serveWorkspaceFile(served, searchParams, request, response);
     }
     return;
   }

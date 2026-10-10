@@ -8,7 +8,8 @@
  * done with it here: the browser edits what parses, so a file broken in
  * another editor is fixed there. Copying a Notebook, branching one through a
  * Cell, and making a new one live here too, being a matter of the files under
- * the directory rather than of any session.
+ * the directory rather than of any session. So does a file the sidebar
+ * uploads or downloads: it has to be a real file the tree could list.
  */
 
 import { constants } from "node:fs";
@@ -16,9 +17,11 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -532,6 +535,227 @@ export async function renameFile(
     throw cause;
   }
   return { kind: "renamed", path };
+}
+
+/**
+ * As much as one upload may write. Larger than a text file the notebook opens,
+ * so a picture or a data file still fits, and small enough that one request
+ * cannot fill the disk by accident.
+ */
+export const LONGEST_UPLOAD = 8 * 1024 * 1024;
+
+/** How reading a file the sidebar lists went. */
+export type WorkspaceRead =
+  | { readonly kind: "file"; readonly path: string; readonly name: string; readonly bytes: Buffer }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid" };
+
+/** How writing an uploaded file went. */
+export type WorkspaceStored =
+  | { readonly kind: "saved"; readonly path: string }
+  | { readonly kind: "exists"; readonly path: string }
+  | { readonly kind: "invalid"; readonly problem: string }
+  | { readonly kind: "too-large" };
+
+/**
+ * A path the sidebar could show: under the served directory, and not in a
+ * directory the tree skips. Nothing when it climbs out, names a hidden path,
+ * or is not a path at all.
+ */
+function visibleFile(directory: string, name: string): string | undefined {
+  const file = fileWithin(directory, name);
+  if (file === undefined) return undefined;
+  const path = pathWithin(directory, file);
+  return isHiddenPath(path) ? undefined : file;
+}
+
+/**
+ * Whether `file` is a real file reached without following a link. A link at
+ * the file, or anywhere along the path, is absent: following it could read
+ * something outside the served directory.
+ */
+async function walkFile(directory: string, file: string): Promise<"file" | "absent"> {
+  const parts = pathWithin(directory, file).split("/");
+  if (parts.length === 0 || parts.some((part) => part === "")) return "absent";
+  let current = directory;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === undefined) return "absent";
+    current = join(current, part);
+    let info;
+    try {
+      info = await lstat(current);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return "absent";
+      throw cause;
+    }
+    if (info.isSymbolicLink()) return "absent";
+    const last = index === parts.length - 1;
+    if (last ? !info.isFile() : !info.isDirectory()) return "absent";
+  }
+  return "file";
+}
+
+const outside = (directory: string): WorkspaceStored => ({
+  kind: "invalid",
+  problem: `The file must be under ${directory}.`,
+});
+
+/**
+ * Makes each missing parent of `file` as a real directory, and reports when
+ * the file itself is already there. A link is not followed and not replaced:
+ * one along the path can point outside the directory, and one at the file is
+ * something already there.
+ */
+async function prepareUpload(
+  directory: string,
+  file: string,
+): Promise<"ready" | "exists" | "invalid"> {
+  const parts = pathWithin(directory, file).split("/");
+  if (parts.length === 0 || parts.some((part) => part === "")) return "invalid";
+  let current = directory;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === undefined) return "invalid";
+    current = join(current, part);
+    const last = index === parts.length - 1;
+    let info;
+    try {
+      info = await lstat(current);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOTDIR") return "invalid";
+      if (code !== "ENOENT") throw cause;
+      if (last) return "ready";
+      try {
+        await mkdir(current);
+      } catch (made) {
+        const madeCode = (made as NodeJS.ErrnoException).code;
+        if (madeCode === "ENOTDIR" || madeCode === "EISDIR") return "invalid";
+        if (madeCode !== "EEXIST") throw made;
+        const again = await lstat(current).catch(() => undefined);
+        if (again === undefined || again.isSymbolicLink() || !again.isDirectory()) return "invalid";
+      }
+      continue;
+    }
+    if (info.isSymbolicLink()) return last ? "exists" : "invalid";
+    if (!last) {
+      if (!info.isDirectory()) return "invalid";
+      continue;
+    }
+    return "exists";
+  }
+  return "invalid";
+}
+
+/**
+ * The file `name` names under `directory`, when the sidebar could list it.
+ * Read without following a link, so a link out of the directory is not a way
+ * to fetch what it points at.
+ */
+export async function readWorkspaceFile(directory: string, name: string): Promise<WorkspaceRead> {
+  const file = visibleFile(directory, name);
+  if (file === undefined) return { kind: "invalid" };
+  if ((await walkFile(directory, file)) !== "file") return { kind: "absent" };
+
+  let handle;
+  try {
+    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR" || code === "ELOOP") {
+      return { kind: "absent" };
+    }
+    throw cause;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) return { kind: "absent" };
+    const path = pathWithin(directory, file);
+    return {
+      kind: "file",
+      path,
+      name: path.split("/").pop() ?? path,
+      bytes: await handle.readFile(),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Writes `bytes` to `name` under `directory`. Never over a file already
+ * there, and never through a link. A directory the name needs is made, when
+ * that directory is itself under the served directory.
+ */
+export async function storeWorkspaceFile(
+  directory: string,
+  name: string,
+  bytes: Buffer,
+): Promise<WorkspaceStored> {
+  if (bytes.length > LONGEST_UPLOAD) return { kind: "too-large" };
+  const file = visibleFile(directory, name);
+  if (file === undefined) return outside(directory);
+  const path = pathWithin(directory, file);
+  const prepared = await prepareUpload(directory, file);
+  if (prepared === "invalid") return outside(directory);
+  if (prepared === "exists") return { kind: "exists", path };
+
+  let handle;
+  try {
+    handle = await open(
+      file,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    );
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ELOOP") return { kind: "exists", path };
+    if (code === "ENOTDIR" || code === "EISDIR") return outside(directory);
+    throw cause;
+  }
+  try {
+    await handle.writeFile(bytes);
+  } catch (cause) {
+    await handle.close().catch(() => undefined);
+    await rm(file, { force: true }).catch(() => undefined);
+    throw cause;
+  }
+  await handle.close();
+  return { kind: "saved", path };
+}
+
+/** How removing a file the sidebar lists went. */
+export type WorkspaceRemoved =
+  | { readonly kind: "removed"; readonly path: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid"; readonly problem: string };
+
+/**
+ * Removes the file `name` names under `directory`. A directory is left, and a
+ * link is not removed and not followed: either could delete more than the
+ * file the sidebar listed.
+ */
+export async function removeWorkspaceFile(
+  directory: string,
+  name: string,
+): Promise<WorkspaceRemoved> {
+  const file = visibleFile(directory, name);
+  if (file === undefined) {
+    return { kind: "invalid", problem: `The file must be under ${directory}.` };
+  }
+  if ((await walkFile(directory, file)) !== "file") return { kind: "absent" };
+  try {
+    await rm(file);
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
+    if (code === "EISDIR" || code === "EPERM" || code === "ENOTEMPTY") {
+      return { kind: "invalid", problem: `The file must be under ${directory}.` };
+    }
+    throw cause;
+  }
+  return { kind: "removed", path: pathWithin(directory, file) };
 }
 
 /** How naming a Notebook's model went. */
