@@ -81,7 +81,7 @@ If the server restarted, the old cookie is no longer valid. The page asks for th
 
 ### Author view
 
-Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. After a prompt cell has run, four buttons open that turn. **Rounds** shows each reply, and the tool result between replies. **System** shows the system prompt the turn was given. **Prompts** shows the other prompts: what you asked, any further prompt sent in that turn, and a prompt an extension injected. **Tools** shows the tool calls, and what each returned. Statuses you will see:
+Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. A ring at the right of each prompt cell opens its context usage. The bright arc is how full the model's window was, and the panel splits that window between the system prompt, the project rules, the skills, the tool definitions, and the conversation. A cell that has not run yet has an empty ring. After a prompt cell has run, four buttons open the turn itself. **Rounds** shows each reply, and the tool result between replies. **System** shows the system prompt the turn was given. **Prompts** shows the other prompts: what you asked, any further prompt sent in that turn, and a prompt an extension injected. **Tools** shows the tool calls, and what each returned. Statuses you will see:
 
 | Status | Meaning |
 | --- | --- |
@@ -102,7 +102,7 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 **Edit** turns the notebook into a form:
 
 - Frontmatter is the YAML at the top: title, inputs, mode, and the rest.
-- Each cell has its type (`prompt` or `bash`), id, `uses` chosen from the other cells (any of them; none means this cell waits for no cell), an isolated checkbox, a model chosen from the configured models (or left as the default), an optional timeout, and its body.
+- Each cell has its type (`prompt` or `bash`), id, `uses` chosen from the other cells (any of them; none means this cell waits for no cell), an isolated checkbox, a model chosen from the configured models (or left as the default), an optional timeout, and its body. An empty prompt says `/ for a skill, @ for a file.` Typing `/` lists installed skills. Typing `@` lists files in the directory; choosing one writes that file's path into the prompt.
 - Prose is the Markdown between cells.
 
 **+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing if you are not already, and put the cursor in the new cell. Nothing is written until you save.

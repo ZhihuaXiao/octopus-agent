@@ -41,6 +41,29 @@ export interface Retry {
   error: string;
 }
 
+/** One slice of the context a turn sent, in the order the window is drawn. */
+export type ContextPartName = "system" | "tools" | "rules" | "skills" | "conversation";
+
+export interface ContextPart {
+  readonly name: ContextPartName;
+  readonly tokens: number;
+}
+
+/**
+ * How full the model's window was when a turn ended.
+ *
+ * `tokens` is the provider's count of that window when the session still has
+ * it, and an estimate from the text when a compaction has replaced the history
+ * the count belonged to. `estimated` says which. The parts add up to `tokens`.
+ */
+export interface ContextUsage {
+  readonly tokens: number;
+  /** The model's context window, when the turn ran on a model that has one. */
+  readonly window?: number;
+  readonly estimated: boolean;
+  readonly parts: readonly ContextPart[];
+}
+
 export interface CellResult {
   text: string;
   toolCalls: ToolCall[];
@@ -62,6 +85,12 @@ export interface CellResult {
    * which a scripted turn does not: only a turn that ran through pi has one.
    */
   systemPrompt?: string;
+  /**
+   * How full the model's window was at the end of the turn. Absent when the
+   * turn left nothing in the window to measure, which a scripted turn does not:
+   * only a turn that ran through pi has one.
+   */
+  context?: ContextUsage;
 }
 
 /**
@@ -127,6 +156,11 @@ export class TurnFailure extends Error {
      * it failed. Empty when it recorded none.
      */
     readonly systemPrompt = "",
+    /**
+     * How full the window was when the turn failed, when it had got as far as
+     * filling one. A failure after a long context is not a failure that used none.
+     */
+    readonly context?: ContextUsage,
   ) {
     super(message);
     this.name = "TurnFailure";
@@ -137,8 +171,9 @@ export class TurnFailure extends Error {
     retries: readonly Retry[] = [],
     usage: Usage = noUsage,
     systemPrompt = "",
+    context?: ContextUsage,
   ): TurnFailure {
-    return new TurnFailure("The turn was aborted", retries, true, usage, systemPrompt);
+    return new TurnFailure("The turn was aborted", retries, true, usage, systemPrompt, context);
   }
 }
 

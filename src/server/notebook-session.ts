@@ -29,7 +29,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
-import { type AgentFactory, type ToolCall, emptyResult, noUsage } from "../agent/agent.js";
+import {
+  type AgentFactory,
+  type ContextUsage,
+  type ToolCall,
+  emptyResult,
+  noUsage,
+} from "../agent/agent.js";
 import { thisMachine } from "../export/credentials.js";
 import { type Exported, exportNotebook } from "../export/html.js";
 import {
@@ -138,6 +144,11 @@ export interface CellView {
   readonly run?: string;
   /** Why the Cell did not succeed, when it did not. */
   readonly error?: string;
+  /**
+   * How full the model's window was when this Prompt Cell last ended. Absent
+   * for a Bash Cell, and for a Prompt Cell that has not run through pi.
+   */
+  readonly context?: ContextUsage;
   /**
    * A Bash Cell whose command is still running, or that left a service running
    * after the shell exited. The way to end it is to stop that Cell.
@@ -604,6 +615,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       toolCalls: record.type === "prompt" ? record.toolCalls : [],
       artifacts: record.artifacts,
       run,
+      ...(record.type === "prompt" && record.context !== undefined
+        ? { context: record.context }
+        : {}),
       ...(record.error !== undefined ? { error: record.error } : {}),
       ...(record.type === "bash" &&
       record.servicePids !== undefined &&

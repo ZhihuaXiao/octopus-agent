@@ -83,6 +83,9 @@
  * }} ChatEntry
  * @typedef {{ chats: ChatEntry[] }} ChatList
  * @typedef {{ name: string, input: unknown }} ToolCall
+ * @typedef {"system" | "tools" | "rules" | "skills" | "conversation"} ContextPartName
+ * @typedef {{ name: ContextPartName, tokens: number }} ContextPart
+ * @typedef {{ tokens: number, window?: number, estimated: boolean, parts: ContextPart[] }} ContextUsage
  * @typedef {"idle" | "running" | "ok" | "error" | "timeout" | "interrupted" | "stale"} CellState
  * @typedef {{
  *   id: string,
@@ -98,6 +101,7 @@
  *   artifacts: string[],
  *   run?: string,
  *   error?: string,
+ *   context?: ContextUsage,
  *   service?: boolean,
  * }} CellView
  * @typedef {{ kind: "prose", text: string } | { kind: "cell", id: string }} SegmentView
@@ -135,6 +139,7 @@
  *   toolCalls?: ToolCall[],
  *   artifacts: string[],
  *   error?: string,
+ *   context?: ContextUsage,
  *   servicePids?: number[],
  * }} CellRecord
  * @typedef {{ sequence: number } & (
@@ -2113,6 +2118,227 @@ const showPrompts = (cell) => showTurn(cell, "prompts");
 const showToolCalls = (cell) => showTurn(cell, "tools");
 
 /**
+ * The Context button, on every prompt cell. The other turn buttons wait until
+ * the cell has run; this one is how that measurement is found either way.
+ * @param {CellView} cell
+ * @returns {HTMLButtonElement | undefined}
+ */
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/**
+ * How full `usage` is, as a percent of the model's window.
+ * Undefined when the window size was not recorded, so the ring stays empty
+ * rather than inventing a share.
+ * @param {ContextUsage | undefined} usage
+ * @returns {number | undefined}
+ */
+function contextPercent(usage) {
+  if (usage?.window === undefined || usage.window <= 0) return undefined;
+  return Math.max(0, Math.min(100, Math.round((100 * usage.tokens) / usage.window)));
+}
+
+/**
+ * A ring whose bright arc is the used share of the window. No arc when that
+ * share is not known yet.
+ * @param {number | undefined} percent
+ */
+function contextRing(percent) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  const track = document.createElementNS(SVG_NS, "circle");
+  track.setAttribute("class", "context-ring-track");
+  track.setAttribute("cx", "8");
+  track.setAttribute("cy", "8");
+  track.setAttribute("r", "5.5");
+  const arc = document.createElementNS(SVG_NS, "circle");
+  arc.setAttribute("class", "context-ring-arc");
+  arc.setAttribute("cx", "8");
+  arc.setAttribute("cy", "8");
+  arc.setAttribute("r", "5.5");
+  arc.setAttribute("transform", "rotate(-90 8 8)");
+  const circumference = 2 * Math.PI * 5.5;
+  const used = percent === undefined ? 0 : (percent / 100) * circumference;
+  arc.setAttribute("stroke-dasharray", `${used} ${Math.max(0, circumference - used)}`);
+  svg.append(track, arc);
+  return svg;
+}
+
+/**
+ * The context control, on every prompt cell: a small ring at the end of the
+ * header. The arc is how full the window was. The other turn buttons stay
+ * words, and wait until the cell has run.
+ * @param {CellView} cell
+ * @returns {HTMLButtonElement | undefined}
+ */
+function contextButton(cell) {
+  if (cell.type !== "prompt") return undefined;
+  const percent = contextPercent(cell.context);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "context-ring";
+  const label = percent === undefined ? "Context usage" : `Context ${percent}% full`;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.append(contextRing(percent));
+  button.addEventListener("click", () => void showContext(cell));
+  return button;
+}
+
+/**
+ * A context reading from a turn the server already stored, when the run itself
+ * recorded none. The system prompt and the messages are what that turn kept.
+ * @param {{
+ *   query?: string,
+ *   prompts?: string[],
+ *   systemPrompt?: string,
+ *   context?: ContextUsage,
+ *   rounds?: {
+ *     text?: string,
+ *     thinking?: string,
+ *     toolCalls?: { input: unknown, result?: string }[],
+ *   }[],
+ * }} value
+ * @returns {ContextUsage | undefined}
+ */
+function contextFromTurn(value) {
+  if (value.context !== undefined && value.context.parts.length > 0) return value.context;
+  const systemPrompt = value.systemPrompt ?? "";
+  const rules = cutMarked(systemPrompt, "<project_context>", "</project_context>");
+  const skills = cutMarked(
+    rules.rest,
+    "The following skills provide specialized instructions",
+    "</available_skills>",
+  );
+  const conversation = [
+    ...(value.prompts ?? (value.query !== undefined && value.query !== "" ? [value.query] : [])),
+    ...(value.rounds ?? []).flatMap((round) => [
+      round.text ?? "",
+      round.thinking ?? "",
+      ...(round.toolCalls ?? []).flatMap((call) => [roundText(call.input), call.result ?? ""]),
+    ]),
+  ].join("\n");
+  /** @type {ContextPart[]} */
+  const measured = [
+    { name: "system", tokens: estimatedTokens(skills.rest) },
+    { name: "rules", tokens: estimatedTokens(rules.piece) },
+    { name: "skills", tokens: estimatedTokens(skills.piece) },
+    { name: "conversation", tokens: estimatedTokens(conversation) },
+  ];
+  const parts = measured.filter((part) => part.tokens > 0);
+  if (parts.length === 0) return undefined;
+  return {
+    tokens: parts.reduce((sum, part) => sum + part.tokens, 0),
+    estimated: true,
+    parts,
+  };
+}
+
+/**
+ * @param {string} text
+ * @param {string} startMark
+ * @param {string} endMark
+ */
+function cutMarked(text, startMark, endMark) {
+  const start = text.indexOf(startMark);
+  const end = start < 0 ? -1 : text.indexOf(endMark, start + startMark.length);
+  if (start < 0 || end < 0) return { piece: "", rest: text };
+  const to = end + endMark.length;
+  return { piece: text.slice(start, to), rest: text.slice(0, start) + text.slice(to) };
+}
+
+/** @param {string} text */
+const estimatedTokens = (text) => (text.length <= 0 ? 0 : Math.ceil(text.length / 4));
+
+/**
+ * @param {CellView} cell
+ */
+async function showContext(cell) {
+  if (watching === undefined) return;
+  const dialog = /** @type {HTMLDialogElement} */ (element("cell-rounds-dialog"));
+  element("cell-rounds-title").textContent = `Context usage · ${cell.id}`;
+  if (!dialog.open) dialog.showModal();
+  if (cell.context !== undefined && cell.context.parts.length > 0) {
+    element("cell-rounds-body").replaceChildren(contextPanel(cell.context));
+    return;
+  }
+  if (cell.run === undefined || cell.status === "idle") {
+    element("cell-rounds-body").replaceChildren(
+      make("p", "", "This cell has not run, so there is no context to measure."),
+    );
+    return;
+  }
+  element("cell-rounds-body").replaceChildren(make("p", "", "Loading…"));
+  try {
+    const response = await request(
+      `/api/sessions/${encodeURIComponent(watching.state.id)}/cells/${encodeURIComponent(cell.id)}/rounds`,
+    );
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    const usage = contextFromTurn(await response.json());
+    element("cell-rounds-body").replaceChildren(
+      usage === undefined
+        ? make("p", "", "This cell's turn recorded nothing to measure.")
+        : contextPanel(usage),
+    );
+  } catch (cause) {
+    element("cell-rounds-body").replaceChildren(make("p", "", describe(cause)));
+  }
+}
+
+/**
+ * The open context panel: how full the window is, then each part of the request.
+ * @param {ContextUsage} usage
+ */
+function contextPanel(usage) {
+  const panel = make("div", "context-usage");
+  const window = usage.window;
+  const full = window !== undefined && window > 0;
+  const percent = contextPercent(usage);
+  const meta = make("div", "context-meta");
+  meta.append(
+    make("span", "context-percent", percent === undefined ? "This turn" : `${percent}% full`),
+  );
+  const total = full
+    ? `${formatTokens(usage.tokens)} / ${formatTokens(window)} tokens`
+    : `${formatTokens(usage.tokens)} tokens`;
+  meta.append(make("span", "context-total", usage.estimated ? `~${total}` : total));
+  meta.title = usage.estimated
+    ? "Estimated from the size of each part of the request."
+    : "The total is what the provider counted. The rows split it by the size of each part.";
+  const bar = make("span", "context-bar");
+  const whole = full ? window : usage.tokens;
+  for (const part of usage.parts) {
+    const segment = make("span", `context-seg ${part.name}`);
+    segment.style.width = whole > 0 ? `${(100 * part.tokens) / whole}%` : "0";
+    bar.append(segment);
+  }
+  bar.role = "img";
+  bar.setAttribute(
+    "aria-label",
+    percent === undefined ? `Context ${total}` : `Context ${percent}% full, ${total}`,
+  );
+  panel.append(meta, bar, contextList(usage));
+  return panel;
+}
+
+/** @param {ContextUsage} usage */
+function contextList(usage) {
+  const list = make("ul", "context-parts");
+  for (const part of usage.parts) {
+    const row = document.createElement("li");
+    row.append(
+      make("span", `context-swatch ${part.name}`),
+      make("span", "context-part-name", CONTEXT_LABELS[part.name] ?? part.name),
+      make("span", "context-part-tokens", formatTokens(part.tokens)),
+    );
+    list.append(row);
+  }
+  return list;
+}
+
+/**
  * Puts a Cell's reply into `node`: the characters as written, or Markdown.
  * @param {Element} node
  * @param {string} text
@@ -2267,6 +2493,25 @@ function foldButton(item, key, name, folded) {
   return button;
 }
 
+/** The names the context panel uses, in the order the bar draws them. */
+/** @type {Record<ContextPartName, string>} */
+const CONTEXT_LABELS = {
+  system: "System prompt",
+  tools: "Tool definitions",
+  rules: "Rules",
+  skills: "Skills",
+  conversation: "Conversation",
+};
+
+/**
+ * A token count the way the panel reads it: 1.7K, 155.0K.
+ * @param {number} tokens
+ */
+function formatTokens(tokens) {
+  if (tokens < 1000) return String(tokens);
+  return `${(tokens / 1000).toFixed(1)}K`;
+}
+
 /**
  * @param {CellView} cell
  * @param {string} session
@@ -2300,7 +2545,10 @@ function renderCell(cell, session, running) {
   runOne.title = `Run ${cell.id} alone, carrying on from the last run`;
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
-  heading.append(runOne, make("span", "cell-preview", foldPreview(cell.body)));
+  heading.append(runOne);
+  const usageButton = contextButton(cell);
+  if (usageButton !== undefined) heading.append(usageButton);
+  heading.append(make("span", "cell-preview", foldPreview(cell.body)));
 
   const body = make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
   const calls = make("ol", "tool-calls");
@@ -2886,6 +3134,7 @@ function apply(event) {
       if (cell !== undefined) {
         Object.assign(cell, { status: "running", text: "", toolCalls: [], artifacts: [] });
         delete cell.error;
+        delete cell.context;
         if (cell.type === "bash") cell.service = true;
         else delete cell.service;
         if (watching.run !== undefined) cell.run = watching.run;
@@ -2912,6 +3161,8 @@ function apply(event) {
         cell.text = event.record.text ?? event.record.stdout ?? "";
         cell.toolCalls = event.record.toolCalls ?? [];
         cell.artifacts = event.record.artifacts;
+        if (event.record.context !== undefined) cell.context = event.record.context;
+        else delete cell.context;
         if (event.record.error !== undefined) cell.error = event.record.error;
         else delete cell.error;
         if (cell.type === "bash" && (event.record.servicePids?.length ?? 0) > 0)
@@ -3353,7 +3604,7 @@ function attachSkillMenu(field, cell) {
     loaded = undefined;
     menu.hidden = true;
     menu.replaceChildren();
-    wrap.classList.remove("open");
+    if (!wrap.querySelector(".skill-menu:not([hidden])")) wrap.classList.remove("open");
     field.setAttribute("aria-expanded", "false");
   };
 
@@ -3500,8 +3751,228 @@ function attachSkillMenu(field, cell) {
   });
 }
 
+/** What an empty prompt says before anything is typed. */
+const PROMPT_PLACEHOLDER = "/ for a skill, @ for a file.";
+
 /**
- * A Cell's body. A Prompt Cell's offers the installed Skills when `/` is typed.
+ * The `@file` the caret is inside, when one is being typed. The token begins
+ * at the start of the text or after whitespace, the same way a `/skill` does.
+ * @param {HTMLTextAreaElement} field
+ * @returns {{ start: number, end: number, query: string } | undefined}
+ */
+function atToken(field) {
+  if (field.selectionStart !== field.selectionEnd) return undefined;
+  const caret = field.selectionStart;
+  const value = field.value;
+  const upTo = value.slice(0, caret);
+  const matched = /(?:^|\s)(@[^\s]*)$/.exec(upTo);
+  const token = matched?.[1];
+  if (token === undefined) return undefined;
+  const start = upTo.length - token.length;
+  const tail = /^[^\s]*/.exec(value.slice(caret))?.[0] ?? "";
+  return { start, end: caret + tail.length, query: value.slice(start + 1, caret + tail.length) };
+}
+
+/**
+ * Every file under the served directory, folders omitted. The tree is the same
+ * one the sidebar draws, so a skipped directory is skipped here too.
+ * @param {TreeNode[]} nodes
+ * @param {TreeNode[]} found
+ * @returns {TreeNode[]}
+ */
+function filesIn(nodes, found = []) {
+  for (const node of nodes) {
+    if (node.kind === "directory") filesIn(node.children, found);
+    else found.push(node);
+  }
+  return found;
+}
+
+/**
+ * How a chosen file is written into the prompt. A path with a space is quoted,
+ * so the mention stays one token.
+ * @param {string} path
+ */
+function fileMention(path) {
+  return path.includes(" ") ? `@"${path}"` : `@${path}`;
+}
+
+/**
+ * The prompt's body, with a menu of files that opens when `@` is typed.
+ * Choosing one writes that file's path over the token.
+ * @param {HTMLTextAreaElement} field
+ * @param {DraftCell} cell
+ */
+function attachFileMenu(field, cell) {
+  const wrap = field.parentElement;
+  if (wrap === null) return;
+  const menu = make("ul", "skill-menu");
+  menu.id = `file-menu-${(skillMenus += 1)}`;
+  menu.hidden = true;
+  menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-label", "Files");
+  field.setAttribute("aria-controls", `${field.getAttribute("aria-controls") ?? ""} ${menu.id}`.trim());
+  wrap.append(menu);
+  menu.addEventListener("mousedown", (event) => event.preventDefault());
+
+  let writing = false;
+  let fetching = false;
+  let generation = 0;
+  /** @type {TreeNode[] | undefined} */
+  let loaded;
+  let query = "";
+  let highlighted = 0;
+
+  const choices = () =>
+    [...menu.querySelectorAll("button.skill-choice")].filter(
+      (button) => button instanceof HTMLButtonElement,
+    );
+
+  /** @param {number} index */
+  const mark = (index) => {
+    const buttons = choices();
+    if (buttons.length === 0) return;
+    highlighted = (index + buttons.length) % buttons.length;
+    buttons.forEach((button, at) => {
+      const on = at === highlighted;
+      button.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) button.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  const close = () => {
+    generation += 1;
+    fetching = false;
+    loaded = undefined;
+    menu.hidden = true;
+    menu.replaceChildren();
+    if (!wrap.querySelector(".skill-menu:not([hidden])")) wrap.classList.remove("open");
+    const other = wrap.querySelector(".skill-menu:not([hidden])");
+    field.setAttribute("aria-expanded", other === null ? "false" : "true");
+  };
+
+  /** @param {TreeNode} file */
+  const choose = (file) => {
+    const token = atToken(field);
+    if (token === undefined) return;
+    const mention = fileMention(file.path);
+    const next = `${field.value.slice(0, token.start)}${mention} ${field.value.slice(token.end)}`;
+    writing = true;
+    field.value = next;
+    const caret = token.start + mention.length + 1;
+    field.selectionStart = caret;
+    field.selectionEnd = caret;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    writing = false;
+    close();
+  };
+
+  /** @param {string} [status] */
+  const draw = (status) => {
+    menu.replaceChildren();
+    field.setAttribute("aria-expanded", "true");
+    wrap.classList.add("open");
+    menu.hidden = false;
+    if (status !== undefined) {
+      menu.append(make("li", "skill-status", status));
+      return;
+    }
+    const needle = query.toLowerCase();
+    const matched = (loaded ?? []).filter(
+      (file) =>
+        needle === "" ||
+        file.name.toLowerCase().includes(needle) ||
+        file.path.toLowerCase().includes(needle),
+    );
+    if (matched.length === 0) {
+      menu.append(
+        make("li", "skill-status", loaded === undefined ? "Looking for files…" : "No file matches."),
+      );
+      return;
+    }
+    const shown = matched.slice(0, 40);
+    for (const file of shown) {
+      const item = make("li", "skill-item");
+      const button = make("button", "skill-choice");
+      button.type = "button";
+      button.setAttribute("role", "option");
+      button.dataset.file = file.path;
+      button.title = file.path;
+      button.append(make("span", "skill-name", file.path));
+      button.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        choose(file);
+      });
+      item.append(button);
+      menu.append(item);
+    }
+    if (matched.length > shown.length) {
+      menu.append(make("li", "skill-status", "Keep typing to narrow the list."));
+    }
+    mark(0);
+  };
+
+  const refresh = () => {
+    if (writing) return;
+    const token = atToken(field);
+    if (token === undefined || cell.type !== "prompt") {
+      if (!menu.hidden) close();
+      return;
+    }
+    query = token.query;
+    if (loaded !== undefined) {
+      draw();
+      return;
+    }
+    if (fetching) return;
+    fetching = true;
+    const ticket = generation;
+    draw("Looking for files…");
+    void fetchTree()
+      .then((tree) => {
+        if (ticket !== generation) return;
+        loaded = filesIn(tree.entries);
+        draw();
+      })
+      .catch((cause) => {
+        if (ticket !== generation) return;
+        draw(describe(cause));
+      })
+      .finally(() => {
+        if (ticket === generation) fetching = false;
+      });
+  };
+
+  field.addEventListener("input", refresh);
+  field.addEventListener("keydown", (event) => {
+    if (menu.hidden) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    const buttons = choices();
+    if (buttons.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      mark(highlighted + (event.key === "ArrowDown" ? 1 : -1));
+      return;
+    }
+    if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+      event.preventDefault();
+      const button = buttons[highlighted];
+      const file = (loaded ?? []).find((candidate) => candidate.path === button?.dataset.file);
+      if (file !== undefined) choose(file);
+    }
+  });
+  field.addEventListener("blur", () => {
+    if (!menu.hidden) close();
+  });
+}
+
+/**
+ * A Cell's body. A Prompt Cell offers installed skills when `/` is typed, and
+ * the directory's files when `@` is typed.
  * @param {DraftCell} cell
  */
 function cellBody(cell) {
@@ -3510,13 +3981,12 @@ function cellBody(cell) {
     (value) => {
       cell.body = value;
     },
-    cell.type === "bash"
-      ? "A shell command"
-      : "What to ask the agent. Type / to run an installed skill.",
+    cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER,
   );
   const wrap = make("div", "skill-field");
   wrap.append(field);
   attachSkillMenu(field, cell);
+  attachFileMenu(field, cell);
   return wrap;
 }
 
@@ -3699,10 +4169,7 @@ function renderDraftCell(cell, at) {
     }
     const body = card.querySelector("textarea");
     if (body instanceof HTMLTextAreaElement) {
-      body.placeholder =
-        cell.type === "bash"
-          ? "A shell command"
-          : "What to ask the agent. Type / to run an installed skill.";
+      body.placeholder = cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER;
       body.dispatchEvent(new Event("input"));
     }
   });
@@ -4293,6 +4760,8 @@ function renderStep(cell, session) {
   );
   heading.append(...turnButtons(cell));
   if (cell.service === true) heading.append(serviceStopButton(cell.id));
+  const usageButton = contextButton(cell);
+  if (usageButton !== undefined) heading.append(usageButton);
   const output = make("div", "run-step-output streamed");
   fillOutput(output, cell.text);
   item.append(heading, output);

@@ -166,6 +166,9 @@ function promptFailure(cell: Cell, cause: unknown): Outcome<PromptCellRecord> {
     ...(cause instanceof TurnFailure && cause.systemPrompt !== ""
       ? { systemPrompt: cause.systemPrompt }
       : {}),
+    ...(cause instanceof TurnFailure && cause.context !== undefined
+      ? { context: cause.context }
+      : {}),
     error: cause instanceof Error ? cause.message : String(cause),
   };
 }

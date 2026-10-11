@@ -1154,6 +1154,131 @@ button:disabled {
   display: block;
 }
 
+/* The context control: a light ring at the end of the cell. The arc is the
+   used share of the model's window, starting at the top. */
+.context-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid #d6dbe3;
+  background: #f4f6f8;
+  color: #5b6573;
+}
+
+.context-ring svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.context-ring-track,
+.context-ring-arc {
+  fill: none;
+  stroke-width: 1.6;
+}
+
+.context-ring-track {
+  stroke: #c5ced8;
+}
+
+.context-ring-arc {
+  stroke: #7eb6e8;
+  stroke-linecap: round;
+}
+
+/* How full the model's window was. The bar is that window; each colour is
+   one part of the request, in the same order as the list under it. */
+.context-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.context-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.context-percent,
+.context-total {
+  font-size: 0.85rem;
+}
+
+.context-total {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-bar {
+  display: flex;
+  flex: 1;
+  min-width: 4rem;
+  height: 0.45rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.context-seg {
+  height: 100%;
+}
+
+.context-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 0.15rem;
+  flex: none;
+}
+
+.context-seg.system,
+.context-swatch.system {
+  background: #9ca3af;
+}
+.context-seg.tools,
+.context-swatch.tools {
+  background: #a78bfa;
+}
+.context-seg.rules,
+.context-swatch.rules {
+  background: #4ade80;
+}
+.context-seg.skills,
+.context-swatch.skills {
+  background: #facc15;
+}
+.context-seg.conversation,
+.context-swatch.conversation {
+  background: #fb923c;
+}
+
+.context-parts {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+}
+
+.context-parts li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.context-part-name {
+  flex: 1;
+}
+
+.context-part-tokens {
+  font-variant-numeric: tabular-nums;
+}
+
 .cell-body {
   margin: 0.5rem 0 0;
   padding: 0.5rem 0.7rem;
