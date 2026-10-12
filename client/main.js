@@ -1895,24 +1895,109 @@ function turnButtons(cell) {
   if (cell.type !== "prompt" || cell.run === undefined) return [];
   if (cell.status === "idle" || cell.status === "running") return [];
   return [
-    turnButton(cell, "rounds", "Rounds", "The model rounds of this cell's turn"),
-    turnButton(cell, "system", "System", "The system prompt this cell's turn was given"),
-    turnButton(cell, "prompts", "Prompts", "The prompts other than the system prompt"),
-    turnButton(cell, "tools", "Tools", "The tool calls of this cell's turn"),
+    turnButton(cell, "rounds", "Rounds: each reply, and the tool result between replies"),
+    turnButton(cell, "system", "System: the system prompt this cell's turn was given"),
+    turnButton(cell, "prompts", "Prompts: what was asked, other than the system prompt"),
+    turnButton(cell, "tools", "Tools: the tool calls of this cell's turn"),
   ];
+}
+
+/**
+ * A small line symbol. `marks` are path data, drawn in the current text color.
+ * @param {readonly string[]} marks
+ * @param {boolean} [filled]
+ */
+function symbolIcon(marks, filled = false) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of marks) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    if (filled) path.setAttribute("class", "symbol-fill");
+    svg.append(path);
+  }
+  return svg;
+}
+
+/**
+ * A header button that shows a symbol and keeps its name for hover and for a
+ * screen reader.
+ * @param {string} className
+ * @param {string} title
+ * @param {SVGSVGElement} icon
+ */
+function symbolButton(className, title, icon) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `symbol-button ${className}`;
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.append(icon);
+  return button;
+}
+
+/** @param {TurnView} view */
+function turnIcon(view) {
+  if (view === "rounds") return symbolIcon(["M3 4.5h10", "M3 8h10", "M3 11.5h10"]);
+  if (view === "system") {
+    return symbolIcon([
+      "M4 2.5h5.5L12 5v8.5H4z",
+      "M9.5 2.5V5H12",
+      "M6 8h4.5",
+      "M6 10.5h3",
+    ]);
+  }
+  if (view === "prompts") return symbolIcon(["M3 3.5h10v6.5H7.5L5 12.2V10H3z"]);
+  return symbolIcon([
+    "M6.2 9.2 10.6 4.8",
+    "M10.2 4.2a1.6 1.6 0 1 1 2.2 2.2",
+    "M9.4 3.4 11.2 1.6",
+    "M12.2 6.2 14 4.4",
+    "M5.2 10.2 2.6 12.8",
+  ]);
+}
+
+/** A stem that splits into two arrows: a branch. */
+function branchIcon() {
+  return symbolIcon([
+    "M8 14V8",
+    "M8 8 3.5 3.2",
+    "M8 8 12.5 3.2",
+    "M3.5 3.2V5.7",
+    "M3.5 3.2H6",
+    "M12.5 3.2V5.7",
+    "M12.5 3.2H10",
+  ]);
+}
+
+/** A triangle pointing right: run. */
+function runIcon() {
+  return symbolIcon(["M6 3.2 12.6 8 6 12.8z"], true);
+}
+
+/**
+ * A filled triangle: pointing right when the piece is folded, so the click
+ * expands it, and pointing down when it is open, so the click collapses it.
+ * @param {boolean} folded
+ */
+function foldIcon(folded) {
+  return symbolIcon(folded ? ["M5.2 2.8 12.4 8 5.2 13.2z"] : ["M2.8 5.2 8 12.4 13.2 5.2z"], true);
+}
+
+/** A small square: stop. */
+function stopIcon() {
+  return symbolIcon(["M4.5 4.5h7v7h-7z"], true);
 }
 
 /**
  * @param {CellView} cell
  * @param {TurnView} view
- * @param {string} label
  * @param {string} title
  * @returns {HTMLButtonElement}
  */
-function turnButton(cell, view, label, title) {
-  const button = /** @type {HTMLButtonElement} */ (make("button", "cell-turn", label));
-  button.type = "button";
-  button.title = title;
+function turnButton(cell, view, title) {
+  const button = symbolButton("cell-turn", title, turnIcon(view));
   button.addEventListener("click", () => {
     if (view === "system") void showSystemPrompt(cell.id);
     else if (view === "prompts") void showPrompts(cell.id);
@@ -2150,17 +2235,20 @@ function contextRing(percent) {
   track.setAttribute("class", "context-ring-track");
   track.setAttribute("cx", "8");
   track.setAttribute("cy", "8");
-  track.setAttribute("r", "5.5");
+  track.setAttribute("r", "5.25");
   const arc = document.createElementNS(SVG_NS, "circle");
   arc.setAttribute("class", "context-ring-arc");
   arc.setAttribute("cx", "8");
   arc.setAttribute("cy", "8");
-  arc.setAttribute("r", "5.5");
+  arc.setAttribute("r", "5.25");
   arc.setAttribute("transform", "rotate(-90 8 8)");
-  const circumference = 2 * Math.PI * 5.5;
+  const circumference = 2 * Math.PI * 5.25;
   const used = percent === undefined ? 0 : (percent / 100) * circumference;
-  arc.setAttribute("stroke-dasharray", `${used} ${Math.max(0, circumference - used)}`);
-  svg.append(track, arc);
+  svg.append(track);
+  if (used > 0) {
+    arc.setAttribute("stroke-dasharray", `${used} ${Math.max(0, circumference - used)}`);
+    svg.append(arc);
+  }
   return svg;
 }
 
@@ -2176,7 +2264,7 @@ function contextButton(cell) {
   const percent = contextPercent(cell.context);
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "context-ring";
+  button.className = "symbol-button context-ring";
   const label = percent === undefined ? "Context usage" : `Context ${percent}% full`;
   button.title = label;
   button.setAttribute("aria-label", label);
@@ -2467,7 +2555,7 @@ function setFolded(item, key, folded, button, name) {
   const opened = openedForNotebook();
   if (folded) opened.delete(key);
   else opened.add(key);
-  button.textContent = folded ? "Expand" : "Collapse";
+  button.replaceChildren(foldIcon(folded));
   button.setAttribute("aria-expanded", folded ? "false" : "true");
   button.title = `${folded ? "Expand" : "Collapse"} ${name}`;
   button.setAttribute("aria-label", button.title);
@@ -2482,11 +2570,12 @@ function setFolded(item, key, folded, button, name) {
  * @param {boolean} folded
  */
 function foldButton(item, key, name, folded) {
-  const button = make("button", "fold", folded ? "Expand" : "Collapse");
-  button.type = "button";
+  const button = symbolButton(
+    "fold",
+    `${folded ? "Expand" : "Collapse"} ${name}`,
+    foldIcon(folded),
+  );
   button.setAttribute("aria-expanded", folded ? "false" : "true");
-  button.title = `${folded ? "Expand" : "Collapse"} ${name}`;
-  button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () => {
     setFolded(item, key, !item.classList.contains("folded"), button, name);
   });
@@ -2540,9 +2629,11 @@ function renderCell(cell, session, running) {
   if (cell.service === true && cell.status !== "running")
     heading.append(make("span", "cell-attribute", "service"));
   if (cell.service === true) heading.append(serviceStopButton(cell.id));
-  const runOne = make("button", "cell-run", "Run");
-  runOne.type = "button";
-  runOne.title = `Run ${cell.id} alone, carrying on from the last run`;
+  const runOne = symbolButton(
+    "cell-run",
+    `Run ${cell.id} alone, carrying on from the last run`,
+    runIcon(),
+  );
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
   heading.append(runOne);
@@ -3251,9 +3342,7 @@ async function stopCell(cell) {
  * @returns {HTMLButtonElement}
  */
 function serviceStopButton(id) {
-  const button = /** @type {HTMLButtonElement} */ (make("button", "cell-stop", "Stop"));
-  button.type = "button";
-  button.title = `Stop the service ${id} is running`;
+  const button = symbolButton("cell-stop", `Stop the service ${id} is running`, stopIcon());
   button.addEventListener("click", () => {
     void stopCell(id).then((stopped) => {
       // The notebook view is drawn again from the session. The editor is not,
@@ -3421,10 +3510,13 @@ function syncDraftFolds() {
  */
 function draftFoldButton(segment) {
   const name = () => (segment.kind === "cell" ? `this ${segment.type} cell` : "this prose");
-  const button = make("button", "fold", segment.folded ? "Expand" : "Collapse");
+  const button = document.createElement("button");
   button.type = "button";
+  button.className = "fold-toggle";
   const retitle = () => {
-    button.textContent = segment.folded ? "Expand" : "Collapse";
+    // A right arrow while folded, a down arrow while open: the same weight as
+    // the move buttons beside it, so the mark is not a pale speck.
+    button.textContent = segment.folded ? "▸" : "▾";
     button.setAttribute("aria-expanded", segment.folded ? "false" : "true");
     button.title = `${segment.folded ? "Expand" : "Collapse"} ${name()}`;
     button.setAttribute("aria-label", button.title);
@@ -4545,9 +4637,11 @@ async function exportRun() {
  * @returns {HTMLButtonElement}
  */
 function branchButton(cell) {
-  const button = /** @type {HTMLButtonElement} */ (make("button", "cell-branch", "Branch"));
-  button.type = "button";
-  button.title = `Fork a new notebook from ${cell.id} and open it in a new tab`;
+  const button = symbolButton(
+    "cell-branch",
+    `Branch: fork a new notebook from ${cell.id} and open it in a new tab`,
+    branchIcon(),
+  );
   button.addEventListener("click", () => void branchFrom(cell.id));
   return button;
 }
