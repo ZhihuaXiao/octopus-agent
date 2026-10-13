@@ -3123,7 +3123,9 @@ function renderSession() {
     "author",
   );
   element("run-view").hidden = authoring || openPane !== "notebook";
-  element("add-cells").hidden = !authoring || openPane !== "notebook";
+  // While editing, Insert below on each cell adds the next one, so the pair
+  // under the draft would repeat those two buttons.
+  element("add-cells").hidden = !authoring || openPane !== "notebook" || draft !== undefined;
   element("file-view").hidden = openPane === "notebook";
   renderSubtabs();
   syncFoldAllButton();

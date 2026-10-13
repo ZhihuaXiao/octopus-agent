@@ -105,7 +105,7 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 - Each cell has its type (`prompt` or `bash`), id, `uses` chosen from the other cells (any of them; none means this cell waits for no cell), an isolated checkbox, a model chosen from the configured models (or left as the default), an optional timeout, and its body. An empty prompt says `/ for a skill, @ for a file.` Typing `/` lists installed skills. Typing `@` lists files in the directory; choosing one writes that file's path into the prompt.
 - Prose is the Markdown between cells.
 
-**+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing if you are not already, and put the cursor in the new cell. Nothing is written until you save.
+**+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing, and put the cursor in the new cell. While the notebook is already being edited they are hidden, and **Insert below** on a cell adds the next one. Nothing is written until you save.
 
 **Insert at the top** and **Insert below** add a prompt cell, a bash cell, or prose. **↑** and **↓** reorder. **Remove** deletes that piece. **Run**, beside Remove and the same size, saves the notebook and runs that cell alone. **Save** writes the file. Only what you changed is rewritten, so a diff stays readable. **Cancel** throws the draft away.
 

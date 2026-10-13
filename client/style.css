@@ -279,7 +279,7 @@ body {
   gap: 1rem;
 }
 
-/* Adding a cell to the end of the notebook, whether or not it is being edited. */
+/* Adding a cell to the end of the notebook, when it is not being edited. */
 .add-cells {
   display: flex;
   gap: 0.5rem;
