@@ -81,7 +81,7 @@ If the server restarted, the old cookie is no longer valid. The page asks for th
 
 ### Author view
 
-Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. A ring at the right of each prompt cell opens its context usage. The bright arc is how full the model's window was, and the panel splits that window between the system prompt, the project rules, the skills, the tool definitions, and the conversation. A cell that has not run yet has an empty ring. After a prompt cell has run, four symbols open the turn. Hover shows the name. **Rounds** shows each reply, and the tool result between replies. **System** shows the system prompt the turn was given. **Prompts** shows the other prompts: what you asked, any further prompt sent in that turn, and a prompt an extension injected. **Tools** shows the tool calls, and what each returned. **Branch** is the forked arrow, and **Run** is the triangle. Statuses you will see:
+Author view is the notebook as written. Each cell shows its id, its type, the text you wrote, and — once it has run — what it said, which tools the agent used, and the files it left. **Plain** shows that reply as it was written. **Markdown** renders it: emphasis, lists, headings, links, code, and tables. A `$\rightarrow$` in a reply is drawn as an arrow. The choice stays in this browser, and it applies in run view too. A ring at the right of each prompt cell opens its context usage. The bright arc is how full the model's window was, and the panel splits that window between the system prompt, the project rules, the skills, the tool definitions, and the conversation. A cell that has not run yet has an empty ring. A prompt cell shows **Agent**, **Plan**, or **Ask**: the mode it runs in. **Copy**, on each cell, copies what was written in it and, once it has run, what it said. After a prompt cell has run, four symbols open the turn. Hover shows the name. **Rounds** shows each reply, and the tool result between replies. **System** shows the system prompt the turn was given. **Prompts** shows the other prompts: what you asked, any further prompt sent in that turn, and a prompt an extension injected. **Tools** shows the tool calls, and what each returned. **Branch** is the forked arrow, and **Run** is the triangle. Statuses you will see:
 
 | Status | Meaning |
 | --- | --- |
@@ -102,7 +102,7 @@ Author view is the notebook as written. Each cell shows its id, its type, the te
 **Edit** turns the notebook into a form:
 
 - Frontmatter is the YAML at the top: title, inputs, mode, and the rest.
-- Each cell has its type (`prompt` or `bash`), id, `uses` chosen from the other cells (any of them; none means this cell waits for no cell), an isolated checkbox, a model chosen from the configured models (or left as the default), an optional timeout, and its body. An empty prompt says `/ for a skill, @ for a file.` Typing `/` lists installed skills. Typing `@` lists files in the directory; choosing one writes that file's path into the prompt.
+- Each cell has its type (`prompt` or `bash`), id, `uses` chosen from the other cells (any of them; none means this cell waits for no cell), an isolated checkbox, a model chosen from the configured models (or left as the default), an optional timeout, and its body. A prompt cell also has a **mode**: **Agent** may change files, **Plan** only reads and replies with a plan, and **Ask** only answers. **Copy** copies what is written in that cell and, if it has already run, what it said. An empty prompt says `/ for a skill, @ for a file.` Typing `/` lists installed skills. Typing `@` lists files in the directory; choosing one writes that file's path into the prompt.
 - Prose is the Markdown between cells.
 
 **+ Prompt cell** and **+ Bash cell**, under the last cell, add an empty cell to the end of the notebook. They start editing, and put the cursor in the new cell. While the notebook is already being edited they are hidden, and **Insert below** on a cell adds the next one. Nothing is written until you save.
@@ -233,6 +233,7 @@ Attributes on the opening fence:
 | `id` | Required for a cell. Unique in the notebook. |
 | `uses` | Cells that must finish successfully before this one. Several ids are separated by commas: `uses=naming,tests,comments`. |
 | `isolated` | Present or absent. This cell runs in a fresh conversation, not the notebook's shared one. |
+| `mode` | A prompt cell only: `agent` (the default, and left unwritten), `plan`, or `ask`. Plan may only read, and replies with a plan. Ask only answers, and is given no tools. This is not the notebook's mode. |
 | `model` | This cell's model, overriding the notebook and the mode. |
 | `timeout` | This cell's limit, overriding the notebook's: `timeout=2m`. |
 

@@ -380,6 +380,7 @@ interface CellView {
   body: string;
   uses: string[];
   isolated: boolean;
+  mode?: string;
   model?: string;
   timeout?: number;
   status: string;
@@ -2197,6 +2198,7 @@ type SegmentEdit =
       body: string;
       uses: string[];
       isolated: boolean;
+      mode?: string;
       model?: string;
       timeout?: string;
     };
@@ -2220,6 +2222,7 @@ function editOf(state: NotebookSessionState): {
         body: cell.body.replace(/\r?\n$/, ""),
         uses: cell.uses,
         isolated: cell.isolated,
+        ...(cell.mode !== undefined ? { mode: cell.mode } : {}),
         ...(cell.model !== undefined ? { model: cell.model } : {}),
         ...(cell.timeout !== undefined ? { timeout: `${cell.timeout}ms` } : {}),
       };

@@ -187,6 +187,13 @@ export interface TurnOptions {
    */
   readonly model?: string;
   /**
+   * How this Prompt Cell runs. Agent leaves the session's tools as they are.
+   * Plan narrows them to reading. Ask takes them away for the turn. Either
+   * way the session is put back when the turn ends, so the next Cell is not
+   * left in the one before it.
+   */
+  readonly mode?: "agent" | "plan" | "ask";
+  /**
    * Asks the agent to stop the turn where it is. A turn that is stopped this
    * way rejects with a `TurnFailure` marked `aborted` rather than resolving
    * with half a reply, since whatever it had said so far was not what the Cell

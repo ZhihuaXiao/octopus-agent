@@ -87,6 +87,25 @@ describe("runNotebook", () => {
     expect(cell.toolCalls).toEqual([{ name: "bash", input: { command: "ls" } }]);
   });
 
+  it("tells a plan cell to plan and an ask cell only to answer", async () => {
+    const path = await notebookFile(
+      "```prompt id=plan mode=plan\nLook.\n```\n\n```prompt id=ask mode=ask\nWhy?\n```\n\n```prompt id=act\nDo it.\n```\n",
+    );
+    const agent = createScriptedAgent([
+      { text: "a plan" },
+      { text: "an answer" },
+      { text: "done" },
+    ]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.prompts[0]).toMatch(/^Plan mode\./);
+    expect(agent.prompts[0]).toContain("\n\nLook.");
+    expect(agent.prompts[1]).toMatch(/^Ask mode\./);
+    expect(agent.prompts[1]).toContain("\n\nWhy?");
+    expect(agent.prompts[2]).toBe("Do it.");
+  });
+
   it("runs cells in document order, ignoring the prose between them", async () => {
     const path = await notebookFile(twoCells);
     const agent = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);

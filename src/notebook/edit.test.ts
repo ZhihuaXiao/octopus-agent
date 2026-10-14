@@ -227,6 +227,34 @@ describe("applying an edit to a notebook", () => {
       );
     });
 
+    it("writes plan or ask onto the fence, and leaves agent unwritten", () => {
+      const notebook = valid("```prompt id=a\nGo.\n```\n");
+
+      const planned = edited(
+        notebook,
+        changing(notebook, isCell("a"), (cell) =>
+          cell.kind === "cell" ? { ...cell, mode: "plan" } : cell,
+        ),
+      );
+
+      expect(planned).toBe("```prompt id=a mode=plan\nGo.\n```\n");
+
+      const back = valid(planned);
+      expect(
+        edited(
+          back,
+          changing(back, isCell("a"), (cell) =>
+            cell.kind === "cell" ? { ...cell, mode: "agent" } : cell,
+          ),
+        ),
+      ).toBe("```prompt id=a\nGo.\n```\n");
+    });
+
+    it("keeps a fence that already says mode=agent when nothing else changes", () => {
+      const source = "```prompt id=a mode=agent\nGo.\n```\n";
+      expect(edited(valid(source), editOf(valid(source)))).toBe(source);
+    });
+
     it("may change a cell's type, model and timeout", () => {
       const notebook = valid(source);
 

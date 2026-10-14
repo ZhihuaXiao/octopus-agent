@@ -1676,6 +1676,10 @@ button.context-ring svg {
   width: 7rem;
 }
 
+.draft-declaration select.draft-mode {
+  font-size: 0.85rem;
+}
+
 .draft-declaration select.draft-model {
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;

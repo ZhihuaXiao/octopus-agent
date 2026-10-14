@@ -122,6 +122,8 @@ export interface CellView {
   /** The Cells this one declares a Dependency on. */
   readonly uses: readonly string[];
   readonly isolated: boolean;
+  /** How a Prompt Cell runs, when it is not the agent default. */
+  readonly mode?: "plan" | "ask";
   /** The model the Cell names for itself, when it does. */
   readonly model?: string;
   /** The Cell's own Timeout in milliseconds, when it declares one. */
@@ -585,6 +587,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       body: cell.body,
       uses: cell.uses,
       isolated: cell.isolated,
+      ...(cell.mode !== undefined ? { mode: cell.mode } : {}),
       ...(cell.model !== undefined ? { model: cell.model } : {}),
       ...(cell.timeout !== undefined ? { timeout: cell.timeout } : {}),
     };

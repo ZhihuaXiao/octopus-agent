@@ -1262,10 +1262,16 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
       : undefined;
   }
   if (value.kind !== "cell") return undefined;
-  if (!hasKeys(value, ["kind", "id", "type", "body", "uses", "isolated"], ["model", "timeout"])) {
+  if (
+    !hasKeys(
+      value,
+      ["kind", "id", "type", "body", "uses", "isolated"],
+      ["model", "timeout", "mode"],
+    )
+  ) {
     return undefined;
   }
-  const { id, type, body, uses, isolated, model, timeout } = value;
+  const { id, type, body, uses, isolated, model, timeout, mode } = value;
   if (typeof id !== "string" || typeof body !== "string" || typeof isolated !== "boolean") {
     return undefined;
   }
@@ -1273,9 +1279,16 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
   if (!isStrings(uses)) return undefined;
   if (model !== undefined && typeof model !== "string") return undefined;
   if (timeout !== undefined && typeof timeout !== "string") return undefined;
+  if (
+    mode !== undefined &&
+    (type !== "prompt" || (mode !== "agent" && mode !== "plan" && mode !== "ask"))
+  ) {
+    return undefined;
+  }
   const cell: CellEdit = { kind: "cell", id, type, body, uses, isolated };
   return {
     ...cell,
+    ...(mode === "agent" || mode === "plan" || mode === "ask" ? { mode } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
   };

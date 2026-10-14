@@ -93,6 +93,7 @@
  *   body: string,
  *   uses: string[],
  *   isolated: boolean,
+ *   mode?: "plan" | "ask",
  *   model?: string,
  *   timeout?: number,
  *   status: CellState,
@@ -1941,12 +1942,7 @@ function symbolButton(className, title, icon) {
 function turnIcon(view) {
   if (view === "rounds") return symbolIcon(["M3 4.5h10", "M3 8h10", "M3 11.5h10"]);
   if (view === "system") {
-    return symbolIcon([
-      "M4 2.5h5.5L12 5v8.5H4z",
-      "M9.5 2.5V5H12",
-      "M6 8h4.5",
-      "M6 10.5h3",
-    ]);
+    return symbolIcon(["M4 2.5h5.5L12 5v8.5H4z", "M9.5 2.5V5H12", "M6 8h4.5", "M6 10.5h3"]);
   }
   if (view === "prompts") return symbolIcon(["M3 3.5h10v6.5H7.5L5 12.2V10H3z"]);
   return symbolIcon([
@@ -1988,6 +1984,72 @@ function foldIcon(folded) {
 /** A small square: stop. */
 function stopIcon() {
   return symbolIcon(["M4.5 4.5h7v7h-7z"], true);
+}
+
+/** Two pages: copy. */
+function copyIcon() {
+  return symbolIcon(["M6 2.5h7.2v8.2H6z", "M2.8 5.3v8.2h7.2"]);
+}
+
+/**
+ * Puts `text` on the clipboard and says so on the button for a moment.
+ * @param {string} text
+ * @param {HTMLButtonElement} button
+ */
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "0";
+    area.style.left = "-9999px";
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  const title = button.title;
+  const label = button.querySelector("svg") === null ? button.textContent : undefined;
+  button.title = "Copied";
+  if (label !== undefined && label !== "") button.textContent = "Copied";
+  window.setTimeout(() => {
+    button.title = title;
+    if (label !== undefined && label !== "") button.textContent = label;
+  }, 1200);
+}
+
+/**
+ * What was written, and what came back after it ran. A cell that has not run
+ * yet has no reply, so only its own words are copied.
+ * @param {string} written
+ * @param {string} reply
+ */
+function cellCopy(written, reply) {
+  const body = written.replace(/\r?\n$/, "");
+  const answer = reply.replace(/\r?\n$/, "").trim();
+  if (answer === "") return body;
+  return `${body}\n\n${answer}`;
+}
+
+/**
+ * Copies a cell: the prompt or command, then the reply or output when there
+ * is one. A symbol in a header, the word Copy among the draft's other words.
+ * @param {() => string} text
+ * @param {boolean} symbol
+ */
+function copyButton(text, symbol) {
+  const button = symbol
+    ? symbolButton("cell-copy", "Copy this cell and its reply", copyIcon())
+    : make("button", "", "Copy");
+  if (!symbol) {
+    button.type = "button";
+    button.title = "Copy this cell and its reply";
+  }
+  button.addEventListener("click", () => void copyText(text(), button));
+  return button;
 }
 
 /**
@@ -2618,6 +2680,10 @@ function renderCell(cell, session, running) {
   heading.append(foldButton(item, key, `this ${cell.type} cell`, folded));
   heading.append(make("span", "cell-id", cell.id), make("span", "cell-type", cell.type));
   if (cell.isolated) heading.append(make("span", "cell-attribute", "isolated"));
+  if (cell.type === "prompt") {
+    const mode = cell.mode === "plan" ? "Plan" : cell.mode === "ask" ? "Ask" : "Agent";
+    heading.append(make("span", "cell-attribute", mode));
+  }
   if (cell.uses.length > 0)
     heading.append(make("span", "cell-attribute", `uses ${cell.uses.join(", ")}`));
   if (cell.model !== undefined) heading.append(make("span", "cell-attribute", cell.model));
@@ -2637,6 +2703,7 @@ function renderCell(cell, session, running) {
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
   heading.append(runOne);
+  heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
   heading.append(make("span", "cell-preview", foldPreview(cell.body)));
@@ -3411,6 +3478,7 @@ async function interrupt() {
  *   body: string,
  *   uses: string,
  *   isolated: boolean,
+ *   mode: "agent" | "plan" | "ask",
  *   model: string,
  *   timeout: string,
  *   folded: boolean,
@@ -3480,6 +3548,7 @@ function draftSegments(state) {
       body: cell.body.replace(/\r?\n$/, ""),
       uses: cell.uses.join(", "),
       isolated: cell.isolated,
+      mode: cell.mode === "plan" || cell.mode === "ask" ? cell.mode : "agent",
       model: cell.model ?? "",
       timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
       folded: isFolded(cellFoldKey(cell.id)),
@@ -3564,6 +3633,7 @@ function saveRequestOf(edited) {
           .map((name) => name.trim())
           .filter((name) => name !== ""),
         isolated: segment.isolated,
+        ...(segment.type === "prompt" && segment.mode !== "agent" ? { mode: segment.mode } : {}),
         ...(model === "" ? {} : { model }),
         ...(timeout === "" ? {} : { timeout }),
       };
@@ -3905,7 +3975,10 @@ function attachFileMenu(field, cell) {
   menu.hidden = true;
   menu.setAttribute("role", "listbox");
   menu.setAttribute("aria-label", "Files");
-  field.setAttribute("aria-controls", `${field.getAttribute("aria-controls") ?? ""} ${menu.id}`.trim());
+  field.setAttribute(
+    "aria-controls",
+    `${field.getAttribute("aria-controls") ?? ""} ${menu.id}`.trim(),
+  );
   wrap.append(menu);
   menu.addEventListener("mousedown", (event) => event.preventDefault());
 
@@ -3980,7 +4053,11 @@ function attachFileMenu(field, cell) {
     );
     if (matched.length === 0) {
       menu.append(
-        make("li", "skill-status", loaded === undefined ? "Looking for files…" : "No file matches."),
+        make(
+          "li",
+          "skill-status",
+          loaded === undefined ? "Looking for files…" : "No file matches.",
+        ),
       );
       return;
     }
@@ -4128,6 +4205,7 @@ function blankCell(type, before) {
     body: "",
     uses: "",
     isolated: false,
+    mode: "agent",
     model: "",
     timeout: "",
     folded: false,
@@ -4207,6 +4285,12 @@ function actionsFor(at) {
           watching?.state.running === true || draft?.saving === true,
         ),
       );
+      actions.append(
+        copyButton(() => {
+          const replied = watching?.state.cells.find((item) => item.id === cell.id.trim());
+          return cellCopy(cell.body, replied?.text ?? "");
+        }, false),
+      );
     }
   }
 
@@ -4253,9 +4337,35 @@ function renderDraftCell(cell, at) {
     choice.selected = cell.type === option;
     type.append(choice);
   }
+
+  const modeLabel = document.createElement("label");
+  const mode = document.createElement("select");
+  mode.className = "draft-mode";
+  mode.title =
+    "How this prompt cell runs. Agent may change files. Plan only reads and replies with a plan. Ask only answers.";
+  /** @type {readonly (readonly [string, string])[]} */
+  const modes = [
+    ["agent", "Agent"],
+    ["plan", "Plan"],
+    ["ask", "Ask"],
+  ];
+  for (const [value, label] of modes) {
+    const choice = document.createElement("option");
+    choice.value = value;
+    choice.textContent = label;
+    choice.selected = cell.mode === value;
+    mode.append(choice);
+  }
+  mode.addEventListener("change", () => {
+    cell.mode = mode.value === "plan" || mode.value === "ask" ? mode.value : "agent";
+  });
+  modeLabel.append("mode", mode);
+  modeLabel.hidden = cell.type !== "prompt";
+
   type.addEventListener("change", () => {
     cell.type = type.value === "bash" ? "bash" : "prompt";
     card.className = `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`;
+    modeLabel.hidden = cell.type !== "prompt";
     const fold = card.querySelector("button.fold");
     if (fold instanceof HTMLButtonElement) {
       fold.title = `${cell.folded ? "Expand" : "Collapse"} this ${cell.type} cell`;
@@ -4277,6 +4387,7 @@ function renderDraftCell(cell, at) {
 
   declaration.append(
     type,
+    modeLabel,
     field(
       "id",
       cell.id,
@@ -4856,6 +4967,7 @@ function renderStep(cell, session) {
   );
   heading.append(...turnButtons(cell));
   if (cell.service === true) heading.append(serviceStopButton(cell.id));
+  heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
   const output = make("div", "run-step-output streamed");

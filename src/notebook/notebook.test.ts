@@ -321,6 +321,12 @@ Summarise it.
   it("accepts a type attribute that restates the fence tag", () => {
     expect(cellsOf(valid("```prompt id=a type=prompt\nx\n```\n"))[0]?.type).toBe("prompt");
   });
+
+  it("reads plan and ask, and treats agent as no choice", () => {
+    expect(cellsOf(valid("```prompt id=a mode=plan\nGo.\n```\n"))[0]?.mode).toBe("plan");
+    expect(cellsOf(valid("```prompt id=a mode=ask\nGo.\n```\n"))[0]?.mode).toBe("ask");
+    expect(cellsOf(valid("```prompt id=a mode=agent\nGo.\n```\n"))[0]?.mode).toBeUndefined();
+  });
 });
 
 /** The problems reported for a notebook the test expects to be malformed. */
@@ -443,6 +449,18 @@ describe("malformed notebooks", () => {
 
     expect(error?.line).toBe(1);
     expect(error?.message).toContain(`Unknown cell attribute "bogus"`);
+  });
+
+  it("reports a mode a prompt cell cannot run in", () => {
+    expect(problems("```prompt id=a mode=work\nGo.\n```\n")).toEqual([
+      { line: 1, message: `"mode" must be agent, plan, or ask` },
+    ]);
+  });
+
+  it("reports a mode on a bash cell", () => {
+    expect(problems("```bash id=a mode=plan\nx\n```\n")).toEqual([
+      { line: 1, message: `"mode" is only for a prompt cell` },
+    ]);
   });
 
   it("reports an isolated attribute that is not a boolean", () => {

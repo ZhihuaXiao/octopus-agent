@@ -40,6 +40,17 @@ export {
 
 export type CellType = "prompt" | "bash";
 
+/**
+ * How a Prompt Cell takes its turn.
+ *
+ * Agent is the Notebook's own tools. Plan may only read, and answers with a
+ * plan. Ask only answers, and is given no tools. Absent means agent, so a
+ * Cell written before this choice existed still runs as it did.
+ */
+export type PromptMode = "agent" | "plan" | "ask";
+
+export const PROMPT_MODES: readonly PromptMode[] = ["agent", "plan", "ask"];
+
 export interface Cell {
   readonly id: string;
   readonly type: CellType;
@@ -49,6 +60,11 @@ export interface Cell {
   readonly uses: readonly string[];
   /** Whether the Cell runs in a fresh context rather than the shared one. */
   readonly isolated: boolean;
+  /**
+   * How a Prompt Cell runs. Only `plan` and `ask` are stored: agent is the
+   * absence of a choice, and a Bash Cell has none.
+   */
+  readonly mode?: Exclude<PromptMode, "agent">;
   /** Overrides the Notebook's model for this Cell alone. */
   readonly model?: string;
   /**
@@ -102,7 +118,7 @@ export type ParseResult =
 const FRONTMATTER_DELIMITER = "---";
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const INDENTED_FENCE = /^ {1,3}(`{3,}|~{3,})(.*)$/;
-const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "model", "timeout"];
+const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "mode", "model", "timeout"];
 /** The attributes that are this project's own invention, so no snippet has one. */
 const CELL_ONLY_ATTRIBUTES = CELL_ATTRIBUTES.filter((key) => key !== "id");
 const MISSING_ID = "Cell is missing an id";
@@ -243,6 +259,7 @@ function readCell(
   let id: string | undefined;
   let uses: readonly string[] = [];
   let isolated = false;
+  let mode: Exclude<PromptMode, "agent"> | undefined;
   let model: string | undefined;
   let timeout: number | undefined;
   const seen = new Set<string>();
@@ -310,6 +327,21 @@ function readCell(
       continue;
     }
 
+    if (key === "mode") {
+      // A Bash Cell has no agent to put in a mode, so the attribute would
+      // otherwise sit on the fence and change nothing.
+      if (tag !== "prompt") {
+        errors.push({ line, message: `"mode" is only for a prompt cell` });
+        continue;
+      }
+      if (value !== "agent" && value !== "plan" && value !== "ask") {
+        errors.push({ line, message: `"mode" must be agent, plan, or ask` });
+        continue;
+      }
+      if (value !== "agent") mode = value;
+      continue;
+    }
+
     if (key === "model") model = value;
 
     if (key === "timeout") {
@@ -329,6 +361,7 @@ function readCell(
     body,
     uses,
     isolated,
+    ...(mode !== undefined ? { mode } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
   };
