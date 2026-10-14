@@ -103,6 +103,20 @@ export function textBlocksOf(content: unknown): string {
 }
 
 /**
+ * The thinking in a message's content, one block after another. A blank line
+ * between them, as one message's text is set apart from the next's: two
+ * thoughts are two thoughts. Empty when the message recorded none.
+ */
+export function thinkingBlocksOf(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return (content as unknown[])
+    .filter(isRecord)
+    .filter((block) => block.type === "thinking" && typeof block.thinking === "string")
+    .map((block) => block.thinking as string)
+    .join("\n\n");
+}
+
+/**
  * Everything the turn's assistant messages said, in order, blank lines between
  * one message's text and the next: a turn that called a tool speaks once before
  * it and once after, and both were said.
@@ -110,6 +124,18 @@ export function textBlocksOf(content: unknown): string {
 export function saidIn(turn: readonly unknown[]): string {
   return assistantMessagesOf(turn)
     .map((message) => textBlocksOf(message.content))
+    .filter((text) => text !== "")
+    .join("\n\n");
+}
+
+/**
+ * Everything the turn's assistant messages thought, in order, blank lines
+ * between one message's thinking and the next. Kept apart from `saidIn`: a
+ * thought is not something the turn said.
+ */
+export function thoughtIn(turn: readonly unknown[]): string {
+  return assistantMessagesOf(turn)
+    .map((message) => thinkingBlocksOf(message.content))
     .filter((text) => text !== "")
     .join("\n\n");
 }

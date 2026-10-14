@@ -1590,6 +1590,26 @@ describe("a browser that goes away", () => {
     ]);
     await later.close();
   });
+
+  it("tells a later browser what a prompt cell thought", async () => {
+    const agent = createScriptedAgent([{ text: "Hello", thinking: "weighing it" }]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const first = await watch(server, session.id);
+
+    await run(server, session.id);
+    await first.next("run-ended");
+    expect(first.events.map((event) => event.type)).toContain("cell-thinking");
+    await first.close();
+
+    const later = await watch(server, session.id);
+    const told = await later.next("notebook-session");
+
+    expect(told.session?.cells).toMatchObject([
+      { id: "greet", status: "ok", text: "Hello", thinking: "weighing it" },
+    ]);
+    await later.close();
+  });
 });
 
 describe("a browser that comes back", () => {

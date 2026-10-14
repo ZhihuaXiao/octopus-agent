@@ -2358,6 +2358,24 @@ describe("watching a run", () => {
     ]);
   });
 
+  it("reports what a prompt cell thought, and keeps that thought on the record", async () => {
+    const path = await notebookFile(oneCell);
+    const agent = createScriptedAgent([{ text: "Hello", thinking: "weighing it" }]);
+    const events: RunEvent[] = [];
+
+    const record = await runNotebook(path, { agent: agent.create, observe: (e) => events.push(e) });
+
+    expect(events.map((event) => event.type)).toEqual([
+      "run-started",
+      "cell-started",
+      "cell-thinking",
+      "cell-text",
+      "cell-ended",
+    ]);
+    expect(events[2]).toEqual({ type: "cell-thinking", cell: "greet", thinking: "weighing it" });
+    expect(record.cells[0]).toMatchObject({ text: "Hello", thinking: "weighing it" });
+  });
+
   it("names the run before its first cell, with the cells it will run in their order", async () => {
     const path = await notebookOf(promptCell("report", "collect"), promptCell("collect"));
     const events: RunEvent[] = [];

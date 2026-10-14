@@ -20,8 +20,8 @@ describe("createAssistantTextStream", () => {
   it("returns the newly revealed text so callers can stream it", () => {
     const stream = createAssistantTextStream();
 
-    expect(stream.accept(delta(0, "Hello, "))).toBe("Hello, ");
-    expect(stream.accept(delta(0, "world"))).toBe("world");
+    expect(stream.accept(delta(0, "Hello, ")).text).toBe("Hello, ");
+    expect(stream.accept(delta(0, "world")).text).toBe("world");
   });
 
   it("orders content blocks by index rather than by arrival", () => {
@@ -58,7 +58,8 @@ describe("createAssistantTextStream", () => {
       message: { content: [{ type: "text", text: "Hello, world" }] },
     });
 
-    expect(revealed).toBe("ld");
+    expect(revealed.text).toBe("ld");
+    expect(revealed.thinking).toBe("");
     expect(stream.text()).toBe("Hello, world");
   });
 
@@ -71,7 +72,8 @@ describe("createAssistantTextStream", () => {
       message: { content: [{ type: "text", text: "Hello, world" }] },
     });
 
-    expect(revealed).toBe("");
+    expect(revealed.text).toBe("");
+    expect(revealed.thinking).toBe("");
     expect(stream.text()).toBe("Hello, world");
   });
 
@@ -91,5 +93,86 @@ describe("createAssistantTextStream", () => {
     });
 
     expect(stream.text()).toBe("the answer");
+  });
+
+  it("returns thinking deltas apart from the reply", () => {
+    const stream = createAssistantTextStream();
+
+    expect(
+      stream.accept({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hmm" },
+      }),
+    ).toEqual({ text: "", thinking: "hmm" });
+    expect(stream.accept(delta(1, "answer"))).toEqual({ text: "answer", thinking: "" });
+    expect(stream.text()).toBe("answer");
+  });
+
+  it("reveals thinking from the final message without mixing it into the reply", () => {
+    const stream = createAssistantTextStream();
+
+    const revealed = stream.accept({
+      type: "message_end",
+      message: {
+        content: [
+          { type: "thinking", thinking: "one" },
+          { type: "thinking", thinking: "two" },
+          { type: "text", text: "the answer" },
+        ],
+      },
+    });
+
+    expect(revealed).toEqual({ text: "the answer", thinking: "one\n\ntwo" });
+    expect(stream.text()).toBe("the answer");
+  });
+
+  it("reveals only the thinking the deltas missed", () => {
+    const stream = createAssistantTextStream();
+    stream.accept({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "deliber" },
+    });
+
+    const revealed = stream.accept({
+      type: "message_end",
+      message: {
+        content: [
+          { type: "thinking", thinking: "deliberating" },
+          { type: "text", text: "ok" },
+        ],
+      },
+    });
+
+    expect(revealed).toEqual({ text: "ok", thinking: "ating" });
+  });
+
+  it("starts the next message's thinking fresh", () => {
+    const stream = createAssistantTextStream();
+    stream.accept({
+      type: "message_end",
+      message: { content: [{ type: "thinking", thinking: "first" }] },
+    });
+
+    expect(
+      stream.accept({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "sec" },
+      }).thinking,
+    ).toBe("sec");
+  });
+
+  it("reveals no thinking when the final message contradicts the deltas", () => {
+    const stream = createAssistantTextStream();
+    stream.accept({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "nope" },
+    });
+
+    const revealed = stream.accept({
+      type: "message_end",
+      message: { content: [{ type: "thinking", thinking: "actually" }] },
+    });
+
+    expect(revealed.thinking).toBe("");
   });
 });

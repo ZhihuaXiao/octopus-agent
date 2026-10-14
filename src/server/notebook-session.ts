@@ -134,6 +134,11 @@ export interface CellView {
    * over — a Bash Cell's standard output, since a command is not spoken.
    */
   readonly text: string;
+  /**
+   * What a Prompt Cell's model thought, when it recorded any. Absent for a
+   * Bash Cell, and when the model recorded none.
+   */
+  readonly thinking?: string;
   /** The tools the agent has invoked so far, or invoked, in the order it did. */
   readonly toolCalls: readonly ToolCall[];
   /**
@@ -502,7 +507,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   /** What the Cells in flight have said and done so far, and since when. */
   const speaking = new Map<
     string,
-    { text: string; readonly calls: ToolCall[]; readonly startedAt: string }
+    { text: string; thinking: string; readonly calls: ToolCall[]; readonly startedAt: string }
   >();
   /** The Run before this one, for the next to carry on from. */
   let last: RunRecord | undefined;
@@ -598,6 +603,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         ...declared,
         status: "running",
         text: inFlight.text,
+        ...(inFlight.thinking !== "" ? { thinking: inFlight.thinking } : {}),
         toolCalls: inFlight.calls,
         artifacts: [],
         ...(inProgress !== undefined ? { run: inProgress.run } : {}),
@@ -615,6 +621,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       ...declared,
       status: stale.has(cell.id) ? "stale" : record.status,
       text: record.type === "prompt" ? record.text : record.stdout,
+      ...(record.type === "prompt" && record.thinking !== undefined && record.thinking !== ""
+        ? { thinking: record.thinking }
+        : {}),
       toolCalls: record.type === "prompt" ? record.toolCalls : [],
       artifacts: record.artifacts,
       run,
@@ -650,11 +659,16 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         break;
       }
       case "cell-started":
-        speaking.set(event.cell, { text: "", calls: [], startedAt: at });
+        speaking.set(event.cell, { text: "", thinking: "", calls: [], startedAt: at });
         break;
       case "cell-text": {
         const inFlight = speaking.get(event.cell);
         if (inFlight !== undefined) inFlight.text += event.text;
+        break;
+      }
+      case "cell-thinking": {
+        const inFlight = speaking.get(event.cell);
+        if (inFlight !== undefined) inFlight.thinking += event.thinking;
         break;
       }
       case "cell-tool-call":

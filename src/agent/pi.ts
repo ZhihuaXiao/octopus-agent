@@ -15,7 +15,7 @@ import {
 import { contextUsage } from "../pi/context.js";
 import { createAssistantTextStream } from "../pi/streaming.js";
 import { decideTrust } from "../pi/trust.js";
-import { failureOf, summariseTurn } from "../pi/turn.js";
+import { failureOf, summariseTurn, thoughtIn } from "../pi/turn.js";
 import {
   type Agent,
   type AgentSetup,
@@ -201,7 +201,7 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
     },
 
     async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
-      const { signal, model, mode, onText, onToolCall } = turnOptions;
+      const { signal, model, mode, onText, onThinking, onToolCall } = turnOptions;
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
       if (model !== undefined) await takeOn(model);
@@ -236,7 +236,8 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
           onToolCall?.({ name: event.toolName, input: event.args ?? null });
         }
         const revealed = stream.accept(event);
-        if (revealed) onText?.(revealed);
+        if (revealed.thinking !== "") onThinking?.(revealed.thinking);
+        if (revealed.text !== "") onText?.(revealed.text);
       });
 
       const before = session.messages.length;
@@ -291,8 +292,10 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       // point a later Run forks at to put a Cell back in this context.
       const anchor = session.sessionManager.getLeafId();
 
+      const thinking = thoughtIn(turn);
       return {
         text: stream.text(),
+        ...(thinking !== "" ? { thinking } : {}),
         ...summary,
         retries,
         ...(systemPrompt !== "" ? { systemPrompt } : {}),

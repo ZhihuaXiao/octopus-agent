@@ -127,6 +127,7 @@ echo two
     const agent = createScriptedAgent([
       {
         text: "It adds two numbers.",
+        thinking: "reading the file first",
         model: "anthropic/claude-sonnet-4-5-20250929",
         usage: { inputTokens: 1200, outputTokens: 300, cost: 0.0123 },
         toolCalls: [
@@ -145,6 +146,8 @@ echo two
       '"path": "src/sum.ts"',
       "bash",
       '"command": "npm test -- sum"',
+      "Thinking",
+      "reading the file first",
       "It adds two numbers.",
     ].map((said) => text.indexOf(said));
     expect(order.every((at) => at !== -1)).toBe(true);
@@ -157,7 +160,11 @@ echo two
     const notebook = await notebookAt("hostile.md", "```prompt id=page\nWrite a page.\n```\n");
     const hostile = `<script>alert(1)</script><img src=x onerror="alert(2)">`;
     const agent = createScriptedAgent([
-      { text: hostile, toolCalls: [{ name: "<b>write</b>", input: { path: hostile } }] },
+      {
+        text: hostile,
+        thinking: hostile,
+        toolCalls: [{ name: "<b>write</b>", input: { path: hostile } }],
+      },
     ]);
     await runNotebook(notebook, { agent: agent.create });
 

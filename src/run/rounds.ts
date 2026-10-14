@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
 
 import type { Cell } from "../notebook/notebook.js";
-import { textBlocksOf } from "../pi/turn.js";
+import { textBlocksOf, thinkingBlocksOf } from "../pi/turn.js";
 import { isRecord } from "../util/guards.js";
 import { anchorBefore, type Anchors } from "./anchor.js";
 
@@ -71,15 +71,6 @@ export type RoundsResult =
 
 const clip = (text: string) => (text.length <= LONGEST ? text : `${text.slice(0, LONGEST)}\n…`);
 
-function thinkingOf(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  return (content as unknown[])
-    .filter(isRecord)
-    .filter((block) => block.type === "thinking" && typeof block.thinking === "string")
-    .map((block) => block.thinking as string)
-    .join("\n\n");
-}
-
 interface DraftTool {
   name: string;
   input: unknown;
@@ -134,7 +125,7 @@ function tokensOf(message: Record<string, unknown>): {
 
 function roundOf(message: Record<string, unknown>, kind: "model" | "you"): DraftRound {
   const text = clip(textBlocksOf(message.content));
-  const thinking = clip(thinkingOf(message.content));
+  const thinking = clip(thinkingBlocksOf(message.content));
   const model = kind === "model" ? modelOf(message) : "";
   return {
     kind,

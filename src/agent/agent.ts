@@ -66,6 +66,11 @@ export interface ContextUsage {
 
 export interface CellResult {
   text: string;
+  /**
+   * What the model thought, when it recorded any. Kept apart from `text`,
+   * which is what it said. Absent when it recorded none.
+   */
+  thinking?: string;
   toolCalls: ToolCall[];
   usage: Usage;
   /** The model that actually ran, which providers rotate under stable names. */
@@ -208,6 +213,13 @@ export interface TurnOptions {
    * Run knows which Cell is speaking.
    */
   readonly onText?: (text: string) => void;
+  /**
+   * Called with each fragment of what the model thought, as it thinks it, so
+   * whoever asked can show that beside the reply. The whole thought is on the
+   * result once the turn is over, when it recorded any. Per turn, as `onText`
+   * is, because the thought is a Cell's.
+   */
+  readonly onThinking?: (thinking: string) => void;
   /**
    * Called with each tool the agent invokes, as it invokes it, so whoever
    * asked can show what the agent is doing rather than only what it says it

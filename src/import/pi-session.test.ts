@@ -147,6 +147,44 @@ function succeeded(imported: Imported): Extract<Imported, { kind: "imported" }> 
 }
 
 describe("importing a chat", () => {
+  it("keeps every thought a turn recorded, apart from what it said", async () => {
+    const looked = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "list them" },
+        { type: "text", text: "Looking." },
+        { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls" } },
+      ],
+      timestamp: Date.now(),
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      usage: usage(20, 10, 0.5),
+      stopReason: "toolUse",
+    } as AppendableMessage;
+    const answered = {
+      ...assistant("One file."),
+      content: [
+        { type: "thinking", thinking: "just the one" },
+        { type: "text", text: "One file." },
+      ],
+    } as AppendableMessage;
+    const { file } = chatIn(dir, [
+      user("What's there?"),
+      looked,
+      toolResult("bash", "a.txt"),
+      answered,
+    ]);
+    const notebook = join(dir, "chat.md");
+
+    const { record } = succeeded(await importSession({ session: file, notebook }));
+
+    expect(record.cells[0]).toMatchObject({
+      text: "Looking.\n\nOne file.",
+      thinking: "list them\n\njust the one",
+    });
+  });
+
   it("writes a notebook whose prompt cells are the session's user messages, in order", async () => {
     const { file } = chatIn(dir, [
       user("List the files here."),

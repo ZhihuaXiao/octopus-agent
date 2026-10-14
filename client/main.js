@@ -4,7 +4,7 @@
  * Notebook Session, and shows the Session as the Author View — the Notebook as
  * written, each Cell as the Notebook declares it, with what running it has
  * produced: its text as it is spoken, shown as plain text or as Markdown,
- * each tool the agent invokes as it
+ * what it thought, each tool the agent invokes as it
  * invokes it, and the files it left — and a way to run one Cell or all of
  * them, or to stop. A Bash Cell that is still running, or that left a service
  * running, has Stop on it, which ends that service. A prompt cell, a bash
@@ -35,7 +35,7 @@
  *
  * The same Session is shown a second way, as the Run View: the Cells hidden,
  * the Notebook's declared Inputs as a form, one button, and, as it runs, how
- * far it has got and what each Cell says and leaves; a Run that could not
+ * far it has got and what each Cell thought, says, and leaves; a Run that could not
  * start or did not finish is explained in words that say whether running it
  * again will help or somebody has to be asked. For whoever is handed a
  * Notebook and not its prompts.
@@ -98,6 +98,7 @@
  *   timeout?: number,
  *   status: CellState,
  *   text: string,
+ *   thinking?: string,
  *   toolCalls: ToolCall[],
  *   artifacts: string[],
  *   run?: string,
@@ -136,6 +137,7 @@
  *   type: "prompt" | "bash",
  *   status: "ok" | "error" | "timeout" | "interrupted",
  *   text?: string,
+ *   thinking?: string,
  *   stdout?: string,
  *   toolCalls?: ToolCall[],
  *   artifacts: string[],
@@ -147,6 +149,7 @@
  *   | { type: "run-started", run: string, cells: string[] }
  *   | { type: "cell-started", cell: string }
  *   | { type: "cell-text", cell: string, text: string }
+ *   | { type: "cell-thinking", cell: string, thinking: string }
  *   | { type: "cell-tool-call", cell: string, call: ToolCall }
  *   | { type: "cell-ended", record: CellRecord }
  *   | { type: "run-ended", record: { id: string, stale: string[] } }
@@ -2713,8 +2716,12 @@ function renderCell(cell, session, running) {
   calls.append(...cell.toolCalls.map(renderToolCall));
   const output = make("div", "cell-output streamed");
   fillOutput(output, cell.text);
+  const thinking = renderThinking(cell.thinking);
 
-  item.append(heading, body, calls, output);
+  item.append(heading, body, calls);
+  if (thinking !== undefined) item.append(thinking);
+  item.append(output);
+  askForThinking(cell);
   if (cell.error !== undefined) item.append(make("p", "cell-error", cell.error));
   if (cell.artifacts.length > 0 && cell.run !== undefined) {
     const run = cell.run;
@@ -3234,6 +3241,97 @@ function renderSession() {
 }
 
 /**
+ * What the model thought, above the reply. Open, so the cell shows the thought
+ * rather than only that there was one. Absent when it recorded none.
+ * @param {string | undefined} thinking
+ * @returns {HTMLDetailsElement | undefined}
+ */
+function renderThinking(thinking) {
+  if (thinking === undefined || thinking === "") return undefined;
+  const thought = document.createElement("details");
+  thought.className = "cell-thinking";
+  thought.open = true;
+  thought.append(make("summary", "", "Thinking"), make("pre", "round-thinking", thinking));
+  return thought;
+}
+
+/**
+ * Puts `cell`'s thought into the cell on the page, leaving a thought the
+ * reader has collapsed closed.
+ * @param {CellView} cell
+ */
+function showThinking(cell) {
+  if (cell.thinking === undefined || cell.thinking === "") return;
+  const listName = view === "author" ? "segments" : "run-steps";
+  const root = document.getElementById(listName);
+  if (root === null) return;
+  const item = root.querySelector(`[data-cell="${CSS.escape(cell.id)}"]`);
+  if (item === null) return;
+  const block = item.querySelector(".cell-thinking");
+  if (!(block instanceof HTMLDetailsElement)) {
+    const made = renderThinking(cell.thinking);
+    if (made === undefined) return;
+    const output = item.querySelector(".streamed");
+    if (output !== null) output.before(made);
+    else item.append(made);
+    return;
+  }
+  const pre = block.querySelector("pre");
+  if (pre !== null) pre.textContent = cell.thinking;
+}
+
+/**
+ * Cells whose session was asked for a thought the record did not keep. One
+ * ask per cell per run, so a redraw does not ask again.
+ * @type {Set<string>}
+ */
+const thinkingAsked = new Set();
+
+/**
+ * A finished prompt cell may have thought something its record did not keep.
+ * Rounds reads that from the agent session; ask once and show the same text.
+ * @param {CellView} cell
+ */
+function askForThinking(cell) {
+  if (watching === undefined || cell.type !== "prompt" || cell.run === undefined) return;
+  if (cell.status === "idle" || cell.status === "running") return;
+  if (cell.thinking !== undefined && cell.thinking !== "") return;
+  const session = watching.state.id;
+  const run = cell.run;
+  const key = `${session}\n${run}\n${cell.id}`;
+  if (thinkingAsked.has(key)) return;
+  thinkingAsked.add(key);
+  void (async () => {
+    try {
+      const response = await request(
+        `/api/sessions/${encodeURIComponent(session)}/cells/${encodeURIComponent(cell.id)}/rounds`,
+      );
+      if (!response.ok || watching === undefined || watching.state.id !== session) return;
+      const value = /** @type {unknown} */ (await response.json());
+      if (value === null || typeof value !== "object" || !("rounds" in value)) return;
+      const rounds = Array.isArray(value.rounds) ? value.rounds : [];
+      const thinking = rounds
+        .map((round) => {
+          if (round === null || typeof round !== "object") return "";
+          if (!("thinking" in round) || typeof round.thinking !== "string") return "";
+          if ("kind" in round && round.kind === "you") return "";
+          return round.thinking;
+        })
+        .filter((text) => text !== "")
+        .join("\n\n");
+      if (thinking === "") return;
+      const current = cellNamed(cell.id);
+      if (current === undefined || current.run !== run || current.status === "running") return;
+      if (current.thinking !== undefined && current.thinking !== "") return;
+      current.thinking = thinking;
+      showThinking(current);
+    } catch {
+      // The reply is already on the cell. Rounds remains the other way to read the thought.
+    }
+  })();
+}
+
+/**
  * Appends to one Cell's output without redrawing the rest, since text arrives
  * a fragment at a time and a redraw per fragment would flicker. Whichever view
  * is drawn has the Cell's output somewhere on the page.
@@ -3246,6 +3344,19 @@ function appendText(id, text) {
   if (output === null) return;
   const cell = cellNamed(id);
   fillOutput(output, cell === undefined ? `${output.textContent ?? ""}${text}` : cell.text);
+}
+
+/**
+ * Appends to one Cell's thought without redrawing the rest, for the same
+ * reason the reply is appended: it arrives a fragment at a time.
+ * @param {string} id
+ * @param {string} thinking
+ */
+function appendThinking(id, thinking) {
+  const cell = cellNamed(id);
+  if (cell === undefined) return;
+  cell.thinking = `${cell.thinking ?? ""}${thinking}`;
+  showThinking(cell);
 }
 
 /**
@@ -3293,6 +3404,7 @@ function apply(event) {
       const cell = cellNamed(event.cell);
       if (cell !== undefined) {
         Object.assign(cell, { status: "running", text: "", toolCalls: [], artifacts: [] });
+        delete cell.thinking;
         delete cell.error;
         delete cell.context;
         if (cell.type === "bash") cell.service = true;
@@ -3308,6 +3420,10 @@ function apply(event) {
       appendText(event.cell, event.text);
       return;
     }
+    case "cell-thinking": {
+      appendThinking(event.cell, event.thinking);
+      return;
+    }
     case "cell-tool-call": {
       const cell = cellNamed(event.cell);
       if (cell !== undefined) cell.toolCalls.push(event.call);
@@ -3319,6 +3435,9 @@ function apply(event) {
       if (cell !== undefined) {
         cell.status = event.record.status;
         cell.text = event.record.text ?? event.record.stdout ?? "";
+        if (event.record.thinking !== undefined && event.record.thinking !== "")
+          cell.thinking = event.record.thinking;
+        else delete cell.thinking;
         cell.toolCalls = event.record.toolCalls ?? [];
         cell.artifacts = event.record.artifacts;
         if (event.record.context !== undefined) cell.context = event.record.context;
@@ -4952,8 +5071,8 @@ const STATE_WORDS = {
 
 /**
  * One Cell as the Run View shows it: its name and how it is getting on, what
- * it has said, and the files it left. Its body, and what the agent invoked
- * to do it, are what this view is for hiding.
+ * it thought and what it has said, and the files it left. Its body, and what
+ * the agent invoked to do it, are what this view is for hiding.
  * @param {CellView} cell
  * @param {string} session
  */
@@ -4972,7 +5091,11 @@ function renderStep(cell, session) {
   if (usageButton !== undefined) heading.append(usageButton);
   const output = make("div", "run-step-output streamed");
   fillOutput(output, cell.text);
-  item.append(heading, output);
+  const thinking = renderThinking(cell.thinking);
+  item.append(heading);
+  if (thinking !== undefined) item.append(thinking);
+  item.append(output);
+  askForThinking(cell);
   if (cell.artifacts.length > 0 && cell.run !== undefined) {
     const run = cell.run;
     const artifacts = make("ul", "artifacts");

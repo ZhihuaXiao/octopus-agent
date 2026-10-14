@@ -173,7 +173,7 @@ export function createScriptedAgent(
       agentSession: session,
 
       async prompt(body: string, options: TurnOptions = {}): Promise<CellResult> {
-        const { signal, model, onText, onToolCall } = options;
+        const { signal, model, onText, onThinking, onToolCall } = options;
         prompts.push(body);
         turns.push({
           body,
@@ -215,12 +215,14 @@ export function createScriptedAgent(
             });
           }
 
-          // Announced one at a time and then spoken in one piece, all before the
-          // turn resolves, which is the least a real turn streams: everything
-          // above the boundary hears the calls and the text before it holds the
-          // result, as it would from pi — whose tools run before its reply.
+          // Announced one at a time, thought, then spoken in one piece, all before
+          // the turn resolves, which is the least a real turn streams: everything
+          // above the boundary hears the calls, the thinking and the text before
+          // it holds the result, as it would from pi — whose tools run before its
+          // reply.
           const toolCalls: ToolCall[] = turn.toolCalls ?? [];
           for (const call of toolCalls) onToolCall?.(call);
+          if (turn.thinking !== undefined && turn.thinking !== "") onThinking?.(turn.thinking);
           onText?.(turn.text);
 
           const usage: Usage = turn.usage ?? noUsage;
@@ -233,6 +235,9 @@ export function createScriptedAgent(
 
           return {
             text: turn.text,
+            ...(turn.thinking !== undefined && turn.thinking !== ""
+              ? { thinking: turn.thinking }
+              : {}),
             toolCalls,
             usage,
             // What served the turn: the script's word when it has one, else the

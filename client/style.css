@@ -1444,6 +1444,19 @@ button.context-ring svg {
   display: none;
 }
 
+.cell-thinking {
+  margin: 0.5rem 0 0;
+}
+
+.cell-thinking summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.cell-thinking pre {
+  margin: 0.3rem 0 0;
+}
+
 .cell-error {
   margin: 0.5rem 0 0;
   color: #ef4444;

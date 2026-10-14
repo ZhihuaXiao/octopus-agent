@@ -58,9 +58,10 @@ import { artifactsDirectory, listArtifacts, newRunId, writeRunRecord } from "./s
  * process does not can conclude the Run it never got to. The Agent Session is
  * named as the Run is using it, which is before pi need have written it; the
  * Run Record names one only once an Anchor stands in it, which `concludeRun`
- * sees to for the Run and the watcher alike. A Cell's text and tool calls arrive between its
- * start and its end, and only a Prompt Cell has any: a command's output is not
- * spoken, so it arrives whole with the record. The record in `cell-ended` is
+ * sees to for the Run and the watcher alike. A Cell's text, its thinking and
+ * its tool calls arrive between its start and its end, and only a Prompt Cell
+ * has any: a command's output is not spoken, so it arrives whole with the
+ * record. The record in `cell-ended` is
  * the one the Run Record will carry, so a watcher that kept every event holds
  * the same account of the Run as the record does.
  */
@@ -74,6 +75,7 @@ export type RunEvent =
     }
   | { readonly type: "cell-started"; readonly cell: string }
   | { readonly type: "cell-text"; readonly cell: string; readonly text: string }
+  | { readonly type: "cell-thinking"; readonly cell: string; readonly thinking: string }
   | { readonly type: "cell-tool-call"; readonly cell: string; readonly call: ToolCall }
   | { readonly type: "cell-ended"; readonly record: CellRecord };
 
@@ -241,6 +243,8 @@ interface Turn {
   readonly timeout?: number;
   /** Hears the reply as it is produced. */
   readonly onText: (text: string) => void;
+  /** Hears what the model thinks, as it thinks it. */
+  readonly onThinking: (thinking: string) => void;
   /** Hears each tool the agent invokes, as it does. */
   readonly onToolCall: (call: ToolCall) => void;
   /** Fires when the Run is interrupted, when the Run can be. */
@@ -256,6 +260,7 @@ async function runPromptCell(
   try {
     const result = await agent.prompt(turn.body, {
       onText: turn.onText,
+      onThinking: turn.onThinking,
       onToolCall: turn.onToolCall,
       ...(turn.model !== undefined ? { model: turn.model } : {}),
       ...(turn.mode !== undefined && turn.mode !== "agent" ? { mode: turn.mode } : {}),
@@ -460,6 +465,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       ...(timeout !== undefined ? { timeout } : {}),
       ...(interrupt !== undefined ? { interrupt } : {}),
       onText: (text) => observe({ type: "cell-text", cell: cell.id, text }),
+      onThinking: (thinking) => observe({ type: "cell-thinking", cell: cell.id, thinking }),
       onToolCall: (call) => observe({ type: "cell-tool-call", cell: cell.id, call }),
     };
     if (cell.isolated) return runIsolatedCell(cell, turn, cleared.isolate);

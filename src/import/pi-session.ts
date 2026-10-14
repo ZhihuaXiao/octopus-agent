@@ -26,7 +26,14 @@ import { stringify } from "yaml";
 import { noUsage } from "../agent/agent.js";
 import { type SegmentEdit, applyEdit } from "../notebook/edit.js";
 import { type Notebook, escapeReferences, parseNotebook } from "../notebook/notebook.js";
-import { failureOf, saidIn, summariseTurn, textBlocksOf, wasStopped } from "../pi/turn.js";
+import {
+  failureOf,
+  saidIn,
+  summariseTurn,
+  textBlocksOf,
+  thoughtIn,
+  wasStopped,
+} from "../pi/turn.js";
 import { anchorsAfter } from "../run/anchor.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "../run/record.js";
 import { newRunId, runDirectory, runsDirectory, writeRunRecord } from "../run/store.js";
@@ -124,6 +131,7 @@ const messagesOf = (turn: Turn) =>
 function turnRecordOf(id: string, turn: Turn): PromptCellRecord {
   const messages = messagesOf(turn);
   const summary = summariseTurn(messages);
+  const thinking = thoughtIn(messages);
   const ended = turn.followed.at(-1) ?? turn.asked;
   const failed = failureOf(messages);
   const outcome =
@@ -140,6 +148,7 @@ function turnRecordOf(id: string, turn: Turn): PromptCellRecord {
     type: "prompt",
     text: saidIn(messages),
     ...summary,
+    ...(thinking !== "" ? { thinking } : {}),
     retries: [],
     ...outcome,
     artifacts: [],

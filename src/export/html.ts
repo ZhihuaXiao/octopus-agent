@@ -7,9 +7,9 @@
  * together, in a file of its own, and leaves the Notebook exactly as it was.
  *
  * The document is one HTML file with everything it shows inside it: the
- * Notebook's Prose and Cells in order, what each Cell said, did, ran on and
- * cost as of the Run chosen, and the files the Cells left — images drawn, text
- * shown, the rest offered for download — carried as data URLs rather than
+ * Notebook's Prose and Cells in order, what each Cell thought, said, did, ran
+ * on and cost as of the Run chosen, and the files the Cells left — images
+ * drawn, text shown, the rest offered for download — carried as data URLs rather than
  * linked, so the file stands alone wherever it is sent (ADR-0023). Nothing in
  * it runs: everything an agent wrote is text, a Content-Security-Policy in
  * the head permits no script and no fetch, and the credentials the machine
@@ -91,7 +91,8 @@ pre { font-family: ui-monospace, monospace; font-size: 0.9rem; white-space: pre-
 .cell.error .cell-status, .cell.timeout .cell-status, .cell-error { opacity: 1; color: #ef4444; }
 .cell.stale .cell-status { opacity: 1; color: #a855f7; } .cell.interrupted .cell-status { opacity: 1; color: #f59e0b; }
 .body { padding: 0.5rem; background: #8881; border-radius: 3px; }
-.output, .stderr { margin-top: 0.75rem; } .output:empty { display: none; } .stderr { color: #ef4444; }
+.output, .stderr, .thinking { margin-top: 0.75rem; } .output:empty { display: none; } .stderr { color: #ef4444; }
+.thinking summary { cursor: pointer; }
 .usage { font-size: 0.8rem; opacity: 0.7; font-family: ui-monospace, monospace; margin: 0.5rem 0 0; }
 .tool-calls { list-style: none; padding: 0; margin: 0.75rem 0 0; font-size: 0.85rem; }
 .tool-calls summary { cursor: pointer; } .tool-name { font-family: ui-monospace, monospace; font-weight: 600; }
@@ -265,6 +266,12 @@ function redactingRenderer(credentials: readonly string[]) {
     if (record?.type === "prompt") {
       if (record.toolCalls.length > 0) {
         parts.push(`<ol class="tool-calls">${record.toolCalls.map(toolCall).join("")}</ol>`);
+      }
+      if (record.thinking !== undefined && record.thinking !== "") {
+        parts.push(
+          `<details class="thinking" open><summary>Thinking</summary>` +
+            `<pre>${show(record.thinking)}</pre></details>`,
+        );
       }
       parts.push(`<pre class="output">${show(record.text)}</pre>`);
       parts.push(`<p class="usage">${show(usageOf(record))}</p>`);
