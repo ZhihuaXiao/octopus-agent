@@ -641,6 +641,26 @@ function providerEditsOf(body: unknown): ProviderEdit[] | undefined {
   return edits;
 }
 
+/** A model id, or `{ id, contextWindow }`. Anything else is not a model edit. */
+function modelEditsOf(value: unknown): ProviderEdit["models"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const models: ProviderEdit["models"][number][] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      models.push({ id: item });
+      continue;
+    }
+    if (!isRecord(item) || typeof item.id !== "string") return undefined;
+    if (item.contextWindow !== undefined && typeof item.contextWindow !== "number")
+      return undefined;
+    models.push({
+      id: item.id,
+      ...(typeof item.contextWindow === "number" ? { contextWindow: item.contextWindow } : {}),
+    });
+  }
+  return models;
+}
+
 function providerEditOf(value: unknown): ProviderEdit | undefined {
   if (!isRecord(value)) return undefined;
   if (!hasKeys(value, ["id", "baseUrl", "api", "models"], ["apiKey", "clearApiKey"]))
@@ -652,15 +672,15 @@ function providerEditOf(value: unknown): ProviderEdit | undefined {
   ) {
     return undefined;
   }
-  if (!Array.isArray(value.models) || value.models.some((id) => typeof id !== "string"))
-    return undefined;
+  const models = modelEditsOf(value.models);
+  if (models === undefined) return undefined;
   if (value.apiKey !== undefined && typeof value.apiKey !== "string") return undefined;
   if (value.clearApiKey !== undefined && typeof value.clearApiKey !== "boolean") return undefined;
   return {
     id: value.id,
     baseUrl: value.baseUrl,
     api: value.api,
-    models: value.models as string[],
+    models,
     ...(value.apiKey !== undefined ? { apiKey: value.apiKey } : {}),
     ...(value.clearApiKey !== undefined ? { clearApiKey: value.clearApiKey } : {}),
   };

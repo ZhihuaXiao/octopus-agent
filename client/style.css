@@ -585,6 +585,39 @@ header #tree-new {
   min-height: 4.5rem;
 }
 
+.provider-models {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+  margin: 0.6rem 0;
+}
+
+.provider-models-label {
+  font-size: 0.9rem;
+}
+
+.provider-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.provider-model > input[type="text"] {
+  flex: 1;
+  min-width: 10rem;
+  font-family: ui-monospace, monospace;
+}
+
+.provider-model label {
+  margin: 0;
+}
+
+.provider-model input[type="number"] {
+  width: 8rem;
+}
+
 .models .provider {
   border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
   margin-bottom: 0.8rem;
@@ -1472,6 +1505,23 @@ button.context-ring svg {
 
 .context-part-tokens {
   font-variant-numeric: tabular-nums;
+}
+
+.context-window {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.context-window input {
+  width: 8rem;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.45rem;
 }
 
 .cell-body {

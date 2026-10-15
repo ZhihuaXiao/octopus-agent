@@ -22,7 +22,8 @@ import {
  * while this notebook is open, and a saved edit keeps it. While editing, the
  * whole Notebook is a form —
  * frontmatter, Prose and Cells, to be changed, added, removed and reordered —
- * saved whole, based on the revision it was drawn from. Typing / in a Prompt
+ * saved whole, based on the revision it was drawn from. Edit on a cell opens
+ * that form with the cursor in the cell. Typing / in a Prompt
  * Cell lists the Skills installed for the user and for that Notebook's
  * Workspace; choosing one writes `/skill:name` and runs the Cell.
  *
@@ -2003,6 +2004,15 @@ function copyIcon() {
   return symbolIcon(["M6 2.5h7.2v8.2H6z", "M2.8 5.3v8.2h7.2"]);
 }
 
+/** A pencil: edit. */
+function editIcon() {
+  return symbolIcon([
+    "M9.4 2.2 13.8 6.6 5.6 14.8 1.8 14.2 2.4 10.4z",
+    "M8.6 3 11.2 5.6",
+    "M2.6 13.4 4.2 11.8",
+  ]);
+}
+
 /**
  * Puts `text` on the clipboard and says so on the button for a moment.
  * @param {string} text
@@ -2061,6 +2071,16 @@ function copyButton(text, symbol) {
     button.title = "Copy this cell and its reply";
   }
   button.addEventListener("click", () => void copyText(text(), button));
+  return button;
+}
+
+/**
+ * Opens the notebook editor with the cursor in this cell's text.
+ * @param {CellView} cell
+ */
+function cellEditButton(cell) {
+  const button = symbolButton("cell-edit", `Edit ${cell.id}`, editIcon());
+  button.addEventListener("click", () => editCell(cell.id));
   return button;
 }
 
@@ -2284,16 +2304,55 @@ const showToolCalls = (cell) => showTurn(cell, "tools");
  */
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/** Tokens, when a turn recorded no window and the reader has not chosen one. */
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+/** This browser's window for a turn that recorded none. */
+const CONTEXT_WINDOW_KEY = "octo.context-window";
+
+/** @returns {number} */
+function rememberedContextWindow() {
+  try {
+    const stored = Number(localStorage.getItem(CONTEXT_WINDOW_KEY));
+    if (Number.isSafeInteger(stored) && stored > 0) return stored;
+  } catch {
+    // The page can still draw the ring against the default.
+  }
+  return DEFAULT_CONTEXT_WINDOW;
+}
+
 /**
- * How full `usage` is, as a percent of the model's window.
- * Undefined when the window size was not recorded, so the ring stays empty
- * rather than inventing a share.
+ * @param {number} tokens
+ */
+function rememberContextWindow(tokens) {
+  try {
+    localStorage.setItem(CONTEXT_WINDOW_KEY, String(tokens));
+  } catch {
+    // The number still applies until the page is closed.
+  }
+}
+
+/**
+ * The window a reading is drawn against: the one the turn recorded, or the
+ * reader's, which starts at 200,000.
+ * @param {ContextUsage} usage
+ */
+function windowTokens(usage) {
+  if (usage.window !== undefined && usage.window > 0) return usage.window;
+  return rememberedContextWindow();
+}
+
+/**
+ * How full `usage` is, as a percent of the window.
+ * Undefined when the cell has not run, so the ring stays empty.
  * @param {ContextUsage | undefined} usage
  * @returns {number | undefined}
  */
 function contextPercent(usage) {
-  if (usage?.window === undefined || usage.window <= 0) return undefined;
-  return Math.max(0, Math.min(100, Math.round((100 * usage.tokens) / usage.window)));
+  if (usage === undefined) return undefined;
+  const tokens = windowTokens(usage);
+  if (tokens <= 0) return undefined;
+  return Math.max(0, Math.min(100, Math.round((100 * usage.tokens) / tokens)));
 }
 
 /**
@@ -2455,25 +2514,22 @@ async function showContext(cell) {
  */
 function contextPanel(usage) {
   const panel = make("div", "context-usage");
-  const window = usage.window;
-  const full = window !== undefined && window > 0;
+  const recorded = usage.window !== undefined && usage.window > 0;
+  const size = windowTokens(usage);
   const percent = contextPercent(usage);
   const meta = make("div", "context-meta");
   meta.append(
     make("span", "context-percent", percent === undefined ? "This turn" : `${percent}% full`),
   );
-  const total = full
-    ? `${formatTokens(usage.tokens)} / ${formatTokens(window)} tokens`
-    : `${formatTokens(usage.tokens)} tokens`;
+  const total = `${formatTokens(usage.tokens)} / ${formatTokens(size)} tokens`;
   meta.append(make("span", "context-total", usage.estimated ? `~${total}` : total));
   meta.title = usage.estimated
     ? "Estimated from the size of each part of the request."
     : "The total is what the provider counted. The rows split it by the size of each part.";
   const bar = make("span", "context-bar");
-  const whole = full ? window : usage.tokens;
   for (const part of usage.parts) {
     const segment = make("span", `context-seg ${part.name}`);
-    segment.style.width = whole > 0 ? `${(100 * part.tokens) / whole}%` : "0";
+    segment.style.width = size > 0 ? `${(100 * part.tokens) / size}%` : "0";
     bar.append(segment);
   }
   bar.role = "img";
@@ -2482,7 +2538,54 @@ function contextPanel(usage) {
     percent === undefined ? `Context ${total}` : `Context ${percent}% full, ${total}`,
   );
   panel.append(meta, bar, contextList(usage));
+  if (!recorded) panel.append(contextWindowField(usage));
   return panel;
+}
+
+/**
+ * The window used when a turn recorded none. Changing it redraws the rings.
+ * @param {ContextUsage} usage
+ */
+function contextWindowField(usage) {
+  const label = document.createElement("label");
+  label.className = "context-window";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "1";
+  input.step = "1000";
+  input.value = String(rememberedContextWindow());
+  input.title = "Tokens. The default is 200,000. This browser remembers a change.";
+  input.addEventListener("change", () => {
+    const parsed = Number(input.value);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      input.value = String(rememberedContextWindow());
+      return;
+    }
+    rememberContextWindow(parsed);
+    element("cell-rounds-body").replaceChildren(contextPanel(usage));
+    syncContextRings();
+  });
+  label.append("Maximum context window", input);
+  return label;
+}
+
+/** Redraws each prompt cell's ring from the window it is measured against. */
+function syncContextRings() {
+  if (watching === undefined) return;
+  for (const listName of ["segments", "run-steps"]) {
+    const root = document.getElementById(listName);
+    if (root === null) continue;
+    for (const cell of watching.state.cells) {
+      if (cell.type !== "prompt") continue;
+      const button = root.querySelector(`[data-cell="${CSS.escape(cell.id)}"] button.context-ring`);
+      if (!(button instanceof HTMLButtonElement)) continue;
+      const percent = contextPercent(cell.context);
+      const label = percent === undefined ? "Context usage" : `Context ${percent}% full`;
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.replaceChildren(contextRing(percent));
+    }
+  }
 }
 
 /** @param {ContextUsage} usage */
@@ -2714,7 +2817,7 @@ function renderCell(cell, session, running) {
   );
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
-  heading.append(runOne);
+  heading.append(cellEditButton(cell), runOne);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
@@ -4590,6 +4693,23 @@ function beginEditing() {
   void loadCellModels(load);
 }
 
+/**
+ * Opens the editor on the cell `id`, with the cursor in its text.
+ * @param {string} id
+ */
+function editCell(id) {
+  if (watching === undefined) return;
+  if (draft === undefined) beginEditing();
+  const segments = draft?.segments;
+  if (segments === undefined) return;
+  const at = segments.findIndex((segment) => segment.kind === "cell" && segment.id === id);
+  if (at < 0) return;
+  const segment = segments[at];
+  if (segment?.kind === "cell") segment.folded = false;
+  renderEditor();
+  focusSegment(at);
+}
+
 /** @param {string} value */
 function usesNames(value) {
   return value
@@ -5471,7 +5591,7 @@ function route() {
  * Pi's model settings, in a dialog: the default a Run uses when nothing names
  * a model, and the custom providers in pi's `models.json`.
  * @typedef {{ provider: string, id: string, name: string }} ModelChoice
- * @typedef {{ id: string }} CustomModel
+ * @typedef {{ id: string, contextWindow?: number }} CustomModel
  * @typedef {{
  *   id: string,
  *   baseUrl: string,
@@ -5672,7 +5792,10 @@ function renderMatches(query) {
 /** @param {ModelPage} page */
 function renderModelPage(page) {
   modelPage = page;
-  providerDraft = page.providers.map((provider) => ({ ...provider, models: [...provider.models] }));
+  providerDraft = page.providers.map((provider) => ({
+    ...provider,
+    models: provider.models.map((model) => ({ ...model })),
+  }));
   if (page.defaultProvider !== undefined && page.defaultModel !== undefined) {
     chosenModel = { provider: page.defaultProvider, id: page.defaultModel };
   }
@@ -5698,6 +5821,61 @@ function renderModelPage(page) {
   renderMatches("");
   syncConfiguredButton();
   renderProviders();
+}
+
+/**
+ * One row per model: its id, and the context window, which starts at 200,000.
+ * @param {CustomProvider} provider
+ */
+function providerModels(provider) {
+  const block = document.createElement("div");
+  for (const [index, model] of provider.models.entries()) {
+    const row = make("div", "provider-model");
+    const id = document.createElement("input");
+    id.type = "text";
+    id.value = model.id;
+    id.placeholder = "model id";
+    id.addEventListener("input", () => {
+      model.id = id.value.trim();
+    });
+    const tokens = document.createElement("input");
+    tokens.type = "number";
+    tokens.min = "1";
+    tokens.step = "1000";
+    tokens.value = String(model.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+    tokens.title = "Maximum context window, in tokens. The default is 200,000.";
+    tokens.addEventListener("input", () => {
+      const parsed = Number(tokens.value);
+      if (Number.isSafeInteger(parsed) && parsed > 0) model.contextWindow = parsed;
+    });
+    tokens.addEventListener("change", () => {
+      const parsed = Number(tokens.value);
+      if (Number.isSafeInteger(parsed) && parsed > 0) {
+        model.contextWindow = parsed;
+        return;
+      }
+      tokens.value = String(model.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+    });
+    const windowLabel = document.createElement("label");
+    windowLabel.append("Context window", tokens);
+    const remove = make("button", "", "Remove");
+    remove.type = "button";
+    remove.addEventListener("click", () => {
+      provider.models.splice(index, 1);
+      renderProviders();
+    });
+    row.append(id, windowLabel, remove);
+    block.append(row);
+  }
+  const add = make("button", "", "Add model");
+  add.type = "button";
+  add.addEventListener("click", () => {
+    provider.models.push({ id: "", contextWindow: DEFAULT_CONTEXT_WINDOW });
+    provider.open = true;
+    renderProviders();
+  });
+  block.append(add);
+  return block;
 }
 
 function renderProviders() {
@@ -5753,16 +5931,7 @@ function renderProviders() {
         provider.apiKey = key.value;
       });
 
-      const models = document.createElement("textarea");
-      models.value = provider.models.map((model) => model.id).join("\n");
-      models.placeholder = "One model id per line";
-      models.addEventListener("input", () => {
-        provider.models = models.value
-          .split("\n")
-          .map((id) => id.trim())
-          .filter((id) => id !== "")
-          .map((id) => ({ id }));
-      });
+      const models = providerModels(provider);
 
       const remove = make("button", "", "Remove");
       remove.type = "button";
@@ -5779,8 +5948,9 @@ function renderProviders() {
       apiLabel.append("API", api);
       const keyLabel = document.createElement("label");
       keyLabel.append("API key", key);
-      const modelsLabel = document.createElement("label");
-      modelsLabel.append("Model ids", models);
+      const modelsLabel = document.createElement("div");
+      modelsLabel.className = "provider-models";
+      modelsLabel.append(make("span", "provider-models-label", "Models"), models);
       const actions = make("div", "provider-actions");
       actions.append(remove);
       card.append(summary, nameLabel, urlLabel, apiLabel, keyLabel, modelsLabel, actions);
@@ -6146,7 +6316,15 @@ async function saveModelProviders() {
           id: provider.id.trim(),
           baseUrl: provider.baseUrl.trim(),
           api: provider.api,
-          models: provider.models.map((model) => model.id),
+          models: provider.models.flatMap((model) => {
+            const id = model.id.trim();
+            if (id === "") return [];
+            const tokens = model.contextWindow;
+            if (tokens !== undefined && Number.isSafeInteger(tokens) && tokens > 0) {
+              return [{ id, contextWindow: tokens }];
+            }
+            return [{ id }];
+          }),
           ...(provider.apiKey !== undefined && provider.apiKey !== ""
             ? { apiKey: provider.apiKey }
             : {}),

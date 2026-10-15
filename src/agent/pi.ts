@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { contextUsage } from "../pi/context.js";
+import { customContextWindow } from "../pi/model-window.js";
 import { createAssistantTextStream } from "../pi/streaming.js";
 import { decideTrust } from "../pi/trust.js";
 import { failureOf, summariseTurn, thoughtIn } from "../pi/turn.js";
@@ -132,6 +133,17 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
   });
 
   /**
+   * A custom model that names no window is 200,000 tokens, or the size its
+   * entry names. Pi's own 128,000 fallback is not the window a run records.
+   */
+  const alignContextWindow = async (model: Model | undefined): Promise<void> => {
+    if (model === undefined) return;
+    const tokens = await customContextWindow(agentDir, model.provider, model.id);
+    if (tokens !== undefined) model.contextWindow = tokens;
+  };
+  await alignContextWindow(session.model);
+
+  /**
    * The model the session opened on — pi's own default, or the one the session
    * being reopened was left on — which is what a turn that names none runs on.
    * Captured now, because a turn that names one moves the session off it.
@@ -160,6 +172,7 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
   const takeOn = async (named: string): Promise<void> => {
     const wanted = resolveModel(named);
     if (!sameModel(wanted, session.model)) await session.setModel(wanted);
+    await alignContextWindow(session.model);
   };
 
   /**

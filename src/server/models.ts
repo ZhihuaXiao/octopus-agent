@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 
+import { DEFAULT_CONTEXT_WINDOW, contextWindowTokens } from "../pi/model-window.js";
 import { isRecord } from "../util/guards.js";
 
 const MODELS_FILE = "models.json";
@@ -43,6 +44,14 @@ export interface ModelChoice {
 
 export interface CustomModel {
   readonly id: string;
+  /** Tokens. A model that left this unset is reported as the default, 200,000. */
+  readonly contextWindow: number;
+}
+
+/** One model in a save. A missing window keeps one already stored, or the default. */
+export interface ModelEdit {
+  readonly id: string;
+  readonly contextWindow?: number;
 }
 
 /** One custom provider as the page draws it. The key itself is not here. */
@@ -84,7 +93,7 @@ export interface ProviderEdit {
   readonly apiKey?: string;
   /** Forget the stored key. Ignored when `apiKey` is sent. */
   readonly clearApiKey?: boolean;
-  readonly models: readonly string[];
+  readonly models: readonly ModelEdit[];
 }
 
 export type ModelResult<T> =
@@ -223,12 +232,32 @@ export async function saveProviders(
         problem: `Provider "${edit.id}" cannot store a key as a shell command from this page.`,
       };
     }
-    const modelIds = edit.models.map((id) => id.trim()).filter((id) => id !== "");
+    const modelEdits = edit.models.flatMap((model) => {
+      const id = model.id.trim();
+      return id === ""
+        ? []
+        : [
+            {
+              id,
+              ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+            },
+          ];
+    });
+    const modelIds = modelEdits.map((model) => model.id);
     if (modelIds.length === 0) {
       return { ok: false, problem: `Provider "${edit.id}" needs at least one model id.` };
     }
     if (new Set(modelIds).size !== modelIds.length) {
       return { ok: false, problem: `Provider "${edit.id}" names the same model twice.` };
+    }
+    for (const model of modelEdits) {
+      if (model.contextWindow === undefined) continue;
+      if (contextWindowTokens(model.contextWindow) === undefined) {
+        return {
+          ok: false,
+          problem: `Model "${model.id}" needs a context window of at least 1 token.`,
+        };
+      }
     }
 
     const existing = read.value.providers[edit.id];
@@ -243,7 +272,14 @@ export async function saveProviders(
         isRecord(model) && typeof model.id === "string" ? [[model.id, model] as const] : [],
       ),
     );
-    provider.models = modelIds.map((id) => ({ ...(previous.get(id) ?? {}), id }));
+    provider.models = modelEdits.map((model) => {
+      const stored = previous.get(model.id);
+      const tokens =
+        model.contextWindow ??
+        contextWindowTokens(isRecord(stored) ? stored.contextWindow : undefined) ??
+        DEFAULT_CONTEXT_WINDOW;
+      return { ...(isRecord(stored) ? stored : {}), id: model.id, contextWindow: tokens };
+    });
     next[edit.id] = provider;
   }
 
@@ -471,7 +507,14 @@ async function readProviders(agentDirectory: string): Promise<ModelResult<Custom
     const apiKey = typeof value.apiKey === "string" ? value.apiKey : undefined;
     const models = Array.isArray(value.models)
       ? value.models.flatMap((model) =>
-          isRecord(model) && typeof model.id === "string" ? [{ id: model.id }] : [],
+          isRecord(model) && typeof model.id === "string"
+            ? [
+                {
+                  id: model.id,
+                  contextWindow: contextWindowTokens(model.contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
+                },
+              ]
+            : [],
         )
       : [];
     return [

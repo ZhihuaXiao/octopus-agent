@@ -3655,7 +3655,7 @@ describe("model settings", () => {
       providers: { ollama: { apiKey: string; models: { id: string }[] } };
     };
     expect(file.providers.ollama.apiKey).toBe("local-secret");
-    expect(file.providers.ollama.models).toEqual([{ id: "llama3.1:8b" }]);
+    expect(file.providers.ollama.models).toEqual([{ id: "llama3.1:8b", contextWindow: 200_000 }]);
     const shown = (await (await get(server, "/api/models")).json()) as {
       providers: { apiKeySet: boolean; models: { id: string }[] }[];
     };
@@ -3687,6 +3687,58 @@ describe("model settings", () => {
       providers: { ollama: { apiKey: string } };
     };
     expect(untouched.providers.ollama.apiKey).toBe("local-secret");
+  });
+
+  it("keeps a context window the user sets, and refuses one that is not a size", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+    const providers = (body: unknown) => post(server, "/api/models/providers", body);
+    const provider = {
+      id: "ollama",
+      baseUrl: "http://localhost:11434/v1",
+      api: "openai-completions",
+      apiKey: "local-secret",
+    };
+
+    expect(
+      (
+        await providers({
+          providers: [{ ...provider, models: [{ id: "llama3.1:8b", contextWindow: 100_000 }] }],
+        })
+      ).status,
+    ).toBe(204);
+    const read = () =>
+      readFile(join(agentDirectory, "models.json"), "utf8").then(
+        (text) =>
+          JSON.parse(text) as {
+            providers: {
+              ollama: { models: { id: string; contextWindow: number; name?: string }[] };
+            };
+          },
+      );
+    expect((await read()).providers.ollama.models).toEqual([
+      { id: "llama3.1:8b", contextWindow: 100_000 },
+    ]);
+
+    expect(
+      (
+        await providers({
+          providers: [{ ...provider, apiKey: undefined, models: ["llama3.1:8b"] }],
+        })
+      ).status,
+    ).toBe(204);
+    expect((await read()).providers.ollama.models[0]?.contextWindow).toBe(100_000);
+
+    const refused = await providers({
+      providers: [{ ...provider, models: [{ id: "llama3.1:8b", contextWindow: 0 }] }],
+    });
+    expect(refused.status).toBe(422);
+    expect((await read()).providers.ollama.models[0]?.contextWindow).toBe(100_000);
+
+    const shown = (await (await get(server, "/api/models")).json()) as {
+      providers: { models: { id: string; contextWindow: number }[] }[];
+    };
+    expect(shown.providers[0]?.models).toEqual([{ id: "llama3.1:8b", contextWindow: 100_000 }]);
   });
 
   it("refuses a default that is not a model, and a provider that is not one", async () => {

@@ -297,10 +297,11 @@
         <fieldset>
           <legend>Custom providers</legend>
           <p class="hint">
-            Click a name, such as Oracle1, to show its settings. For an OpenAI-compatible proxy,
-            choose openai-completions and a base URL that ends at /v1. Pi adds /chat/completions
-            itself. The Google API wants the version root, such as …/v1beta, not a chat completions
-            path.
+            Click a name, such as Oracle1, to show its settings. Each model has a context window. It
+            starts at 200,000 tokens; change the number to give that model another size. For an
+            OpenAI-compatible proxy, choose openai-completions and a base URL that ends at /v1. Pi
+            adds /chat/completions itself. The Google API wants the version root, such as …/v1beta,
+            not a chat completions path.
           </p>
           <div id="models-providers"></div>
           <button id="models-add" type="button">Add provider</button>
