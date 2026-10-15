@@ -267,9 +267,9 @@
           an API key for its provider. <strong>Show configured</strong> lists only models whose
           provider already has a stored key, and models from custom providers you added.
           <strong>Show all</strong> brings the full list back. <strong>Test</strong>, beside a
-          configured model, asks it for one token and says whether it answered. A notebook or a cell
-          that names its own model still uses that. A key already stored is not shown; leave the
-          field blank to keep it.
+          configured model, asks it for one token. The line that appears stays short; click it to
+          read the full answer. A notebook or a cell that names its own model still uses that. A key
+          already stored is not shown; leave the field blank to keep it.
         </p>
         <fieldset>
           <legend>Default</legend>
@@ -325,7 +325,8 @@
         Models whose provider has a stored API key, and models from custom providers you added. The
         one you pick is written into this notebook. A cell that names its own model still uses that.
         <strong>Use the default</strong> clears it. <strong>Test</strong> asks that model for one
-        token and does not change the notebook.
+        token and does not change the notebook. The line that appears stays short; click it to read
+        the full answer.
       </p>
       <label
         >Search
@@ -336,6 +337,7 @@
       <p id="notebook-model-status" class="status"></p>
       <button id="notebook-model-cancel" type="button">Cancel</button>
     </dialog>
+    <div id="model-test-popup" class="model-test-popup" popover="auto"></div>
     <script type="module" src="/client/main.js"></script>
   </body>
 </html>

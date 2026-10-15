@@ -1,4 +1,13 @@
 // @ts-check
+import {
+  closeProbePopup,
+  noteProbePopupClosed,
+  openProbePopup,
+  probeReport,
+  showProbePending,
+  showProbeReport,
+} from "./model-probe.js";
+
 /**
  * The client: lists the Notebooks the server can see, opens one into its
  * Notebook Session, and shows the Session as the Author View — the Notebook as
@@ -5538,13 +5547,15 @@ function isConfiguredChoice(model, page) {
  */
 function modelChoiceItem(model, page, choice) {
   const item = document.createElement("li");
-  const button = make("button", "", modelLabel(model));
+  const label = modelLabel(model);
+  const button = make("button", "", label);
   button.type = "button";
   if (choice.current) button.setAttribute("aria-current", "true");
   button.addEventListener("click", choice.onChoose);
   item.append(button);
   if (page !== undefined && isConfiguredChoice(model, page)) {
     item.className = "model-row";
+    button.title = label;
     const test = make("button", "model-test", "Test");
     test.type = "button";
     test.title = "Ask this model for one token, to see whether it answers";
@@ -5563,25 +5574,31 @@ function modelChoiceItem(model, page, choice) {
  */
 async function testConfiguredModel(model, button, status) {
   button.disabled = true;
-  status.textContent = "Testing…";
-  status.title = "";
+  closeProbePopup(modelTestPopup());
+  showProbePending(status);
   try {
     /** @type {{ available: boolean, problem?: string, inputTokens: number, outputTokens: number }} */
     const result = await (
       await post("/api/models/test", { provider: model.provider, model: model.id })
     ).json();
-    const text = result.available
-      ? `Available, ${result.inputTokens} in, ${result.outputTokens} out`
-      : (result.problem ?? "Unavailable");
-    status.textContent = text;
-    status.title = text;
+    showModelProbe(status, probeReport(result));
   } catch (cause) {
-    const text = describe(cause);
-    status.textContent = text;
-    status.title = text;
+    showModelProbe(
+      status,
+      probeReport({ available: false, problem: describe(cause), inputTokens: 0, outputTokens: 0 }),
+    );
   } finally {
     button.disabled = false;
   }
+}
+
+/** @param {HTMLElement} status @param {import("./model-probe.js").ProbeReport} report */
+function showModelProbe(status, report) {
+  showProbeReport(status, report, (anchor) => openProbePopup(modelTestPopup(), anchor, report));
+}
+
+function modelTestPopup() {
+  return element("model-test-popup");
 }
 
 function chosenText() {
@@ -5611,6 +5628,7 @@ function syncConfiguredButton() {
 
 /** @param {string} query */
 function renderMatches(query) {
+  closeProbePopup(modelTestPopup());
   const list = element("models-matches");
   const needle = query.trim().toLowerCase();
   const allowed = configuredOnly ? configuredProviderIds() : undefined;
@@ -5829,6 +5847,7 @@ async function openNotebookModel(notebook, current) {
  * @param {string} query
  */
 function renderNotebookModelChoices(models, query) {
+  closeProbePopup(modelTestPopup());
   const list = element("notebook-model-list");
   const needle = query.trim().toLowerCase();
   const matched = models
@@ -5927,6 +5946,7 @@ async function openModels() {
 
 /** The notebook page: the directory and whichever notebook or list is open. */
 function showNotebook() {
+  closeProbePopup(modelTestPopup());
   element("models").hidden = true;
   element("modes").hidden = true;
   element("workspace").hidden = false;
@@ -5938,6 +5958,7 @@ function showNotebook() {
 }
 
 async function openModes() {
+  closeProbePopup(modelTestPopup());
   element("workspace").hidden = true;
   element("models").hidden = true;
   element("modes").hidden = false;
@@ -6260,6 +6281,22 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeTreeMenu();
 });
+element("model-test-popup").addEventListener("toggle", (event) => {
+  if (event instanceof ToggleEvent && event.newState === "closed") noteProbePopupClosed();
+});
+document.addEventListener(
+  "scroll",
+  (event) => {
+    const popup = modelTestPopup();
+    if (!popup.matches(":popover-open")) return;
+    const target = event.target;
+    if (target instanceof Node && (target === popup || popup.contains(target))) return;
+    closeProbePopup(popup);
+  },
+  true,
+);
+window.addEventListener("resize", () => closeProbePopup(modelTestPopup()));
+element("notebook-model-dialog").addEventListener("close", () => closeProbePopup(modelTestPopup()));
 element("tree-file-input").addEventListener("change", () => {
   const input = /** @type {HTMLInputElement} */ (element("tree-file-input"));
   const files = [...(input.files ?? [])];
