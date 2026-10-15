@@ -37,7 +37,7 @@ import {
   noUsage,
 } from "../agent/agent.js";
 import { thisMachine } from "../export/credentials.js";
-import { type Exported, exportNotebook } from "../export/html.js";
+import { type ExportFormat, type Exported, exportNotebook } from "../export/html.js";
 import {
   type EditResult,
   type NotebookEdit,
@@ -356,7 +356,7 @@ export interface NotebookSession {
    * run it; see `export/html.ts`. Read off the disk, as a Run's files are,
    * so a Run under way is not in it until it has written its record.
    */
-  export(run?: string): Promise<Exported>;
+  export(run?: string, format?: ExportFormat): Promise<Exported>;
   /**
    * The Notebook's file has been renamed to `nextPath`, and this session is
    * that file still: later saves and Runs use the new path, and the Journal
@@ -1188,10 +1188,11 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       emit(() => ({ type: "notebook-changed", session: state() }));
     },
 
-    export: (run) =>
+    export: (run, format) =>
       exportNotebook({
         notebook: path,
         ...(run !== undefined ? { run } : {}),
+        ...(format !== undefined ? { format } : {}),
         ...thisMachine(),
       }),
   };

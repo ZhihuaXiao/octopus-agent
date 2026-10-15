@@ -125,7 +125,22 @@
                 <button id="edit" type="button">Edit</button>
                 <button id="duplicate" type="button">Duplicate</button>
                 <button id="rename" type="button">Rename</button>
-                <button id="export" type="button">Export</button>
+                <div class="export-menu">
+                  <button
+                    id="export"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                    aria-controls="export-list"
+                    title="Download this notebook and its latest run"
+                  >
+                    Export
+                  </button>
+                  <div id="export-list" class="export-list" role="menu" hidden>
+                    <button id="export-html" type="button" role="menuitem">HTML</button>
+                    <button id="export-markdown" type="button" role="menuitem">Markdown</button>
+                  </div>
+                </div>
               </div>
               <div class="control-group">
                 <a id="to-run-view" class="button" href="#">Run view</a>

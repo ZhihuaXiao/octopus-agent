@@ -151,6 +151,8 @@ const ROUNDS_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/rounds$/;
 const STOP_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/stop$/;
 /** The query naming which Run an export is of, when not the latest. */
 const RUN_QUERY = "run";
+/** The query naming HTML or Markdown. Absent is HTML. */
+const FORMAT_QUERY = "format";
 /** A file of one of a Notebook Session's Runs: an Artifact, or the Run's record. */
 const RUN_FILE_ROUTE = /^\/api\/sessions\/([^/]+)\/runs\/([^/]+)\/(.+)$/;
 
@@ -1505,7 +1507,15 @@ async function serveSession(
     case "export": {
       const asked = searchParams.get(RUN_QUERY);
       const run = asked === null || asked === "" ? undefined : asked;
-      const exported = await session.export(run);
+      const format = searchParams.get(FORMAT_QUERY);
+      if (format !== null && format !== "" && format !== "html" && format !== "markdown") {
+        reply(response, 400, "Export format must be html or markdown.\n");
+        return;
+      }
+      const exported = await session.export(
+        run,
+        format === "markdown" ? "markdown" : format === "html" ? "html" : undefined,
+      );
       switch (exported.kind) {
         case "absent":
           notFound(response);
@@ -1524,12 +1534,13 @@ async function serveSession(
           return;
         case "exported": {
           // A download under the Notebook's name and the Run's, so two exports
-          // of one Notebook do not land on each other; as HTML, since it is one,
-          // and never run in this origin, which `attachment` sees to.
+          // of one Notebook do not land on each other. `attachment` keeps the
+          // browser from opening it in this origin.
           const { notebook } = session.state();
-          const name = `${basename(notebook, extname(notebook))}-${exported.run}.html`;
+          const markdown = format === "markdown";
+          const name = `${basename(notebook, extname(notebook))}-${exported.run}.${markdown ? "md" : "html"}`;
           response.writeHead(200, {
-            "content-type": "text/html; charset=utf-8",
+            "content-type": `${markdown ? "text/markdown" : "text/html"}; charset=utf-8`,
             "x-content-type-options": "nosniff",
             "content-disposition": attachment(name),
           });

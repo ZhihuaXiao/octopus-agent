@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
 import { networkInterfaces, userInfo } from "node:os";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
 import { createPiAgent } from "../agent/pi.js";
 import { thisMachine } from "../export/credentials.js";
-import { exportNotebook } from "../export/html.js";
+import { type ExportFormat, exportNotebook } from "../export/html.js";
 import { importSession } from "../import/pi-session.js";
 import { handToPi } from "../pi/command.js";
 import { recordPath, runsDirectory } from "../run/store.js";
@@ -90,16 +90,25 @@ async function importChat(command: Extract<Command, { kind: "import" }>): Promis
   }
 }
 
+/** A destination ending in `.md` or `.markdown` is a Markdown export. Anything else is HTML. */
+function markdownDestination(document: string): boolean {
+  const extension = extname(document).toLowerCase();
+  return extension === ".md" || extension === ".markdown";
+}
+
 /**
  * Writes a Notebook and one of its Runs as a single document, never over a
  * file that is there — a mistyped name should not cost somebody a file. Each
  * refusal is a sentence to act on, and exits 1 as a Run's refusal does.
+ * A destination ending in `.md` or `.markdown` is Markdown; any other name is HTML.
  */
 async function exportDocument(command: Extract<Command, { kind: "export" }>): Promise<void> {
   const notebook = resolve(command.notebook);
   const document = resolve(command.document);
+  const format: ExportFormat = markdownDestination(document) ? "markdown" : "html";
   const exported = await exportNotebook({
     notebook,
+    format,
     ...(command.run !== undefined ? { run: command.run } : {}),
     ...thisMachine(),
   });

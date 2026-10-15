@@ -317,7 +317,9 @@ function renderEntry(entry) {
   const item = document.createElement("li");
   const link = document.createElement("a");
   link.href = hashFor(entry.path, "author");
-  link.append(make("span", "title", entry.title), make("span", "path", entry.path));
+  const path = make("span", "path");
+  path.append(entry.path, octoMark());
+  link.append(make("span", "title", entry.title), path);
   // The other way in, for whoever is here to run it rather than read it.
   const run = make("a", "run-link", "Run view");
   run.href = hashFor(entry.path, "run");
@@ -575,7 +577,8 @@ function renderNodes(nodes) {
     }
     if (node.kind === "notebook") {
       const item = make("li", "tree-notebook");
-      const link = make("a", "", node.name);
+      const link = document.createElement("a");
+      link.append(octoName(node.name));
       link.href = hashFor(node.path, "author");
       link.title = node.title;
       if (node.path === asked) link.setAttribute("aria-current", "page");
@@ -3291,8 +3294,30 @@ function showHeading(title, path) {
   heading.hidden = same;
   heading.textContent = same ? "" : title;
   const named = element("notebook");
-  named.textContent = path;
+  named.replaceChildren(path === "" ? "" : octoName(path));
   named.classList.toggle("sole", same && path !== "");
+}
+
+/**
+ * A star at the upper right of a Markdown name that is an octo notebook.
+ * A normal Markdown file is drawn without one.
+ * @returns {HTMLSpanElement}
+ */
+function octoMark() {
+  const star = make("span", "octo-mark", "*");
+  star.setAttribute("aria-hidden", "true");
+  return star;
+}
+
+/**
+ * `name`, with the notebook star at its upper right.
+ * @param {string} name
+ * @returns {HTMLSpanElement}
+ */
+function octoName(name) {
+  const shown = make("span", "octo-name");
+  shown.append(name, octoMark());
+  return shown;
 }
 
 function renderSession() {
@@ -4971,20 +4996,25 @@ function saveDownload(blob, filename) {
 }
 
 /**
- * Downloads the Export of the Notebook and its latest finished Run, the same
- * document `octo export` writes. A Notebook that has never been run has
- * nothing to export, and the server says so.
+ * Downloads the export of the notebook and its latest finished run, the same
+ * document `octo export` writes. HTML or Markdown. A notebook that has never
+ * been run has nothing to export, and the server says so.
+ * @param {"html" | "markdown"} format
  */
-async function exportRun() {
+async function exportRun(format) {
   if (watching === undefined) return;
   const { id } = watching.state;
   const status = element("session-status");
+  const query = format === "markdown" ? "?format=markdown" : "";
   try {
-    const response = await request(`/api/sessions/${encodeURIComponent(id)}/export`);
+    const response = await request(`/api/sessions/${encodeURIComponent(id)}/export${query}`);
     if (!response.ok) {
       throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
     }
-    saveDownload(await response.blob(), filenameOf(response) ?? "notebook.html");
+    saveDownload(
+      await response.blob(),
+      filenameOf(response) ?? (format === "markdown" ? "notebook.md" : "notebook.html"),
+    );
     status.textContent = "";
   } catch (cause) {
     status.textContent = `Could not export: ${describe(cause)}`;
@@ -6432,7 +6462,20 @@ element("file-close").addEventListener("click", () => {
 });
 element("duplicate").addEventListener("click", () => void duplicate());
 element("rename").addEventListener("click", () => void renameNotebook());
-element("export").addEventListener("click", () => void exportRun());
+element("export").addEventListener("click", () => {
+  const list = element("export-list");
+  const opening = list.hidden;
+  list.hidden = !opening;
+  element("export").setAttribute("aria-expanded", opening ? "true" : "false");
+});
+element("export-html").addEventListener("click", () => {
+  closeExportMenu();
+  void exportRun("html");
+});
+element("export-markdown").addEventListener("click", () => {
+  closeExportMenu();
+  void exportRun("markdown");
+});
 element("cancel").addEventListener("click", stopEditing);
 element("add-prompt").addEventListener("click", () => addCell("prompt"));
 element("add-bash").addEventListener("click", () => addCell("bash"));
@@ -6456,9 +6499,26 @@ document.addEventListener("click", (event) => {
   if (menu.contains(target) || (menuOwner !== null && menuOwner.contains(target))) return;
   closeTreeMenu();
 });
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeTreeMenu();
+document.addEventListener("click", (event) => {
+  const list = element("export-list");
+  if (list.hidden) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (list.contains(target) || element("export").contains(target)) return;
+  closeExportMenu();
 });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeTreeMenu();
+    closeExportMenu();
+  }
+});
+
+/** Closes the Export list, when it is open. */
+function closeExportMenu() {
+  element("export-list").hidden = true;
+  element("export").setAttribute("aria-expanded", "false");
+}
 element("model-test-popup").addEventListener("toggle", (event) => {
   if (event instanceof ToggleEvent && event.newState === "closed") noteProbePopupClosed();
 });

@@ -82,6 +82,32 @@ describe("exportNotebook", () => {
     expect((await stat(notebook)).mtimeMs).toBe(before.mtimeMs);
   });
 
+  it("writes the same account as Markdown when asked", async () => {
+    const notebook = await notebookAt(
+      "sum.md",
+      `---
+title: Sum
+---
+
+Then the shell answers.
+
+\`\`\`bash id=sum
+echo "sum: $((40 + 2))"
+echo '\`\`\`'
+\`\`\`
+`,
+    );
+    await runNotebook(notebook, { agent: createScriptedAgent([]).create });
+
+    const exported = await exportOf(notebook, { format: "markdown" });
+
+    expect(exported.document.startsWith("# Sum\n")).toBe(true);
+    expect(exported.document).not.toContain("<html");
+    expect(exported.document).toContain("Then the shell answers.");
+    expect(exported.document).toContain("sum: 42");
+    expect(exported.document).toMatch(/````bash\n/);
+  });
+
   it("carries the title and the prose as written, each cell where it sits among it", async () => {
     const notebook = await notebookAt(
       "steps.md",

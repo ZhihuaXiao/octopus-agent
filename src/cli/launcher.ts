@@ -27,7 +27,7 @@ import { DEFAULT_PORT } from "../server/server.js";
 const USAGE = `usage: octo [pi arguments]...
        octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
        octo import <session.jsonl> <notebook.md>
-       octo export <notebook.md> <document.html> [--run <id>]
+       octo export <notebook.md> <document.html|document.md> [--run <id>]
        octo --web [--port <number>] [--host <address>] [--password]
        octo password
 
@@ -39,10 +39,10 @@ const USAGE = `usage: octo [pi arguments]...
   \`!\` — and a run record of what it did. Pi's session file is read and
   copied, never written; pi keeps them under ~/.pi/agent/sessions.
   \`export\` writes a notebook and the results of one of its runs — the latest,
-  or the one \`--run\` names — as a single HTML document with the files the
-  run left embedded in it, to send to someone who will not run it. The
-  credentials this machine holds are struck out of it; the notebook itself is
-  left as it is.
+  or the one \`--run\` names — as one document, to send to someone who will not
+  run it. A destination ending in \`.md\` or \`.markdown\` is Markdown. Any other
+  name is HTML, with the files the run left embedded in it. The credentials
+  this machine holds are struck out of it; the notebook itself is left as it is.
   \`--web\` starts the web interface on loopback, serving the notebooks under
   the current directory, on the port given or ${DEFAULT_PORT}. It prints the URL
   to open, carrying a token generated for this start; with \`--password\` the

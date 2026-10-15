@@ -62,7 +62,7 @@ TypeScript on Node 22.19 or newer, ESM. `tsc` compiles `src/` to `dist/`. The br
 | `src/pi/` | The parts of pi this program reads: streaming text, one turn's summary, Workspace Trust, the version pin, and handing the terminal to pi. |
 | `src/server/` | HTTP, the WebSocket, auth, Notebook Sessions, the Journal, the notebook list, and Promote. |
 | `src/import/` | A Chat copied into a Notebook and a Run Record. |
-| `src/export/` | A Notebook and one Run written as a single HTML document, with credentials struck out. |
+| `src/export/` | A Notebook and one Run written as a single HTML or Markdown document, with credentials struck out. |
 | `client/` | Author View and Run View. |
 
 `runNotebook` in `src/run/runner.ts` is the engine's public interface. Tests drive it with the scripted agent and assert on the Run Record. The live pi suite is separate and small: it fails when an upgrade breaks the SDK surface this program uses.
@@ -151,7 +151,7 @@ Import and export sit beside the engine. They produce and consume the same Run R
 
 Import reads a Chat — a session file pi wrote at the terminal — and writes a Notebook: a Prompt Cell for each message the user sent along the active path, a Bash Cell for each command they ran with `!`. It also writes a Run Record of what those turns already did, read with the same turn summary a live Run uses. Pi's file is copied into the Run's directory and never written. Anchors in the record address the copy, so a later Run can carry on inside the copy. Promote is the same function. The browser picks the Chat from pi's list of the Workspace instead of naming the path.
 
-Export reads a Notebook and one Run (the latest, or the id given) and writes one HTML file. Prose, Cells, what each Cell said and cost, and the files it left are inlined. A content-security policy allows no script and no fetch. Credentials found on this machine are struck out of the document. The Notebook file is unchanged.
+Export reads a Notebook and one Run (the latest, or the id given) and writes one file. A destination ending in `.md` or `.markdown` is Markdown. Any other name is HTML: Prose, Cells, what each Cell said and cost, and the files it left are inlined, and a content-security policy allows no script and no fetch. Credentials found on this machine are struck out of the document. The Notebook file is unchanged.
 
 ## What this process will not do
 

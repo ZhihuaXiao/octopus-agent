@@ -69,7 +69,7 @@ Click a notebook to open it. The address bar keeps the path in the fragment, so 
 
 The title in the header returns to the list.
 
-The left column is the directory. Click a folder to open it and list what is in it: subfolders, notebooks, and other files. A notebook opens when you click it. Any other file is listed so you can see it is there. A small **⋯** on the directory, on a folder, or on a file opens its actions. **Upload** puts the files you choose into that folder. It never overwrites a file that is already there, and a file larger than 8MB is refused. **Edit** opens a notebook or a text file for editing. **Rename** asks for a new name. **Download** saves that file. **Delete** removes it, after you confirm. A notebook that is running is left until it stops. `node_modules` and directories whose names start with a dot are skipped. The notebook that is open is highlighted, and the folders that lead to it start open. A small **<** between the columns folds the directory away so the page can use the width; **>** brings it back. That choice stays in this browser. On a narrow screen the column sits above the page instead.
+The left column is the directory. Click a folder to open it and list what is in it: subfolders, notebooks, and other files. A notebook opens when you click it. Its name has a star at the upper right. A Markdown file that is not a notebook is listed as itself, with no star. Any other file is listed so you can see it is there. A small **⋯** on the directory, on a folder, or on a file opens its actions. **Upload** puts the files you choose into that folder. It never overwrites a file that is already there, and a file larger than 8MB is refused. **Edit** opens a notebook or a text file for editing. **Rename** asks for a new name. **Download** saves that file. **Delete** removes it, after you confirm. A notebook that is running is left until it stops. `node_modules` and directories whose names start with a dot are skipped. The notebook that is open is highlighted, and the folders that lead to it start open. A small **<** between the columns folds the directory away so the page can use the width; **>** brings it back. That choice stays in this browser. On a narrow screen the column sits above the page instead.
 
 **New notebook**, on the octo line or beside the list, asks for a filename (`.md` is added if you leave it off; a path such as `notes/audit.md` makes the folder too) and writes a notebook holding one empty prompt cell. It opens in the editor, ready for you to write the prompt. It never overwrites a file that is already there.
 
@@ -115,7 +115,7 @@ If the file changed on disk, or another browser saved it, while you were editing
 
 **Rename** asks for a new filename and moves the notebook to it, runs included. `.md` is added if you leave it off, and a path such as `notes/audit.md` moves it into that folder. It never overwrites a file that is already there, and it waits if a run is in progress.
 
-**Export** downloads one HTML file of this notebook and its latest finished run. Someone can open that file without octo. A notebook that has never been run has nothing to export.
+**Export** opens a list. **HTML** downloads one HTML file of this notebook and its latest finished run. **Markdown** downloads the same account as a Markdown file. Someone can open either without octo. A notebook that has never been run has nothing to export.
 
 **Run view** hides the cells. See below.
 
@@ -336,14 +336,15 @@ Pi keeps those files under `~/.pi/agent/sessions`. In the browser, start the ser
 
 ## Send the result to someone who will not run it
 
-Export writes one HTML file: the notebook's prose and cells, what each cell said and which files it left, inlined so the file stands alone. Credentials found on this machine are removed from the document. The notebook itself is not changed. If the destination already exists, octo refuses rather than overwriting it.
+Export writes one file: the notebook's prose and cells, what each cell said and which files it left. A destination ending in `.md` or `.markdown` is Markdown. Any other name is HTML, and the files a cell left are inlined so that file stands alone. Credentials found on this machine are removed from the document. The notebook itself is not changed. If the destination already exists, octo refuses rather than overwriting it.
 
 ```sh
 npm run octo -- export notes/audit.md audit.html
+npm run octo -- export notes/audit.md audit.md
 npm run octo -- export notes/audit.md audit.html --run <run-id>
 ```
 
-Without `--run`, the latest run is used. In the browser, **Export** downloads that same document for the latest finished run.
+Without `--run`, the latest run is used. In the browser, **Export** opens a list of **HTML** and **Markdown**, and the one you pick downloads that same document for the latest finished run.
 
 ## From another computer
 
@@ -403,5 +404,5 @@ octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
 octo --web [--port <number>] [--host <address>] [--password]
 octo password
 octo import <session.jsonl> <notebook.md>
-octo export <notebook.md> <document.html> [--run <id>]
+octo export <notebook.md> <document.html|document.md> [--run <id>]
 ```

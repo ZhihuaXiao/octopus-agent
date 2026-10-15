@@ -6,14 +6,12 @@
  * Notebook shares the program and not the answer; an Export puts the two back
  * together, in a file of its own, and leaves the Notebook exactly as it was.
  *
- * The document is one HTML file with everything it shows inside it: the
- * Notebook's Prose and Cells in order, what each Cell thought, said, did, ran
- * on and cost as of the Run chosen, and the files the Cells left — images
- * drawn, text shown, the rest offered for download — carried as data URLs rather than
- * linked, so the file stands alone wherever it is sent (ADR-0023). Nothing in
- * it runs: everything an agent wrote is text, a Content-Security-Policy in
- * the head permits no script and no fetch, and the credentials the machine
- * holds are struck out wherever a Cell repeated one (`credentials.ts`).
+ * The document is one file with everything it shows inside it: the Notebook's
+ * Prose and Cells in order, what each Cell thought, said, did, ran on and cost
+ * as of the Run chosen, and the files the Cells left. HTML carries images and
+ * other files as data URLs (ADR-0023), permits no script and no fetch, and
+ * Markdown carries the same reading as text. The credentials the machine holds
+ * are struck out wherever a Cell repeated one (`credentials.ts`).
  */
 
 import { readFile } from "node:fs/promises";
@@ -37,18 +35,23 @@ import {
   redactor,
 } from "./credentials.js";
 
+/** Which file the export is. Absent means HTML, which is what export has always written. */
+export type ExportFormat = "html" | "markdown";
+
 export interface ExportRequest extends CredentialSources {
   /** The Notebook, as an absolute path. Read, never written. */
   readonly notebook: string;
   /** The Run whose results are exported, by id; the latest to have finished when absent. */
   readonly run?: string;
+  /** HTML, or Markdown. Absent is HTML. */
+  readonly format?: ExportFormat;
 }
 
 /** How exporting went. Nothing is written either way: the document is the caller's to put somewhere. */
 export type Exported =
   | {
       readonly kind: "exported";
-      /** One HTML document, with everything it shows inside it. */
+      /** One HTML or Markdown document, with everything it shows inside it. */
       readonly document: string;
       /** The Run whose results it holds. */
       readonly run: string;
@@ -374,6 +377,106 @@ async function artifactsOf(notebook: string, recorded: Recorded): Promise<Artifa
   return found;
 }
 
+/** A fence longer than any run of backticks in `text`, so the text cannot close it. */
+function fenced(info: string, text: string): string {
+  let longest = 2;
+  for (const run of text.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
+  const mark = "`".repeat(longest + 1);
+  return `${mark}${info}\n${text.replace(/\r?\n$/, "")}\n${mark}`;
+}
+
+/**
+ * The same reading as the HTML document, as Markdown: prose as written, each
+ * Cell as a fenced block, and what the Run recorded under it. Text is struck
+ * through by `hide` and not escaped, because the file is Markdown.
+ */
+function markdownRenderer(credentials: readonly string[]) {
+  const hide = redactor(credentials);
+
+  const artifact = ({ path, bytes }: Artifact) => {
+    const name = path.split("/").at(-1) ?? path;
+    const label = hide(name);
+    if (bytes === undefined) return `**${label}** — no longer there`;
+    const type = runFileType(name);
+    if (isText(type)) {
+      const text = hide(bytes.toString("utf8"));
+      return `**${label}**\n\n${fenced("", text)}`;
+    }
+    if (holdsCredential(bytes, credentials))
+      return `**${label}** — withheld: it holds a credential`;
+    const url = dataUrl(type, bytes);
+    if (isImage(type)) return `![${label}](${url})`;
+    return `[${label}](${url})`;
+  };
+
+  const cell = (declared: Cell, shown: Shown) => {
+    const { record, from, artifacts, standing } = shown;
+    const attributes = [
+      declared.type,
+      declared.mode,
+      declared.isolated ? "isolated" : undefined,
+      declared.uses.length > 0 ? `uses ${declared.uses.join(", ")}` : undefined,
+      declared.model,
+      declared.timeout !== undefined ? `timeout ${formatDuration(declared.timeout)}` : undefined,
+      from === undefined ? undefined : `from run ${from}`,
+      STANDING_WORDS[standing],
+    ].filter((attribute) => attribute !== undefined);
+    const parts = [
+      `### ${hide(declared.id)} · ${attributes.map((attribute) => hide(attribute)).join(" · ")}`,
+      "",
+      fenced(declared.type, hide(declared.body)),
+    ];
+    if (record?.type === "prompt") {
+      if (record.toolCalls.length > 0) {
+        parts.push(
+          "",
+          record.toolCalls
+            .map((call) => {
+              const gist = gistOf(call.input, hide);
+              const summary =
+                gist === "" ? `**${hide(call.name)}**` : `**${hide(call.name)}** ${gist}`;
+              return `- ${summary}\n\n${fenced("json", abridged(call.input, hide))}`;
+            })
+            .join("\n\n"),
+        );
+      }
+      if (record.thinking !== undefined && record.thinking !== "") {
+        parts.push("", "**Thinking**", "", fenced("", hide(record.thinking)));
+      }
+      parts.push("", fenced("", hide(record.text)));
+      parts.push("", hide(usageOf(record)));
+    }
+    if (record?.type === "bash") {
+      parts.push("", fenced("", hide(record.stdout)));
+      if (record.stderr !== "") parts.push("", fenced("", hide(record.stderr)));
+    }
+    if (record?.error !== undefined) parts.push("", hide(record.error));
+    if (artifacts.length > 0) parts.push("", artifacts.map(artifact).join("\n\n"));
+    return parts.join("\n");
+  };
+
+  const prose = (text: string) => {
+    const shown = hide(text)
+      .replace(/^(?:[ \t]*\r?\n)+/, "")
+      .trimEnd();
+    return shown === "" ? undefined : shown;
+  };
+
+  const account = (record: RunRecord, shown: readonly Recorded[]) => {
+    const cost = shown.reduce((sum, recorded) => sum + recorded.record.usage.cost, 0);
+    return [
+      `Run \`${hide(record.id)}\``,
+      `${hide(record.startedAt)} to ${hide(record.endedAt)}`,
+      `$${cost.toFixed(4)}`,
+    ].join(" · ");
+  };
+
+  const document = (title: string, body: readonly string[]) =>
+    `# ${hide(title).replace(/\r?\n/g, " ")}\n\n${body.join("\n\n")}\n`;
+
+  return { cell, prose, account, document };
+}
+
 export async function exportNotebook(request: ExportRequest): Promise<Exported> {
   const { notebook } = request;
   let source: string;
@@ -395,7 +498,10 @@ export async function exportNotebook(request: ExportRequest): Promise<Exported> 
   const record = run === undefined ? undefined : await readRunRecord(notebook, run);
   if (run === undefined || record === undefined) return { kind: "no-run" };
 
-  const render = redactingRenderer(await credentialsHeld(request));
+  const render =
+    request.format === "markdown"
+      ? markdownRenderer(await credentialsHeld(request))
+      : redactingRenderer(await credentialsHeld(request));
   const recorded = await recordedAsOf(notebook, record);
   const stale = new Set(record.stale);
   const shownRecords: Recorded[] = [];
