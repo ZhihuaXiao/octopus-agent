@@ -702,7 +702,11 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
     workspace,
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
-    ...(mode?.prompt !== undefined ? { systemPrompt: mode.prompt } : {}),
+    ...(mode?.bare === true
+      ? { systemPrompt: "" }
+      : mode?.prompt !== undefined
+        ? { systemPrompt: mode.prompt }
+        : {}),
     ...(options.trust !== undefined ? { trust: options.trust } : {}),
   };
 

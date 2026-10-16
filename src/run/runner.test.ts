@@ -2041,6 +2041,36 @@ describe("modes", () => {
     expect(agent.turns[0]?.model).toBe("openai/gpt-5");
   });
 
+  it("sends a bare mode with no system prompt", async () => {
+    const modes = await modesDirectory({ "plain.md": "---\nbare: true\n---\n" });
+    const path = await notebookFile(declaring("mode: plain\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: modes });
+
+    expect(agent.setup?.systemPrompt).toBe("");
+  });
+
+  it("sends the shipped bare mode with no system prompt", async () => {
+    const path = await notebookFile(declaring("mode: bare\n"));
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create, userModesDirectory: await modesDirectory() });
+
+    expect(agent.setup?.systemPrompt).toBe("");
+  });
+
+  it("refuses a bare mode that also writes a system prompt", async () => {
+    const modes = await modesDirectory({ "plain.md": "---\nbare: true\n---\n\nBe brief.\n" });
+    const path = await notebookFile(declaring("mode: plain\n"));
+    const agent = createScriptedAgent([{ text: "never reached" }]);
+
+    await expect(
+      runNotebook(path, { agent: agent.create, userModesDirectory: modes }),
+    ).rejects.toThrow(/cannot have text after the frontmatter/);
+    expect(agent.prompts).toEqual([]);
+  });
+
   it("sets the agent up with the mode's system prompt, which is the body of its file", async () => {
     const modes = await modesDirectory({
       "design.md": "---\nmodel: openai/gpt-5\n---\n\nYou are a careful visual designer.\n",
@@ -2133,7 +2163,7 @@ describe("modes", () => {
     expect(refusal).toBeInstanceOf(RunRefusal);
     expect((refusal as RunRefusal).kind).toBe("environment");
     expect((refusal as RunRefusal).problems).toEqual([
-      `This notebook declares the mode "review", which is not available here. The modes here are code, design and work; your own are ${join(modes, "<name>.md")}.`,
+      `This notebook declares the mode "review", which is not available here. The modes here are bare, code, design and work; your own are ${join(modes, "<name>.md")}.`,
     ]);
     expect(agent.setup, "no agent is set up for a mode that is not there").toBeUndefined();
   });
@@ -2167,7 +2197,7 @@ describe("modes", () => {
     expect((refusal as RunRefusal).kind).toBe("environment");
     expect((refusal as RunRefusal).problems).toEqual([
       `${file}, line 2: Mode field "model" must be a string`,
-      `${file}, line 4: Unknown mode field "tool". Expected one of model, tools, skills`,
+      `${file}, line 4: Unknown mode field "tool". Expected one of model, tools, skills, bare`,
       `${file}, line 7: Every entry in "skills" must be a string`,
     ]);
     expect(agent.setup).toBeUndefined();

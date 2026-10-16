@@ -290,14 +290,15 @@ A mode is a preset: a system prompt, a default model, which tools the agent may 
 mode: work
 ```
 
-Octo ships two:
+Octo ships three:
 
 - `code` is pi as pi is. No extra system prompt, pi's own tools, every skill pi loads, and the model this machine's pi defaults to.
 - `work` is for a document rather than a codebase: a report, a summary, a plan. It uses a fixed model and pi's read, bash, edit, and write tools, and no skills unless the notebook names them.
+- `bare` sends the prompt cell with no system prompt. Not pi's own, not a prompt from the mode, and not `SYSTEM.md`, project instructions, or the skill list. Tools and the model stay pi's unless the notebook names them. Tool definitions are still sent when tools are enabled.
 
-Add your own as `~/.octo/modes/<name>.md`. The frontmatter holds `model`, `tools`, and `skills`. The rest of the file is the system prompt. Look at [modes/work.md](../modes/work.md) for the shape. A file of yours may not reuse the name `code` or `work`.
+Add your own as `~/.octo/modes/<name>.md`. The frontmatter holds `model`, `tools`, `skills`, and `bare`. The rest of the file is the system prompt. `bare: true` with an empty body is the same idea as the shipped bare mode. Look at [modes/work.md](../modes/work.md) and [modes/bare.md](../modes/bare.md) for the shapes. A file of yours may not reuse the name `code`, `work`, or `bare`.
 
-In the browser, **Modes**, beside Notebook, does the same thing. **New mode** asks for a name, an optional model, whether to limit tools and skills, and the system prompt. **Edit** changes that file. **Delete** removes it, after you confirm. `code` and `work` are not edited or deleted here. The mode menu on a notebook lists the new one once it is saved.
+In the browser, **Modes**, beside Notebook, does the same thing. **New mode** asks for a name, an optional model, whether to limit tools and skills, whether to send no system prompt, and the system prompt. **Edit** changes that file. **Delete** removes it, after you confirm. `code`, `work`, and `bare` are not edited or deleted here. The mode menu on a notebook lists the new one once it is saved.
 
 A notebook that names no mode runs on pi's defaults.
 

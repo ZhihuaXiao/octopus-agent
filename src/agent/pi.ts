@@ -2,6 +2,8 @@ import {
   type AgentSession,
   DefaultPackageManager,
   DefaultResourceLoader,
+  type ExtensionAPI,
+  type InlineExtension,
   ProjectTrustStore,
   SessionManager,
   SettingsManager,
@@ -44,6 +46,25 @@ type Model = Parameters<AgentSession["setModel"]>[0];
  * dropped with the Run. It is still pi that reads the files, so what is copied
  * is exactly what pi would otherwise have run on.
  */
+/**
+ * Clears the system prompt at the start of each turn.
+ *
+ * Pi builds one whenever a mode does not replace it, and a replacement still
+ * has the workspace's context, skills, and working directory appended. An
+ * extension that runs after those, and after any other extension, is what
+ * leaves the turn with none. An empty override is not enough: pi treats an
+ * empty prompt as its built-in one.
+ */
+function clearSystemPrompt(): InlineExtension {
+  return {
+    name: "bare",
+    hidden: true,
+    factory: (pi: ExtensionAPI) => {
+      pi.on("before_agent_start", () => ({ systemPrompt: "" }));
+    },
+  };
+}
+
 function settingsForRun(workspace: string, agentDir: string): SettingsManager {
   const onDisk = SettingsManager.create(workspace, agentDir);
   const held = new Map<string, string>([
@@ -97,13 +118,18 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
   if (decision.record) trustStore.set(workspace, decision.trusted);
 
   const { systemPrompt, skills } = options;
+  // Empty is a bare turn: no override, because pi reads an empty prompt as
+  // "use the built-in one". The extension below removes that prompt, and
+  // everything pi would append to it, once the turn is about to be sent.
+  const bare = systemPrompt === "";
   const resourceLoader = new DefaultResourceLoader({
     cwd: workspace,
     agentDir,
     settingsManager,
     // In place of whatever pi would have found, `SYSTEM.md` included; pi still
     // adds the Workspace's context files and its Skills after it.
-    ...(systemPrompt !== undefined ? { systemPromptOverride: () => systemPrompt } : {}),
+    ...(systemPrompt !== undefined && !bare ? { systemPromptOverride: () => systemPrompt } : {}),
+    ...(bare ? { extensionFactories: [clearSystemPrompt()] } : {}),
     // Filtered from what pi loaded, so a Skill in the set that pi never found
     // is absent from the Environment below and reported missing as it should be.
     ...(skills !== undefined

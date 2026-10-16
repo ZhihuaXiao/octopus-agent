@@ -1,8 +1,8 @@
 # A Mode is a file, and only the Notebook names it
 
 A Mode is a Markdown file: YAML frontmatter for its default `model`, its `tools` and its
-`skills`, and a body that is its system prompt. Its name is the file's. Octo ships `code.md`
-and `work.md` in `modes/` beside the program; a user's own are `~/.octo/modes/<name>.md`,
+`skills`, and a body that is its system prompt. Its name is the file's. Octo ships `code.md`,
+`work.md`, and `bare.md` in `modes/` beside the program; a user's own are `~/.octo/modes/<name>.md`,
 found by listing that directory, so adding one changes nothing in the application. A Notebook
 names its Mode in frontmatter, the Run resolves it before the first Cell, and nothing else
 can choose it.
@@ -43,6 +43,8 @@ The Skills are the exception, being needs rather than a choice: a Mode's `skills
 Skills pi gives the agent, together with the ones the Notebook declares; a Mode that lists
 none leaves every Skill pi loads. A Mode's prompt replaces pi's, `SYSTEM.md` included; pi
 still adds the Workspace's context files and the Skills after it. An empty body keeps pi's.
+A mode with `bare: true` and an empty body sends no system prompt: not pi's, and not
+those additions. The shipped mode of that kind is `bare`.
 
 What a Mode asks for is checked as a Declared Environment is (ADR-0010): a tool or Skill it
 names that is not here stops the Run, named after the Mode. So does a Mode that is not here, a

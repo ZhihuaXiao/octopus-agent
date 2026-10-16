@@ -76,6 +76,7 @@ import {
  * @typedef {{ path: string, title: string, model?: string, mode?: string }} NotebookEntry
  * @typedef {{
  *   name: string,
+ *   bare?: boolean,
  *   prompt?: string,
  *   model?: string,
  *   tools?: string[],
@@ -6290,9 +6291,18 @@ function openModeEditor(mode) {
     "\n",
   );
   /** @type {HTMLTextAreaElement} */ (element("mode-prompt")).value = mode?.prompt ?? "";
+  /** @type {HTMLInputElement} */ (element("mode-bare")).checked = mode?.bare === true;
   /** @type {HTMLInputElement} */ (element("mode-name")).dataset.original = mode?.name ?? "";
   showModeLists();
+  showModePrompt();
   /** @type {HTMLInputElement} */ (element("mode-name")).focus();
+}
+
+/** Hides the system prompt while the mode sends none. */
+function showModePrompt() {
+  const bare = /** @type {HTMLInputElement} */ (element("mode-bare")).checked;
+  const prompt = element("mode-prompt");
+  if (prompt.parentElement instanceof HTMLElement) prompt.parentElement.hidden = bare;
 }
 
 /** Shows the tool and skill lists only when the mode restricts them. */
@@ -6317,9 +6327,11 @@ function linesOf(text) {
 function modeFromForm() {
   const limitTools = /** @type {HTMLInputElement} */ (element("mode-limit-tools")).checked;
   const limitSkills = /** @type {HTMLInputElement} */ (element("mode-limit-skills")).checked;
+  const bare = /** @type {HTMLInputElement} */ (element("mode-bare")).checked;
   return {
     name: /** @type {HTMLInputElement} */ (element("mode-name")).value.trim(),
-    prompt: /** @type {HTMLTextAreaElement} */ (element("mode-prompt")).value,
+    bare,
+    prompt: bare ? "" : /** @type {HTMLTextAreaElement} */ (element("mode-prompt")).value,
     model: /** @type {HTMLInputElement} */ (element("mode-model")).value.trim(),
     tools: limitTools
       ? linesOf(/** @type {HTMLTextAreaElement} */ (element("mode-tools")).value)
@@ -6462,6 +6474,7 @@ element("mode-cancel").addEventListener("click", () => {
   element("mode-editor").hidden = true;
 });
 element("mode-limit-tools").addEventListener("change", showModeLists);
+element("mode-bare").addEventListener("change", showModePrompt);
 element("mode-limit-skills").addEventListener("change", showModeLists);
 element("notebook-mode").addEventListener("change", () => {
   if (watching === undefined) return;

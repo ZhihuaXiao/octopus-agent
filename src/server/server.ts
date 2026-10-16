@@ -854,7 +854,7 @@ function requestedMode(body: unknown, current: string | undefined): Mode | undef
       creating
         ? ["name", "prompt", "model", "tools", "skills"]
         : ["prompt", "model", "tools", "skills"],
-      creating ? [] : ["name"],
+      creating ? ["bare"] : ["name", "bare"],
     ) ||
     typeof body.prompt !== "string" ||
     typeof body.model !== "string" ||
@@ -869,8 +869,13 @@ function requestedMode(body: unknown, current: string | undefined): Mode | undef
   const model = body.model.trim();
   const name = typeof body.name === "string" ? body.name.trim() : current;
   if (name === undefined) return undefined;
+  if (body.bare !== undefined && typeof body.bare !== "boolean") return undefined;
+  // A prompt and bare together would be two instructions. Bare means there is
+  // no system prompt, so the text has to be empty.
+  if (body.bare === true && prompt !== "") return undefined;
   return {
     name,
+    ...(body.bare === true ? { bare: true } : {}),
     ...(prompt === "" ? {} : { prompt }),
     ...(model === "" ? {} : { model }),
     ...(tools === null ? {} : { tools }),
@@ -901,7 +906,7 @@ async function createMode(
     reply(
       response,
       400,
-      "The request must name the mode and give its prompt, model, tools, and skills, as JSON. An empty prompt or model sets none. Null tools or skills leaves pi's own; a list is only those.\n",
+      "The request must name the mode and give its prompt, model, tools, and skills, as JSON. An empty prompt or model sets none. Null tools or skills leaves pi's own; a list is only those. bare: true, with an empty prompt, sends no system prompt.\n",
     );
     return;
   }
@@ -930,7 +935,7 @@ async function changeMode(
     reply(
       response,
       400,
-      "The request must give the mode's prompt, model, tools, and skills, as JSON, and may give it a new name. An empty prompt or model sets none. Null tools or skills leaves pi's own; a list is only those.\n",
+      "The request must give the mode's prompt, model, tools, and skills, as JSON, and may give it a new name. An empty prompt or model sets none. Null tools or skills leaves pi's own; a list is only those. bare: true, with an empty prompt, sends no system prompt.\n",
     );
     return;
   }
@@ -969,6 +974,7 @@ function answerMode(
 /** A mode as JSON, with only the fields it has. */
 function modeJson(mode: Mode): {
   name: string;
+  bare?: true;
   prompt?: string;
   model?: string;
   tools?: readonly string[];
@@ -976,6 +982,7 @@ function modeJson(mode: Mode): {
 } {
   return {
     name: mode.name,
+    ...(mode.bare === true ? { bare: true } : {}),
     ...(mode.prompt !== undefined ? { prompt: mode.prompt } : {}),
     ...(mode.model !== undefined ? { model: mode.model } : {}),
     ...(mode.tools !== undefined ? { tools: mode.tools } : {}),

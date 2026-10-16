@@ -20,6 +20,12 @@ export interface Mode {
   readonly name: string;
   /** The system prompt, in place of pi's own; absent when the file's body is empty. */
   readonly prompt?: string;
+  /**
+   * Send no system prompt at all. The body must be empty: pi's own prompt,
+   * `SYSTEM.md`, project instructions, and the skill list are left out of the
+   * window. Absent keeps the usual prompt, which an empty body leaves as pi's.
+   */
+  readonly bare?: true;
   /** The model a Cell takes its turn on when neither it nor its Notebook names one. */
   readonly model?: string;
   /** The only tools the agent may use, when the Notebook does not list its own. */
@@ -42,7 +48,7 @@ export type ModeResult =
 const scalarString = (node: unknown) =>
   isScalar(node) && typeof node.value === "string" ? node.value : undefined;
 
-const FIELDS = ["model", "tools", "skills"];
+const FIELDS = ["model", "tools", "skills", "bare"];
 
 const isDelimiter = (line: string) => line.trimEnd() === "---";
 
@@ -93,6 +99,15 @@ function readMode(name: string, source: string, errors: Diagnostic[]): Mode {
       continue;
     }
 
+    if (key === "bare") {
+      if (isScalar(item.value) && item.value.value === true) {
+        mode.bare = true;
+        continue;
+      }
+      errors.push({ line, message: `Mode field "bare" must be true` });
+      continue;
+    }
+
     if (key === "tools" || key === "skills") {
       if (!isSeq(item.value)) {
         errors.push({ line, message: `Mode field "${key}" must be a list of strings` });
@@ -116,6 +131,14 @@ function readMode(name: string, source: string, errors: Diagnostic[]): Mode {
     errors.push({
       line,
       message: `Unknown mode field "${key ?? String(item.key)}". Expected one of ${FIELDS.join(", ")}`,
+    });
+  }
+
+  if (mode.bare === true && mode.prompt !== undefined) {
+    const close = lines.findIndex((line, at) => at > 0 && isDelimiter(line));
+    errors.push({
+      line: close + 2,
+      message: "A bare mode sends no system prompt, so it cannot have text after the frontmatter.",
     });
   }
 
@@ -282,13 +305,20 @@ const isShipped = async (name: string) => (await modesIn(SHIPPED_MODES)).include
  * A mode as its file: YAML frontmatter for the fields it has, and the system
  * prompt after. A field left out is left out of the file, which is what leaves
  * pi's own tools, or every skill, in place. An empty prompt is no extra prompt.
+ * `bare: true` sends no system prompt at all, so a body is not written with it.
  */
 function sourceOf(mode: Mode): string {
-  const fields: { model?: string; tools?: readonly string[]; skills?: readonly string[] } = {};
+  const fields: {
+    bare?: true;
+    model?: string;
+    tools?: readonly string[];
+    skills?: readonly string[];
+  } = {};
+  if (mode.bare === true) fields.bare = true;
   if (mode.model !== undefined) fields.model = mode.model;
   if (mode.tools !== undefined) fields.tools = mode.tools;
   if (mode.skills !== undefined) fields.skills = mode.skills;
-  const prompt = mode.prompt?.trim() ?? "";
+  const prompt = mode.bare === true ? "" : (mode.prompt?.trim() ?? "");
   const front = Object.keys(fields).length === 0 ? "" : `---\n${stringify(fields)}---\n`;
   if (prompt === "") return front;
   return front === "" ? `${prompt}\n` : `${front}\n${prompt}\n`;

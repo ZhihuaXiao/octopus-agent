@@ -221,8 +221,9 @@
         </div>
         <p class="hint">
           A mode is a system prompt, an optional model, and which tools and skills the agent is
-          given. <strong>code</strong> and <strong>work</strong> come with octo and stay as they
-          are. A mode you add here is saved for your user and appears in the mode menu on each
+          given. <strong>code</strong>, <strong>work</strong>, and <strong>bare</strong> come with
+          octo and stay as they are. <strong>bare</strong> sends a prompt cell with no system
+          prompt. A mode you add here is saved for your user and appears in the mode menu on each
           notebook. Leave tools or skills unrestricted and the agent keeps pi's own. Saving rewrites
           that mode's file.
         </p>
@@ -255,8 +256,12 @@
             name more.
           </label>
           <textarea id="mode-skills" hidden placeholder="review" aria-label="Skills"></textarea>
-          <label
-            >System prompt
+          <label class="mode-flag">
+            <input id="mode-bare" type="checkbox" />
+            No system prompt. A prompt cell is sent alone, without pi's prompt or one written here.
+          </label>
+          <label>
+            System prompt
             <textarea
               id="mode-prompt"
               class="mode-prompt"

@@ -4091,7 +4091,7 @@ describe("a notebook's mode", () => {
     const listed = await get(server, "/api/modes");
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({
-      modes: ["code", "design", "work"],
+      modes: ["bare", "code", "design", "work"],
       own: [{ name: "design", model: "openai/gpt-5", prompt: "Design." }],
     });
     expect((await post(server, "/api/modes", {})).status).toBe(400);
@@ -4103,7 +4103,7 @@ describe("a notebook's mode", () => {
     const server = await serve({}, unusedAgent(), { modesDirectory: directory });
 
     expect(await (await get(server, "/api/modes")).json()).toEqual({
-      modes: ["work"],
+      modes: ["bare", "work"],
       own: [{ name: "code", prompt: "You are something else." }],
     });
   });
@@ -4195,7 +4195,7 @@ describe("a notebook's mode", () => {
     expect(await readFile(join(directory, "design.md"), "utf8")).toContain("Keep to the brief.");
 
     const listed = (await (await get(server, "/api/modes")).json()) as { modes: string[] };
-    expect(listed.modes).toEqual(["code", "design", "work"]);
+    expect(listed.modes).toEqual(["bare", "code", "design", "work"]);
     const chosen = await post(server, "/api/notebooks/mode", {
       notebook: "hello.md",
       mode: "design",
@@ -4218,13 +4218,26 @@ describe("a notebook's mode", () => {
     expect(await readFile(join(directory, "draft.md"), "utf8")).toContain("skills: []");
     await expect(readFile(join(directory, "design.md"), "utf8")).rejects.toThrow();
 
+    const bare = await post(server, "/api/modes", {
+      name: "plain",
+      prompt: "",
+      model: "",
+      tools: null,
+      skills: null,
+      bare: true,
+    });
+    expect(bare.status).toBe(201);
+    expect(await bare.json()).toEqual({ name: "plain", bare: true });
+    expect(await readFile(join(directory, "plain.md"), "utf8")).toContain("bare: true");
+    expect((await get(server, "/api/modes/plain", { method: "DELETE" })).status).toBe(204);
+
     const removed = await get(server, "/api/modes/draft", { method: "DELETE" });
     expect(removed.status).toBe(204);
     const after = (await (await get(server, "/api/modes")).json()) as {
       modes: string[];
       own: unknown[];
     };
-    expect(after.modes).toEqual(["code", "work"]);
+    expect(after.modes).toEqual(["bare", "code", "work"]);
     expect(after.own).toEqual([]);
     expect(
       (await post(server, "/api/notebooks/mode", { notebook: "hello.md", mode: "draft" })).status,
@@ -4237,6 +4250,7 @@ describe("a notebook's mode", () => {
     const body = { prompt: "", model: "", tools: null, skills: null };
 
     expect((await post(server, "/api/modes", { ...body, name: "work" })).status).toBe(422);
+    expect((await post(server, "/api/modes", { ...body, name: "bare" })).status).toBe(422);
     expect((await post(server, "/api/modes", { ...body, name: "../x" })).status).toBe(400);
     expect((await post(server, "/api/modes", { ...body, name: "design" })).status).toBe(409);
     expect((await post(server, "/api/modes/missing", body)).status).toBe(404);

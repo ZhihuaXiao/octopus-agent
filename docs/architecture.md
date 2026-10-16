@@ -75,7 +75,7 @@ Parsing keeps the source in two places: the verbatim text of Prose and Cell bodi
 
 Inputs are declared in frontmatter (`string`, `number`, `boolean`). A Cell body names one as `{{name}}`. `{{artifacts}}` is reserved: it is the directory the Run gives that Cell. `trust` and `no-trust` are reserved too, because those words are the Run's own flags.
 
-A Mode is a Markdown file of its own: frontmatter for a default model, tools, and skills, and a body that is the system prompt. The Notebook names it. A Run resolves that name and cannot choose another. A user file that collides with a shipped Mode name is refused. A Cell's `model` wins over the Notebook's, which wins over the Mode's. The Notebook's `tools` replace the Mode's when the Notebook lists any. Skills are required either way: a Skill the Notebook declares must be loaded. When the Mode names a skill set, that set plus the Notebook's Skills is the only set the agent is given. When the Mode names none, the agent gets every Skill pi loads.
+A Mode is a Markdown file of its own: frontmatter for a default model, tools, and skills, and a body that is the system prompt. `bare: true` with an empty body sends no system prompt. The Notebook names it. A Run resolves that name and cannot choose another. A user file that collides with a shipped Mode name is refused. A Cell's `model` wins over the Notebook's, which wins over the Mode's. The Notebook's `tools` replace the Mode's when the Notebook lists any. Skills are required either way: a Skill the Notebook declares must be loaded. When the Mode names a skill set, that set plus the Notebook's Skills is the only set the agent is given. When the Mode names none, the agent gets every Skill pi loads.
 
 ## A Run
 
