@@ -757,7 +757,7 @@ async function renameOther(
       reply(response, 409, `There is already a file named ${body.to}.\n`);
       return;
     case "notebook":
-      reply(response, 400, "A notebook is renamed with its own Rename button.\n");
+      reply(response, 400, "A notebook is renamed from its own page.\n");
       return;
     case "renamed":
       json(response, 200, { path: renamed.path });

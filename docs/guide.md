@@ -113,7 +113,7 @@ If the file changed on disk, or another browser saved it, while you were editing
 
 **Duplicate** asks for a new filename and opens the copy. The suggestion is the current name with `-copy` before `.md`.
 
-**Rename** asks for a new filename and moves the notebook to it, runs included. `.md` is added if you leave it off, and a path such as `notes/audit.md` moves it into that folder. It never overwrites a file that is already there, and it waits if a run is in progress.
+Double-click the filename at the top of the notebook to give it a new name. The name becomes a field; Enter or leaving the field keeps what you typed, and Escape leaves the old name. `.md` is added if you leave it off, and a path such as `notes/audit.md` moves it into that folder. It never overwrites a file that is already there, and it waits if a run is in progress. Runs move with the notebook.
 
 **Export** opens a list. **HTML** downloads one HTML file of this notebook and its latest finished run. **Markdown** downloads the same account as a Markdown file. Someone can open either without octo. A notebook that has never been run has nothing to export.
 

@@ -1079,6 +1079,41 @@ select.notebook-mode:disabled,
   opacity: 1;
 }
 
+/* The open notebook's filename. It looks like the name, and double-clicking it edits it. */
+.path button.name-edit {
+  display: inline;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+
+.path button.name-edit:hover,
+.path button.name-edit:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.path input.name-edit {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
 h1 a {
   color: inherit;
   text-decoration: none;

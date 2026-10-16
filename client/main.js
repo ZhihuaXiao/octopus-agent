@@ -39,7 +39,8 @@ import {
  * the Notebook. A Run that creates or changes one of those files leaves it
  * under review: Accept keeps the new text, and Reject puts back what was
  * there, or removes a file that was new. A text file that is not a Notebook
- * is renamed from its own page, in the folder it is already in. The list of Notebooks, and an open one, choose the mode it
+ * is renamed from its own page, in the folder it is already in. An open
+ * Notebook is renamed by double-clicking the filename at the top of the page. The list of Notebooks, and an open one, choose the mode it
  * runs in and the model it runs on; and under an open Notebook are the ways to add a Prompt
  * Cell or a Bash Cell to it, which begin the editing when it has not begun.
  *
@@ -1067,24 +1068,17 @@ async function renameOtherFile(from) {
 }
 
 /**
- * Gives the open Notebook a new filename. The session follows the file, and
- * the address follows the session, so a reload opens the renamed one.
- */
-async function renameNotebook() {
-  if (watching === undefined) return;
-  await renameTreeNotebook(watching.state.notebook);
-}
-
-/**
  * Gives the Notebook at `path` a new filename. The open session follows the
  * file when it is that Notebook. `.md` is added when it is left off, and a
- * path such as `notes/audit.md` moves it into that folder.
+ * path such as `notes/audit.md` moves it into that folder. `given`, when
+ * passed, is a name already typed; otherwise the page asks for one.
  * @param {string} path
+ * @param {string} [given]
  */
-async function renameTreeNotebook(path) {
-  const given = window.prompt("Rename this notebook to:", path)?.trim();
-  if (given === undefined || given === "" || given === path) return;
-  const to = given.endsWith(".md") ? given : `${given}.md`;
+async function renameTreeNotebook(path, given) {
+  const typed = (given ?? window.prompt("Rename this notebook to:", path))?.trim();
+  if (typed === undefined || typed === "" || typed === path) return;
+  const to = typed.endsWith(".md") ? typed : `${typed}.md`;
   const status =
     watching?.state.notebook === path && !element("session").hidden
       ? element("session-status")
@@ -3279,8 +3273,16 @@ async function decideOpenFile(decision) {
 }
 
 /**
+ * The notebook path whose filename is being typed at the top of the page, so a
+ * redraw leaves that field in place.
+ * @type {string | undefined}
+ */
+let headingName;
+
+/**
  * The path already names the file. A title that is only that name, with or
  * without its extension, is the same name twice, so only the path is shown.
+ * The open notebook's filename is a control: double-clicking it edits the name.
  * @param {string} title
  * @param {string} path
  */
@@ -3294,8 +3296,76 @@ function showHeading(title, path) {
   heading.hidden = same;
   heading.textContent = same ? "" : title;
   const named = element("notebook");
-  named.replaceChildren(path === "" ? "" : octoName(path));
   named.classList.toggle("sole", same && path !== "");
+  if (headingName === path && named.querySelector("input.name-edit") !== null) return;
+  if (headingName !== undefined && headingName !== path) {
+    const pending = named.querySelector("input.name-edit");
+    if (pending instanceof HTMLInputElement) pending.dataset.discard = "true";
+    headingName = undefined;
+  }
+  named.replaceChildren(path === "" ? "" : notebookHeadingName(path));
+}
+
+/**
+ * The filename at the top of an open notebook. Double-clicking it edits that name.
+ * Any other path is only shown.
+ * @param {string} path
+ * @returns {HTMLElement}
+ */
+function notebookHeadingName(path) {
+  if (watching?.state.notebook !== path) return octoName(path);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "name-edit";
+  button.title = "Double-click to give this file a new name";
+  button.append(octoName(path));
+  button.addEventListener("dblclick", () => beginNotebookNameEdit());
+  return button;
+}
+
+/**
+ * Turns the open notebook's filename into a field. Enter, or leaving the
+ * field, keeps the typed name. Escape leaves the old one.
+ */
+function beginNotebookNameEdit() {
+  if (watching === undefined || headingName !== undefined) return;
+  const path = watching.state.notebook;
+  const title = watching.state.title;
+  headingName = path;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "name-edit";
+  input.value = path;
+  input.spellcheck = false;
+  input.setAttribute("aria-label", "File name");
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      input.blur();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      input.dataset.discard = "true";
+      input.blur();
+    }
+  });
+  input.addEventListener("blur", () => {
+    if (input.dataset.settled === "true") return;
+    input.dataset.settled = "true";
+    const discard = input.dataset.discard === "true";
+    const given = input.value;
+    // A redraw that already replaced this field set discard and cleared
+    // `headingName` first, and it is still drawing. Restoring again from here
+    // would run that redraw twice.
+    const mine = headingName === path;
+    if (mine) headingName = undefined;
+    if (discard && !mine) return;
+    if (watching !== undefined) showHeading(watching.state.title, watching.state.notebook);
+    else showHeading(title, path);
+    if (!discard) void renameTreeNotebook(path, given);
+  });
+  element("notebook").replaceChildren(input);
+  input.focus();
+  input.select();
 }
 
 /**
@@ -6461,7 +6531,6 @@ element("file-close").addEventListener("click", () => {
   if (openPane !== "notebook") closeText(openPane);
 });
 element("duplicate").addEventListener("click", () => void duplicate());
-element("rename").addEventListener("click", () => void renameNotebook());
 element("export").addEventListener("click", () => {
   const list = element("export-list");
   const opening = list.hidden;
