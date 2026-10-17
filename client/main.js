@@ -2154,6 +2154,8 @@ function renderRounds(value) {
     }
     if (round.thinking !== undefined && round.thinking !== "") {
       const thought = document.createElement("details");
+      thought.className = "cell-thinking";
+      thought.open = true;
       thought.append(
         make("summary", "", "Thinking"),
         make("pre", "round-thinking", round.thinking),

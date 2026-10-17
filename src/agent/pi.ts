@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { contextUsage } from "../pi/context.js";
-import { customContextWindow } from "../pi/model-window.js";
+import { customContextWindow, customThinking, enableCustomThinking } from "../pi/model-window.js";
 import { createAssistantTextStream } from "../pi/streaming.js";
 import { decideTrust } from "../pi/trust.js";
 import { failureOf, summariseTurn, thoughtIn } from "../pi/turn.js";
@@ -167,7 +167,39 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
     const tokens = await customContextWindow(agentDir, model.provider, model.id);
     if (tokens !== undefined) model.contextWindow = tokens;
   };
+
+  /**
+   * A custom model that does not refuse thinking is allowed to think.
+   *
+   * Pi clamps the thinking level to off when `reasoning` is false, which is
+   * what a missing flag becomes, and a turn taken that way records no thought.
+   * The level in settings is what was asked for. Done before the session is
+   * put on the model, because the clamp happens as the model changes.
+   */
+  const allowThinking = async (model: Model | undefined): Promise<void> => {
+    if (model === undefined) return;
+    enableCustomThinking(
+      model,
+      await customThinking(agentDir, model.provider, model.id),
+      settingsManager.getDefaultThinkingLevel(),
+    );
+  };
+
+  /**
+   * Puts the session back on the thinking level from settings when the model
+   * can think and the level was clamped to off. A level already set is left,
+   * and so is a model that cannot think.
+   */
+  const applyThinking = (): void => {
+    if (session.model?.reasoning !== true || session.thinkingLevel !== "off") return;
+    const level = settingsManager.getDefaultThinkingLevel();
+    if (level === undefined || level === "off") return;
+    session.setThinkingLevel(level);
+  };
+
+  await allowThinking(session.model);
   await alignContextWindow(session.model);
+  applyThinking();
 
   /**
    * The model the session opened on — pi's own default, or the one the session
@@ -197,7 +229,9 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
    */
   const takeOn = async (named: string): Promise<void> => {
     const wanted = resolveModel(named);
+    await allowThinking(wanted);
     if (!sameModel(wanted, session.model)) await session.setModel(wanted);
+    applyThinking();
     await alignContextWindow(session.model);
   };
 
@@ -211,7 +245,9 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
    */
   const restore = async (): Promise<void> => {
     if (own === undefined || sameModel(own, session.model)) return;
+    await allowThinking(own);
     await session.setModel(own);
+    applyThinking();
   };
 
   const packageManager = new DefaultPackageManager({ cwd: workspace, agentDir, settingsManager });
