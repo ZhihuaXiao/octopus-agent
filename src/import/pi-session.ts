@@ -37,7 +37,6 @@ import {
 import { anchorsAfter } from "../run/anchor.js";
 import type { BashCellRecord, CellRecord, PromptCellRecord, RunRecord } from "../run/record.js";
 import { newRunId, runDirectory, runsDirectory, writeRunRecord } from "../run/store.js";
-import { isRecord } from "../util/guards.js";
 
 export interface ImportRequest {
   /** Pi's session file, as pi wrote it. Read and copied, never written. */
@@ -94,7 +93,9 @@ type CellSource = Turn | RanCommand;
 function cellSourcesOf(path: readonly SessionEntry[]): CellSource[] {
   const sources: CellSource[] = [];
   for (const entry of path) {
-    const message = entry.type === "message" && isRecord(entry.message) ? entry.message : undefined;
+    // Read the typed message. `isRecord` would keep only `toolResult`: pi's other
+    // message roles are interfaces, and that guard drops every interface from a union.
+    const message = entry.type === "message" ? entry.message : undefined;
     if (message?.role === "user") {
       sources.push({ kind: "prompt", asked: entry, followed: [] });
       continue;
@@ -197,7 +198,8 @@ function cellOf(id: string, source: CellSource): { segment: SegmentEdit; record:
     };
   }
   const { asked } = source;
-  const content = asked.type === "message" && isRecord(asked.message) ? asked.message.content : "";
+  const content =
+    asked.type === "message" && asked.message.role === "user" ? asked.message.content : "";
   // Escaped so that braces typed at the terminal stay text: the Chat had no
   // Inputs, so nothing in it was a reference. A fence in the text is the edit
   // machinery's to fence longer, as it does for a body typed in the browser.
@@ -217,9 +219,7 @@ function cellOf(id: string, source: CellSource): { segment: SegmentEdit; record:
  */
 function modelOf(path: readonly SessionEntry[]): string | undefined {
   const answered = path
-    .flatMap((entry) =>
-      entry.type === "message" && isRecord(entry.message) ? [entry.message] : [],
-    )
+    .flatMap((entry) => (entry.type === "message" ? [entry.message] : []))
     .filter((message) => message.role === "assistant")
     .at(-1);
   if (answered === undefined) return undefined;

@@ -69,13 +69,12 @@ describe("pi's session store", () => {
     expect(CURRENT_SESSION_VERSION).toBe(3);
   });
 
-  it("writes a newly created session to disk only once an assistant message arrives", () => {
+  it("writes a newly created session to disk once a user message arrives", () => {
     const manager = SessionManager.create(dir, dir);
-    manager.appendMessage(userMessage("only a question"));
 
     expect(existsSync(manager.getSessionFile()!)).toBe(false);
 
-    manager.appendMessage(assistantReply("an answer"));
+    manager.appendMessage(userMessage("only a question"));
 
     expect(existsSync(manager.getSessionFile()!)).toBe(true);
   });

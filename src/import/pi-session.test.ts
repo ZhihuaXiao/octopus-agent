@@ -67,7 +67,7 @@ const assistant = (
 });
 
 /** An assistant message that stops to call a tool, as pi records the first half of a tool-using turn. */
-const callsTool = (name: string, args: Record<string, unknown>): AppendableMessage => ({
+const callsTool = (name: string, args: { command: string }): AppendableMessage => ({
   role: "assistant",
   content: [
     { type: "text", text: "Let me look." },

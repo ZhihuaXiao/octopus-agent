@@ -151,17 +151,32 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
 
     try {
       const own = await agent.prompt("Reply with exactly the word: pong");
-      // Any available model other than the one pi opened on. With only one to
-      // choose from there is no switch to observe, and the test says so.
-      const other = availableModels.find(
-        // A prefix rather than equality, since what served may be a dated
-        // version of the name pi opened on.
-        (model) => !own.model.startsWith(`${model.provider}/${model.id}`),
-      );
-      if (other === undefined) return;
-      const named = `${other.provider}/${other.id}`;
-
-      const overridden = await agent.prompt("Reply with exactly the word: pong", { model: named });
+      // Any available model other than the one pi opened on. A prefix rather
+      // than equality, since what served may be a dated version of the name
+      // pi opened on. A model that never answers is not a switch to observe,
+      // so the next one is asked. With none that answer, the test says so.
+      const candidates = availableModels
+        .filter((model) => !own.model.startsWith(`${model.provider}/${model.id}`))
+        .slice(0, 3);
+      let other: (typeof availableModels)[number] | undefined;
+      let overridden: Awaited<ReturnType<typeof agent.prompt>> | undefined;
+      for (const candidate of candidates) {
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), 15_000);
+        try {
+          overridden = await agent.prompt("Reply with exactly the word: pong", {
+            model: `${candidate.provider}/${candidate.id}`,
+            signal: stop.signal,
+          });
+          other = candidate;
+          break;
+        } catch (error) {
+          if (!(error instanceof TurnFailure) || !error.aborted) throw error;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      if (other === undefined || overridden === undefined) return;
       const back = await agent.prompt("Reply with exactly the word: pong");
 
       // The record names what served the turn with its provider, as the

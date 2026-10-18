@@ -217,17 +217,19 @@ export function readCellRounds(
     }
     if (entry.type !== "message") continue;
     const message = entry.message;
-    if (!isRecord(message) || typeof message.role !== "string") continue;
+    // Pi's message roles other than `toolResult` are interfaces, so `isRecord`
+    // would discard them. The fields below are read as plain data.
+    const fields = message as unknown as Record<string, unknown>;
 
     if (message.role === "user") {
       const text = clip(textBlocksOf(message.content));
       if (text !== "") prompts.push(text);
       if (query === "" && rounds.length === 0) query = text;
-      else rounds.push(roundOf(message, "you"));
+      else rounds.push(roundOf(fields, "you"));
       continue;
     }
     if (message.role === "assistant") {
-      rounds.push(roundOf(message, "model"));
+      rounds.push(roundOf(fields, "model"));
       continue;
     }
     if (message.role !== "toolResult") continue;

@@ -589,10 +589,10 @@ export async function concludeRun(run: Concluded): Promise<RunRecord> {
     // Session and took no turn in it still leaves the earlier Anchors where
     // they were — because an Anchor is the only thing a later Run would reopen
     // one for. Nothing anchored a Notebook of Bash Cells, nor one of Isolated
-    // Cells whose Agent Sessions are gone, nor one whose every turn failed —
-    // and pi does not write a session file until an assistant message arrives,
-    // so naming one on the strength of having merely tried would point a later
-    // Run at nothing.
+    // Cells whose Agent Sessions are gone, nor one whose every turn failed.
+    // A failed turn can still leave a session file — pi writes one as soon as
+    // the user message is in it — but without an Anchor a later Run has nowhere
+    // in that file to reopen.
     ...(anchored && run.agentSession !== undefined ? { agentSession: run.agentSession } : {}),
     startedAt: run.startedAt,
     endedAt: new Date().toISOString(),

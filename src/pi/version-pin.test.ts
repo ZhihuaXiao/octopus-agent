@@ -5,10 +5,10 @@ import { PI_PACKAGE, isExactVersionSpec } from "./version-pin.js";
 
 describe("isExactVersionSpec", () => {
   it("accepts a fully pinned version", () => {
-    expect(isExactVersionSpec("0.84.2")).toBe(true);
+    expect(isExactVersionSpec("1.3.0")).toBe(true);
   });
 
-  it.each(["^0.84.2", "~0.84.2", ">=0.84.2", "0.84.x", "*", "latest", ""])(
+  it.each(["^1.3.0", "~1.3.0", ">=1.3.0", "1.3.x", "*", "latest", ""])(
     "rejects %o, which would let a breaking pi release in unannounced",
     (spec) => {
       expect(isExactVersionSpec(spec)).toBe(false);
