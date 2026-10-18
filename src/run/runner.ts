@@ -1,5 +1,5 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   type Agent,
@@ -32,6 +32,7 @@ import {
   timeoutOf,
   workspaceOf,
 } from "../notebook/notebook.js";
+import { type CellAccess, cellAccess, cellAccessAllows } from "./access.js";
 import { anchorBefore, anchorsAfter } from "./anchor.js";
 import type {
   BashCellRecord,
@@ -116,6 +117,16 @@ export interface RunOptions {
    * for the directory it is pointed at, only the person running it can.
    */
   trust?: boolean;
+  /**
+   * Where this run's cells may operate. Absent is `user`: any directory the
+   * account can already reach, which is what a run has always done. `served`
+   * keeps the workspace under `servedDirectory`, or under the notebook's own
+   * directory when that is not set. `roots` keeps it under the directories
+   * named. See `access.ts`.
+   */
+  access?: CellAccess;
+  /** The directory `served` access is relative to. The notebook's directory when absent. */
+  servedDirectory?: string;
   /**
    * The Cells this Run executes, by id. Absent runs the whole Notebook.
    *
@@ -684,6 +695,14 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
   const workspace = workspaceOf(parsed.notebook, path);
   if (!(await isDirectory(workspace))) {
     throw refuse("workspace", `Its workspace ${workspace} is not a directory.`);
+  }
+  const access = options.access ?? cellAccess("user");
+  const served = options.servedDirectory ?? dirname(resolve(path));
+  if (!cellAccessAllows(access, served, workspace)) {
+    throw refuse(
+      "workspace",
+      `Its workspace ${workspace} is outside the directories cells may use.`,
+    );
   }
 
   // What every agent this Run makes is set up with, the shared one and each

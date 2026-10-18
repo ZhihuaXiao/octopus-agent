@@ -22,7 +22,7 @@ npm install
 npm run build
 ```
 
-The examples below use `npm run octo -- …`, which builds if needed and then runs. The web flags can omit that `--`: `npm run octo --web --host 0.0.0.0 --port 9000` starts the server the same way. After `npm link`, the same commands are `octo …`.
+The examples below use `npm run octo -- …`, which builds if needed and then runs. The web flags can omit that `--`: `npm run octo --web --host 0.0.0.0 --port 9000 --password` starts the server the same way, after `octo password` has stored a password. `--host` other than loopback without `--password` is refused, and `--password` does not take the password as its next word. The same program is `node dist/cli/octo.js …`. After `npm link`, the same commands are `octo …`.
 
 `octo` with no subcommand is pi itself, at the terminal. `octo help` prints octo's own commands.
 
@@ -271,7 +271,16 @@ Stopping a run yourself, with **Interrupt**, **Stop**, or Ctrl-C, is recorded as
 
 ### The workspace, and whether pi trusts it
 
-`workspace` is the directory the agent and the shell commands operate on. Prompt cells read and write files there. Bash cells run there.
+`workspace` is the directory the agent and the shell commands operate on. Prompt cells read and write files there. Bash cells run there. This is the directory the cell is given, not a sandbox: a bash command can still name another path.
+
+On the web server the workspace must stay under the directory the server was started in. That is `--cell-access served`, and it is the default for `--web`. `octo run` does not apply that limit unless you ask: its default is `--cell-access user`, any directory the account can already reach. Name the range yourself by repeating the flag once per directory:
+
+```sh
+npm run octo -- --web --cell-access /data --cell-access /work --password
+npm run octo -- run notes/audit.md --cell-access served
+```
+
+A workspace outside that range is refused before the first cell, with "outside the directories cells may use."
 
 If that directory has its own pi settings, skills, or extensions, pi will not load them until someone decides to trust it. The first run stops and tells you so. Decide once:
 
@@ -361,24 +370,37 @@ ssh -N -L 8008:127.0.0.1:8008 you@that-machine
 
 Open the printed URL on the laptop. `127.0.0.1:8008` there is the server's port.
 
-For a server that a supervisor starts, set a password instead of a token that changes every start:
+For a server that a supervisor starts, set a password instead of a token that changes every start. The password is not an argument of `--web`:
 
 ```sh
 npm run octo -- password
 npm run octo -- --web --password
 ```
 
-The password is asked for twice, not echoed, and stored for your user under `~/.octo/password`. The browser asks for it. A wrong guess waits longer each time.
+`octo password` asks twice and does not echo what you type. It stores a hash under `~/.octo/password`. `--password` on the web command means "use that stored password." Writing the password after the flag does not set it:
+
+```sh
+node dist/cli/octo.js --web --port 8080 --host 0.0.0.0 --password secret
+```
+
+That fails with `The web interface takes no notebook, so "secret" is a stray argument.` Set the password first, then start with the flag alone:
+
+```sh
+node dist/cli/octo.js password
+node dist/cli/octo.js --web --port 8080 --host 0.0.0.0 --password
+```
+
+The browser asks for the password. A wrong guess waits longer each time.
 
 `--host` binds another address. From a checkout, this listens on every interface, on port 9000:
 
 ```sh
-npm run octo --web --host 0.0.0.0 --port 9000
+npm run octo --web --host 0.0.0.0 --port 9000 --password
 ```
 
-The `--` after `octo` is optional for `--web`, `--host`, `--port`, and `--password`. npm may warn that those flags are unknown settings of its own; the server starts anyway. `run`, `import`, and `export` keep the `--`, so npm passes their arguments through.
+`--host` other than `127.0.0.1`, `::1`, or `localhost` requires `--password`. The server refuses to listen past loopback with a startup token. The `--` after `octo` is optional for `--web`, `--host`, `--port`, `--password`, and `--cell-access`. npm may warn that those flags are unknown settings of its own; the server starts anyway. `run`, `import`, and `export` keep the `--`, so npm passes their arguments through.
 
-Bound to `0.0.0.0` or `::`, the server prints the loopback URL and one URL for each of this machine's network addresses. Open whichever the other machine can reach. Read the warning the server prints, and read [remote.md](remote.md), before you use it. The connection is plain HTTP, and anyone who can authenticate can run code as you.
+Bound to `0.0.0.0` or `::`, the server prints the loopback URL and one URL for each of this machine's network addresses. Open whichever the other machine can reach. A public address in front of the machine works even when it is not assigned to a local interface: `http://144.24.32.22:8080` is accepted. A hostname that is not an IP address is refused, so a name that merely resolves to the machine does not open the page. Restart the server after changing these flags; a process started earlier keeps the old rules. Read the warning the server prints, and read [remote.md](remote.md), before you use it. The connection is plain HTTP, and anyone who knows the password can run code as you.
 
 ## When a run will not start
 
@@ -389,6 +411,7 @@ Octo checks the notebook before the first cell, and reports every problem it fou
 | An input is missing or the wrong type | Pass `--name value`, or fill in the form. `true` and `false` are the boolean values. |
 | No cell named "…" | The id in `uses`, or the cell you asked to run, is not in the file. |
 | The workspace is not a directory | Fix `workspace`, or create the directory. |
+| Its workspace … is outside the directories cells may use | The web server is keeping cells under the directory it was started in. Point `workspace` inside that directory, or start with `--cell-access user` or `--cell-access /path`. |
 | A skill, tool, package, or pi version is missing | Install it for pi, or change the notebook. Running again does not install it. |
 | The workspace has not been trusted | Run once with `--trust` or `--no-trust`. |
 | A cycle, an unknown attribute, or a bad id | The file does not parse. The message includes the line. |
@@ -401,8 +424,8 @@ A cell that fails stops the run. Cells already running are allowed to finish. Ce
 ```text
 octo                              pi, at the terminal
 octo help                         these commands
-octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
-octo --web [--port <number>] [--host <address>] [--password]
+octo run <notebook.md> [--trust|--no-trust] [--cell-access served|user|dir] [--<input> <value>]...
+octo --web [--port <number>] [--host <address>] [--password] [--cell-access served|user|dir]
 octo password
 octo import <session.jsonl> <notebook.md>
 octo export <notebook.md> <document.html|document.md> [--run <id>]

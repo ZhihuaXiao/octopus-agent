@@ -24,7 +24,8 @@
 
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
-import { homedir } from "node:os";
+import { isIP } from "node:net";
+import { homedir, networkInterfaces } from "node:os";
 import { basename, extname, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,7 @@ import {
 } from "../mode/mode.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
+import { type CellAccess, cellAccess, cellAccessAllows } from "../run/access.js";
 import { DOWNLOAD, runFileType } from "../run/store.js";
 import { isRecord } from "../util/guards.js";
 import { within } from "../util/paths.js";
@@ -83,6 +85,83 @@ import {
 
 /** The address the server listens on: this machine, and nothing beyond it. */
 const LOOPBACK = "127.0.0.1";
+
+/** Names that mean this machine's loopback, whichever way a browser spells it. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+const isLoopbackHost = (host: string) => LOOPBACK_HOSTS.has(host.toLowerCase());
+
+/** Binds that listen on every interface. A public address in front of the machine is not one of those interfaces. */
+const EVERY_INTERFACE_BIND = new Set(["0.0.0.0", "::"]);
+
+/**
+ * The Host names a server bound to `bind` will answer. Loopback answers
+ * `localhost` as well as the two loopback addresses, because that is what a
+ * browser types. Every interface answers those, each address this machine
+ * has, and any other IP address, because the public address in front of a
+ * cloud machine is not one of its interfaces. One named address answers only
+ * that address. A name that is not an address is not answered, so a name that
+ * merely resolves here is not this server.
+ */
+function allowedHosts(bind: string): ReadonlySet<string> {
+  const hosts = new Set<string>();
+  const add = (value: string) => hosts.add(value.toLowerCase());
+  if (bind === "0.0.0.0" || bind === "::") {
+    for (const name of LOOPBACK_HOSTS) add(name);
+    for (const list of Object.values(networkInterfaces())) {
+      for (const address of list ?? []) add(address.address);
+    }
+    return hosts;
+  }
+  if (isLoopbackHost(bind)) {
+    for (const name of LOOPBACK_HOSTS) add(name);
+    return hosts;
+  }
+  add(bind);
+  return hosts;
+}
+
+/** The host a Host header names, without a port and without the brackets around an IPv6 address. */
+function requestHost(header: string | undefined): string | undefined {
+  if (header === undefined) return undefined;
+  const value = header.trim().toLowerCase();
+  if (value === "") return undefined;
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    return end === -1 ? undefined : value.slice(1, end);
+  }
+  const colon = value.lastIndexOf(":");
+  if (colon !== -1 && /^\d+$/.test(value.slice(colon + 1))) return value.slice(0, colon);
+  return value;
+}
+
+/** Whether `name` is an address a browser may use to open a server bound to every interface. */
+const publicAddress = (bind: string, name: string) =>
+  EVERY_INTERFACE_BIND.has(bind) && isIP(name) !== 0;
+
+const hostAllowed = (bind: string, hosts: ReadonlySet<string>, header: string | undefined) => {
+  const host = requestHost(header);
+  return host !== undefined && (hosts.has(host) || publicAddress(bind, host));
+};
+
+/**
+ * Whether an Origin header names this server. Absent is allowed: a script
+ * opening a socket does not send one, and a browser does. An address is
+ * allowed on the same terms as a Host header.
+ */
+function originAllowed(
+  bind: string,
+  hosts: ReadonlySet<string>,
+  header: string | undefined,
+): boolean {
+  if (header === undefined || header === "") return true;
+  try {
+    const name = new URL(header).hostname.toLowerCase();
+    return hosts.has(name) || publicAddress(bind, name);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The port when none is asked for. Fixed rather than left to the operating
@@ -213,6 +292,12 @@ export interface ServerOptions {
    * account's home when absent; named by a test, so that none reads the machine's.
    */
   readonly home?: string;
+  /**
+   * Where a notebook's cells may operate. Absent keeps each workspace under
+   * the served directory. `cellAccess("user")` allows any path the account
+   * can already reach, and `cellAccess([dir, ...])` names the range.
+   */
+  readonly access?: CellAccess;
 }
 
 export interface RunningServer {
@@ -468,12 +553,20 @@ async function uploadWorkspaceFile(
 async function skillWorkspace(
   directory: string,
   notebook: string | null,
+  access: CellAccess,
 ): Promise<
   | { readonly kind: "ready"; readonly workspace: string }
   | { readonly kind: "absent" }
   | { readonly kind: "unreadable"; readonly problem: string }
 > {
-  if (notebook === null || notebook === "") return { kind: "ready", workspace: directory };
+  if (notebook === null || notebook === "") {
+    return cellAccessAllows(access, directory, directory)
+      ? { kind: "ready", workspace: directory }
+      : {
+          kind: "unreadable",
+          problem: `The served directory is outside the directories cells may use.`,
+        };
+  }
   const file = fileWithin(directory, notebook);
   if (file === undefined) return { kind: "absent" };
   let source: string;
@@ -486,7 +579,14 @@ async function skillWorkspace(
   }
   const parsed = parseNotebook(source);
   if (!parsed.ok) return { kind: "unreadable", problem: formatDiagnostics(parsed.errors) };
-  return { kind: "ready", workspace: workspaceOf(parsed.notebook, file) };
+  const workspace = workspaceOf(parsed.notebook, file);
+  if (!cellAccessAllows(access, directory, workspace)) {
+    return {
+      kind: "unreadable",
+      problem: `Its workspace ${workspace} is outside the directories cells may use.`,
+    };
+  }
+  return { kind: "ready", workspace };
 }
 
 /** Skills installed globally and in a Workspace, so a Prompt Cell can offer them. */
@@ -495,7 +595,11 @@ async function serveSkills(
   searchParams: URLSearchParams,
   response: ServerResponse,
 ): Promise<void> {
-  const resolved = await skillWorkspace(served.directory, searchParams.get("notebook"));
+  const resolved = await skillWorkspace(
+    served.directory,
+    searchParams.get("notebook"),
+    served.access,
+  );
   switch (resolved.kind) {
     case "absent":
       notFound(response);
@@ -1641,6 +1745,12 @@ interface Served {
   readonly modesDirectory: string;
   /** The home directory Skills under `~/.agents/skills` are read from. */
   readonly home: string;
+  /** The address this server bound, which is what a request's Host is checked against. */
+  readonly host: string;
+  /** Host names a request may name. Anything else is not this server. */
+  readonly hosts: ReadonlySet<string>;
+  /** Where a notebook's cells may operate. */
+  readonly access: CellAccess;
 }
 
 /** The value of one cookie among those a request carries, or nothing. */
@@ -1755,6 +1865,10 @@ async function handle(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
+  if (!hostAllowed(served.host, served.hosts, request.headers.host)) {
+    reply(response, 421, "This server does not answer for that host.\n");
+    return;
+  }
   const { pathname, searchParams } = new URL(request.url ?? "/", `http://${LOOPBACK}`);
 
   if (pathname === "/" && searchParams.has(TOKEN_QUERY) && READS.includes(request.method ?? "")) {
@@ -1932,11 +2046,17 @@ function urlOf(host: string, port: number, token: string | undefined): string {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const port = options.port ?? DEFAULT_PORT;
   const host = options.host ?? LOOPBACK;
+  if (!isLoopbackHost(host) && options.storedPassword === undefined) {
+    throw new Error(
+      `Refusing to listen on ${host} without a password. A startup token on a cleartext address would stay valid for this process. Set one with \`octo password\` and start with --password.`,
+    );
+  }
   const directory = resolve(options.directory ?? process.cwd());
+  const access = options.access ?? cellAccess("served");
   // Recovered before anything can be asked for, so that a browser coming back
   // as the server does finds its session rather than a second one opened
   // beside it.
-  const sessions = await createNotebookSessions({ directory, agent: options.agent });
+  const sessions = await createNotebookSessions({ directory, agent: options.agent, access });
   const auth = createAuth(
     options.storedPassword !== undefined ? { storedPassword: options.storedPassword } : {},
   );
@@ -1948,6 +2068,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     agentDirectory: options.agentDirectory ?? getAgentDir(),
     modesDirectory: options.modesDirectory ?? userModesDirectory(),
     home: options.home ?? homedir(),
+    host,
+    hosts: allowedHosts(host),
+    access,
   };
 
   const server = createServer((request, response) => {
@@ -1970,6 +2093,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // A socket that fails while being refused is one already gone; unheard,
     // Node would make it the end of the process.
     socket.on("error", () => socket.destroy());
+    if (
+      !hostAllowed(served.host, served.hosts, request.headers.host) ||
+      !originAllowed(served.host, served.hosts, request.headers.origin)
+    ) {
+      refuseUpgrade(socket, "421 Misdirected Request");
+      return;
+    }
     authenticate(auth, request).then(
       (attempt) => {
         if (attempt.kind === "accepted") upgrade(request, socket, head);

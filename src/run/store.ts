@@ -1,7 +1,8 @@
-import { mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
+import { OWNER_FILE, mkdirOwner, protectOwner } from "../util/owner.js";
 import { within } from "../util/paths.js";
 import type { RunRecord } from "./record.js";
 
@@ -137,8 +138,12 @@ export async function listArtifacts(
 
 export async function writeRunRecord(record: RunRecord): Promise<string> {
   const path = recordPath(record.notebook, record.id);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await mkdirOwner(dirname(path));
+  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: OWNER_FILE,
+  });
+  await protectOwner(path);
   return path;
 }
 

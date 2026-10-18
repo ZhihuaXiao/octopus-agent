@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
 import { networkInterfaces, userInfo } from "node:os";
-import { extname, resolve } from "node:path";
+import { dirname, extname, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
 import { createPiAgent } from "../agent/pi.js";
@@ -35,6 +35,9 @@ async function run(command: Extract<Command, { kind: "run" }>): Promise<void> {
       inputs: command.inputs,
       signal: interrupt.signal,
       ...(command.trust !== undefined ? { trust: command.trust } : {}),
+      ...(command.access !== undefined
+        ? { access: command.access, servedDirectory: dirname(path) }
+        : {}),
     });
     process.stdout.write(`\n\nRun ${record.id} → ${recordPath(path, record.id)}\n`);
 
@@ -234,6 +237,7 @@ async function serve(command: Extract<Command, { kind: "web" }>): Promise<void> 
     ...(command.port !== undefined ? { port: command.port } : {}),
     ...(command.host !== undefined ? { host: command.host } : {}),
     ...(storedPassword !== undefined ? { storedPassword } : {}),
+    ...(command.access !== undefined ? { access: command.access } : {}),
   });
   process.stdout.write(`Serving the notebooks under ${server.directory}\nOpen ${server.url}\n`);
   const elsewhere = reachableAt(command.host, server.url);

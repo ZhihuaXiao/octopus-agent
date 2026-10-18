@@ -236,6 +236,38 @@ describe("the web flags", () => {
     });
   });
 
+  describe("choosing where cells may operate", () => {
+    it("keeps the web default, which is the served directory, when the flag is left out", () => {
+      expect(command(["--web"], "web").access).toBeUndefined();
+    });
+
+    it("takes served, user, or a directory range", () => {
+      expect(command(["--web", "--cell-access", "served"], "web").access).toEqual({
+        kind: "served",
+      });
+      expect(command(["--web", "--cell-access", "user"], "web").access).toEqual({ kind: "user" });
+      expect(
+        command(["--web", "--cell-access", "/work", "--cell-access", "/data"], "web").access,
+      ).toEqual({ kind: "roots", roots: ["/work", "/data"] });
+    });
+
+    it("is the same choice on a headless run, and not an input", () => {
+      expect(command(["run", "a.md", "--cell-access", "user"], "run").access).toEqual({
+        kind: "user",
+      });
+      expect(command(["run", "a.md", "--cell-access=/work"], "run").access).toEqual({
+        kind: "roots",
+        roots: ["/work"],
+      });
+    });
+
+    it("reports a mode mixed with a directory", () => {
+      expect(rejected(["--web", "--cell-access", "served", "--cell-access", "/work"])).toContain(
+        "not mixed",
+      );
+    });
+  });
+
   describe("authenticating with the stored password", () => {
     it("is not asked for unless the password flag is given, leaving a token to be generated", () => {
       expect(command(["--web"], "web").password).toBeUndefined();

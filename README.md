@@ -16,7 +16,7 @@ npm install
 npm run build
 ```
 
-`octo` is the `bin` entry, pointing at `dist/cli/octo.js`. From this checkout, `npm run octo -- …` builds and then runs it. The web flags can omit that `--`: `npm run octo --web --host 0.0.0.0 --port 9000` starts the server the same way `npm run octo -- --web --host 0.0.0.0 --port 9000` does. After `npm link`, or once the package is on `PATH`, the same commands are `octo …`.
+`octo` is the `bin` entry, pointing at `dist/cli/octo.js`. From this checkout, `npm run octo -- …` builds and then runs it. The web flags can omit that `--`: `npm run octo --web --host 0.0.0.0 --port 9000 --password` starts the server the same way `npm run octo -- --web --host 0.0.0.0 --port 9000 --password` does. The same program is `node dist/cli/octo.js …`. `--host` other than loopback requires `--password`, and `--password` does not take the password as its next word. After `npm link`, or once the package is on `PATH`, the same commands are `octo …`.
 
 ## Commands
 
@@ -45,15 +45,22 @@ The server binds `127.0.0.1` and port `8008` unless told otherwise, and serves t
 The page has two views of the same notebook. **Author view** shows the cells, for writing and running them. **Run view** shows the inputs as a form and a single button, with the cells hidden. There is one account and no sandbox: anyone who can authenticate can run code as the user who started the server. To reach it from another machine, use an SSH tunnel and leave the server on loopback. See [docs/remote.md](docs/remote.md) before using `--host` or a password.
 
 ```sh
-npm run octo -- password          # asked for twice; stored under ~/.octo/password
-npm run octo -- --web --password  # the browser asks for that password
+npm run octo -- password
+npm run octo -- --web --password
 npm run octo -- --web --port 9000
-npm run octo --web --host 0.0.0.0 --port 9000
+npm run octo --web --host 0.0.0.0 --port 9000 --password
+node dist/cli/octo.js --web --port 8080 --host 0.0.0.0 --password
 ```
 
-`--web`, `--host`, `--port`, and `--password` reach octo with or without a `--` after `octo`. npm may warn that those flags are unknown settings of its own; the server starts anyway. `run`, `import`, and `export` keep the `--`, so npm passes their arguments through.
+`octo password` asks twice, does not echo what you type, and stores a hash under `~/.octo/password`. `--password` on `--web` means "use that stored password." It takes no value: `--password secret` is rejected, because `secret` is a stray argument, not the password. Set the password with `octo password` first, then start the server with `--password` alone.
 
-Bound to `0.0.0.0` or `::`, the server prints the loopback URL and one URL for each of this machine's network addresses. Open whichever the other machine can reach. The connection is plain HTTP, and anyone who authenticates can run code as you. Read the warning it prints, and [docs/remote.md](docs/remote.md), before leaving it that way.
+`--host` other than `127.0.0.1`, `::1`, or `localhost` is refused unless `--password` is present. A startup token is not printed on a cleartext address that other machines can reach.
+
+`--web`, `--host`, `--port`, `--password`, and `--cell-access` reach octo with or without a `--` after `octo`. npm may warn that those flags are unknown settings of its own; the server starts anyway. `run`, `import`, and `export` keep the `--`, so npm passes their arguments through.
+
+Bound to `0.0.0.0` or `::`, the server prints the loopback URL and one URL for each of this machine's network addresses. Open whichever the other machine can reach, including a public address that is not assigned to a local interface, such as `http://122.34.56.78:8080`. A hostname that is not an IP address is refused. The connection is plain HTTP, and anyone who knows the password can run code as you. Read the warning it prints, and [docs/remote.md](docs/remote.md), before leaving it that way.
+
+`--cell-access` chooses where a notebook's cells may operate. `served`, the web default, keeps the workspace under the directory the server was started in. `user`, the default for `octo run`, allows any directory that account can already reach. A directory, repeated once per root (`--cell-access /data --cell-access /work`), is the range. This bounds the workspace a cell is given. It is not a sandbox.
 
 Closing the browser does not stop a run. Restarting the server recovers each notebook session from its journal.
 
@@ -114,7 +121,7 @@ Cell ids and input names start with a letter or digit and then use letters, digi
 | Model | `model` on the notebook, or on one cell. A cell's model wins. |
 | Timeout | `timeout` on the notebook or on one cell, written as a duration: `30s`, `5m`, `1h`. A cell that outruns it is timed out and the run stops. |
 | Artifact | `{{artifacts}}` is the directory the run gives that cell. Files left there are kept beside the run record and named by path. |
-| Workspace | `workspace` in frontmatter, a directory the notebook operates on. |
+| Workspace | `workspace` in frontmatter, a directory the notebook operates on. On the web server it must stay inside the directory the server was started in, unless `--cell-access` says otherwise. |
 | Declared environment | `tools`, `skills`, `packages`, and `pi_version`. Checked before the first cell and never repaired. |
 
 Examples in [examples/](examples/) cover a single prompt (`hello.md`), inputs (`greet.md`), a graph read top-down and run bottom-up (`audit.md`), artifacts (`report.md`), and isolated cells that run at the same time (`survey.md`).

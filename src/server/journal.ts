@@ -17,7 +17,9 @@
  * anything later.
  */
 
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync } from "node:fs";
+
+import { OWNER_FILE, mkdirOwnerSync, protectOwnerSync } from "../util/owner.js";
 import { readFile, readdir, truncate } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 
@@ -71,7 +73,7 @@ export interface Journal {
  */
 export function openJournal(directory: string, id: string): Journal {
   const path = journalPath(directory, id);
-  mkdirSync(journalsDirectory(directory), { recursive: true });
+  mkdirOwnerSync(journalsDirectory(directory));
 
   return {
     append(entry) {
@@ -80,7 +82,8 @@ export function openJournal(directory: string, id: string): Journal {
       // are still tried: the Journal is the session's memory, not its Run,
       // and a full disk should not stop a Cell.
       try {
-        appendFileSync(path, `${JSON.stringify(line)}\n`, "utf8");
+        appendFileSync(path, `${JSON.stringify(line)}\n`, { encoding: "utf8", mode: OWNER_FILE });
+        protectOwnerSync(path);
       } catch (cause) {
         process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
       }

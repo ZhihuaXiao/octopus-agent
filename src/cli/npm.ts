@@ -18,6 +18,7 @@ export const NPM_WEB_CONFIG = {
   password: "npm_config_password",
   host: "npm_config_host",
   port: "npm_config_port",
+  access: "npm_config_cell_access",
 } as const;
 
 /** What npm sets an option to when it was given without an attached value. */
@@ -42,6 +43,7 @@ export function fromNpm(
   // is a registry password from npm's configuration, and none of octo's.
   const password = env[NPM_WEB_CONFIG.password];
   const passwordGiven = password === GIVEN || password?.startsWith("--") === true;
+  const access = env[NPM_WEB_CONFIG.access];
 
   if (web !== GIVEN && host === undefined && port === undefined && !passwordGiven) return argv;
 
@@ -71,6 +73,7 @@ export function fromNpm(
     portValue ??= leftFor(port);
   }
 
+  if (access !== undefined && access !== "") recovered.push("--cell-access", access);
   if (host !== undefined) recovered.push("--host", ...(hostValue !== undefined ? [hostValue] : []));
   if (port !== undefined) recovered.push("--port", ...(portValue !== undefined ? [portValue] : []));
   return [...recovered, ...rest];

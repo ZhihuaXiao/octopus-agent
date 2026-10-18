@@ -57,6 +57,7 @@ import {
   parseNotebook,
   titleOf,
 } from "../notebook/notebook.js";
+import { type CellAccess, cellAccess } from "../run/access.js";
 import type { CellRecord, CellStatus, RunEnvironment, RunRecord } from "../run/record.js";
 import {
   type CellRounds,
@@ -415,6 +416,8 @@ interface NotebookSessionSetup {
   readonly journal: Journal;
   /** The served directory, which is where text files are read and reviewed. */
   readonly directory: string;
+  /** Where this session's cells may operate. The server's choice, not the notebook's. */
+  readonly access: CellAccess;
   /**
    * What a session before this one journaled, for this one to stand where it
    * stood: absent for a session being made rather than recovered.
@@ -479,7 +482,7 @@ const sameReviewList = (a: readonly TextReview[], b: readonly TextReview[]): boo
   });
 
 async function createNotebookSession(setup: NotebookSessionSetup): Promise<NotebookSession> {
-  const { id, agent, journal, directory } = setup;
+  const { id, agent, journal, directory, access } = setup;
   /** Where the file is now. A rename moves both, and everything after it reads these. */
   let path = setup.path;
   let notebook = setup.notebook;
@@ -1087,6 +1090,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
             observe: observeRun,
             signal: controller.signal,
             bashStops,
+            access,
+            servedDirectory: directory,
             ...(request.cells !== undefined ? { cells: request.cells } : {}),
             ...(request.inputs !== undefined ? { inputs: request.inputs } : {}),
             ...(last !== undefined ? { continues: last } : {}),
@@ -1270,6 +1275,12 @@ export interface NotebookSessionsOptions {
   readonly directory: string;
   /** Makes the agent each Run's Prompt Cells go to. */
   readonly agent: AgentFactory;
+  /**
+   * Where a notebook's cells may operate. Absent keeps the workspace under
+   * `directory`. `cellAccess("user")` is the reach a run had before this
+   * choice, any path the account can already use.
+   */
+  readonly access?: CellAccess;
 }
 
 /**
@@ -1287,6 +1298,7 @@ export async function createNotebookSessions(
   options: NotebookSessionsOptions,
 ): Promise<NotebookSessions> {
   const { directory, agent } = options;
+  const access = options.access ?? cellAccess("served");
   const byId = new Map<string, NotebookSession>();
   const byPath = new Map<string, NotebookSession>();
   /** The journaled sessions not yet open, by the Notebook's resolved path. */
@@ -1328,6 +1340,7 @@ export async function createNotebookSessions(
       agent,
       journal,
       directory,
+      access,
       ...(before !== undefined ? { recovered: before } : {}),
     });
     // Taken up only now: a recovery that failed halfway — the record of a Run

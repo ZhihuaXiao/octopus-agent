@@ -9,6 +9,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { type ScriptedAgent, createScriptedAgent } from "../agent/scripted.js";
+import { cellAccess } from "../run/access.js";
 import { hashPassword } from "./password.js";
 import { LONGEST_UPLOAD } from "./notebooks.js";
 import { type RunningServer, type ServerOptions, startServer } from "./server.js";
@@ -114,6 +115,7 @@ describe("starting the server", () => {
         host,
         directory: tmpdir(),
         agent: unusedAgent().create,
+        storedPassword: "set",
       });
       running.push(server);
 
@@ -130,6 +132,7 @@ describe("starting the server", () => {
         host: "0.0.0.0",
         directory: tmpdir(),
         agent: unusedAgent().create,
+        storedPassword: "set",
       });
       running.push(server);
 
@@ -158,6 +161,12 @@ describe("starting the server", () => {
     running.push(server);
 
     expect(server.directory).toBe(tmpdir());
+  });
+
+  it("refuses to bind beyond loopback without a password", async () => {
+    await expect(
+      startServer({ port: 0, host: "0.0.0.0", directory: tmpdir(), agent: unusedAgent().create }),
+    ).rejects.toThrow(/password/);
   });
 
   it("reports a port already in use rather than starting on another", async () => {
@@ -212,6 +221,28 @@ describe("the client shell", () => {
       expect(response.status, asset).toBe(200);
       expect(response.headers.get("content-type"), asset).not.toBeNull();
     }
+  });
+
+  it("refuses a request that names some other host", async () => {
+    const server = await serve();
+
+    expect(await rawRequest(server.url, "/", { host: "evil.example" })).toBe(421);
+    expect(await rawRequest(server.url, "/", { host: "144.24.32.22" })).toBe(421);
+    expect(await rawRequest(server.url, "/")).toBe(200);
+  });
+
+  it("answers a public address when bound to every interface, and still refuses a name", async () => {
+    const server = await startServer({
+      port: 0,
+      host: "0.0.0.0",
+      directory: tmpdir(),
+      agent: unusedAgent().create,
+      storedPassword: "set",
+    });
+    running.push(server);
+
+    expect(await rawRequest(server.url, "/", { host: "144.24.32.22:8080" })).toBe(200);
+    expect(await rawRequest(server.url, "/", { host: "evil.example" })).toBe(421);
   });
 
   it("does not exist at a path the server was never asked to serve", async () => {
@@ -3655,6 +3686,7 @@ describe("model settings", () => {
       providers: { ollama: { apiKey: string; models: { id: string }[] } };
     };
     expect(file.providers.ollama.apiKey).toBe("local-secret");
+    expect((await lstat(join(agentDirectory, "models.json"))).mode & 0o777).toBe(0o600);
     expect(file.providers.ollama.models).toEqual([{ id: "llama3.1:8b", contextWindow: 200_000 }]);
     const shown = (await (await get(server, "/api/models")).json()) as {
       providers: { apiKeySet: boolean; models: { id: string }[] }[];
@@ -4330,7 +4362,7 @@ describe("installed skills", () => {
         "broken.md": "---\nnever closed\n",
       },
       unusedAgent(),
-      { agentDirectory, home },
+      { agentDirectory, home, access: cellAccess("user") },
     );
     await mkdir(join(server.directory, ".git"));
     await installedSkill(
@@ -4362,5 +4394,18 @@ describe("installed skills", () => {
     const broken = await get(server, "/api/skills?notebook=broken.md");
     expect(broken.status).toBe(422);
     expect(await broken.text()).toMatch(/never closed|Frontmatter/);
+  });
+
+  it("does not list skills from a workspace outside the served directory unless asked to", async () => {
+    const elsewhere = await mkdtemp(join(tmpdir(), "octo-skill-out-"));
+    await installedSkill(join(elsewhere, ".pi", "skills"), "there", "Outside");
+    const server = await serve({
+      "notes.md": `---\nworkspace: ${JSON.stringify(elsewhere)}\n---\n\n\`\`\`prompt id=ask\nHi\n\`\`\`\n`,
+    });
+
+    const response = await get(server, "/api/skills?notebook=notes.md");
+
+    expect(response.status).toBe(422);
+    expect(await response.text()).toContain("outside the directories cells may use");
   });
 });

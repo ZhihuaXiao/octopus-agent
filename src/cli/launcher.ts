@@ -22,13 +22,14 @@
 
 import { TRUST_FLAGS } from "../notebook/inputs.js";
 import { isName } from "../notebook/name.js";
+import { type CellAccess, cellAccessFrom } from "../run/access.js";
 import { DEFAULT_PORT } from "../server/server.js";
 
 const USAGE = `usage: octo [pi arguments]...
-       octo run <notebook.md> [--trust|--no-trust] [--<input> <value>]...
+       octo run <notebook.md> [--trust|--no-trust] [--cell-access served|user|dir] [--<input> <value>]...
        octo import <session.jsonl> <notebook.md>
        octo export <notebook.md> <document.html|document.md> [--run <id>]
-       octo --web [--port <number>] [--host <address>] [--password]
+       octo --web [--port <number>] [--host <address>] [--password] [--cell-access served|user|dir]
        octo password
 
   A bare invocation is pi itself: anything not shown here is handed to the pi
@@ -48,10 +49,16 @@ const USAGE = `usage: octo [pi arguments]...
   to open, carrying a token generated for this start; with \`--password\` the
   browser asks for the password set with \`octo password\` instead.
   \`--host\` binds to the address given instead of loopback, so that other
-  machines can reach the server. Anyone who reaches that port and
-  authenticates can run arbitrary code as the user running octo: there is
-  one account and no sandbox. To work from another machine, prefer an
+  machines can reach the server. It requires \`--password\`: a startup token
+  on a cleartext address would stay valid for the process. Anyone who reaches
+  that port and authenticates can run arbitrary code as the user running octo:
+  there is one account and no sandbox. To work from another machine, prefer an
   SSH tunnel to the loopback port and leave this flag out; see docs/remote.md.
+  \`--cell-access\` chooses where a notebook's cells may operate. \`served\`
+  keeps the workspace under the directory the server was started in, which
+  is what \`--web\` does when the flag is left out. \`user\` allows any
+  directory that account can already reach, which is what \`run\` does when
+  the flag is left out. A directory, repeated once per root, is the range.
   \`password\` sets the password, asking for it rather than reading it here.`;
 
 export type Command =
@@ -64,6 +71,8 @@ export type Command =
       readonly inputs: Readonly<Record<string, string>>;
       /** Absent when neither flag was given, leaving the decision to what pi has recorded. */
       readonly trust?: boolean;
+      /** Where the notebook's cells may operate. Absent is any path the account can reach. */
+      readonly access?: CellAccess;
     }
   | {
       readonly kind: "web";
@@ -76,6 +85,11 @@ export type Command =
       readonly host?: string;
       /** Whether the stored password is what authenticates, rather than a token generated at startup. */
       readonly password?: true;
+      /**
+       * Where notebooks' cells may operate. Absent keeps each workspace under
+       * the directory the server was started in.
+       */
+      readonly access?: CellAccess;
     }
   /** Sets the password `--web --password` asks for. */
   | { readonly kind: "password" }
@@ -105,6 +119,7 @@ const WEB_FLAG = "--web";
 const PORT_FLAG = "--port";
 const HOST_FLAG = "--host";
 const PASSWORD_FLAG = "--password";
+const ACCESS_FLAG = "--cell-access";
 
 const help: Command = { kind: "help", usage: USAGE };
 const mistake = (error: string): Command => ({ kind: "mistake", error: `${error}\n${USAGE}` });
@@ -146,7 +161,7 @@ export function readCommand(argv: readonly string[]): Command {
 }
 
 /** The flags that, as a first word, make the command line the web interface's. */
-const WEB_FLAGS: readonly string[] = [WEB_FLAG, PORT_FLAG, HOST_FLAG, PASSWORD_FLAG];
+const WEB_FLAGS: readonly string[] = [WEB_FLAG, PORT_FLAG, HOST_FLAG, PASSWORD_FLAG, ACCESS_FLAG];
 
 /**
  * The password is asked for at the terminal, never read from the command
@@ -217,8 +232,19 @@ function readExport(argv: readonly string[]): Command {
   return { kind: "export", notebook, document, ...(run !== undefined ? { run } : {}) };
 }
 
+/** What `--cell-access` collected, or the complaint when the values cannot be one choice. */
+function accessOf(
+  values: readonly string[],
+): { readonly access?: CellAccess } | { readonly error: string } {
+  const read = cellAccessFrom(values);
+  if (read === undefined) return {};
+  if ("problem" in read) return { error: read.problem };
+  return { access: read.access };
+}
+
 function readRun(argv: readonly string[]): Command {
   const inputs: Record<string, string> = {};
+  const accessValues: string[] = [];
   let notebook: string | undefined;
   let trust: boolean | undefined;
 
@@ -244,6 +270,15 @@ function readRun(argv: readonly string[]): Command {
 
     // Read before the inputs, so the trust decision is never left to a name
     // collision; the parser reserves both names from Inputs for the same reason.
+    if (option === ACCESS_FLAG) {
+      const text = valueOf(attached, argv[index + 1]);
+      if (text === undefined)
+        return mistake(`Option "${option}" needs served, user, or a directory.`);
+      accessValues.push(text);
+      if (attached === undefined) index += 1;
+      continue;
+    }
+
     const decision = TRUST_FLAGS.get(name);
     if (decision !== undefined) {
       if (attached !== undefined) return mistake(`Option "${option}" takes no value.`);
@@ -262,7 +297,15 @@ function readRun(argv: readonly string[]): Command {
   }
 
   if (notebook === undefined) return mistake("A notebook to run is needed.");
-  return { kind: "run", notebook, inputs, ...(trust !== undefined ? { trust } : {}) };
+  const access = accessOf(accessValues);
+  if ("error" in access) return mistake(access.error);
+  return {
+    kind: "run",
+    notebook,
+    inputs,
+    ...(trust !== undefined ? { trust } : {}),
+    ...(access.access !== undefined ? { access: access.access } : {}),
+  };
 }
 
 /** A TCP port as written, or nothing: whole, and one a socket can be bound to. */
@@ -277,6 +320,7 @@ function readWeb(argv: readonly string[]): Command {
   let password = false;
   let port: number | undefined;
   let host: string | undefined;
+  const accessValues: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
@@ -289,6 +333,14 @@ function readWeb(argv: readonly string[]): Command {
       if (attached !== undefined) return mistake(`Option "${name}" takes no value.`);
       if (name === WEB_FLAG) web = true;
       else password = true;
+      continue;
+    }
+    if (name === ACCESS_FLAG) {
+      const text = valueOf(attached, argv[index + 1]);
+      if (text === undefined)
+        return mistake(`Option "${name}" needs served, user, or a directory.`);
+      accessValues.push(text);
+      if (attached === undefined) index += 1;
       continue;
     }
     if (name !== PORT_FLAG && name !== HOST_FLAG) {
@@ -317,10 +369,13 @@ function readWeb(argv: readonly string[]): Command {
     const given = splitOption(argv[0] ?? "").name;
     return mistake(`Option "${given}" only means something with "${WEB_FLAG}".`);
   }
+  const access = accessOf(accessValues);
+  if ("error" in access) return mistake(access.error);
   return {
     kind: "web",
     ...(port !== undefined ? { port } : {}),
     ...(host !== undefined ? { host } : {}),
     ...(password ? { password: true } : {}),
+    ...(access.access !== undefined ? { access: access.access } : {}),
   };
 }

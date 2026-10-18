@@ -11,10 +11,12 @@
  * page does not run commands to find a credential.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+
+import { OWNER_DIR, OWNER_FILE, mkdirOwner } from "../util/owner.js";
 
 import { DEFAULT_CONTEXT_WINDOW, contextWindowTokens } from "../pi/model-window.js";
 import { isRecord } from "../util/guards.js";
@@ -283,12 +285,15 @@ export async function saveProviders(
     next[edit.id] = provider;
   }
 
-  await mkdir(dirname(modelsPath(agentDirectory)), { recursive: true });
-  await writeFile(
-    modelsPath(agentDirectory),
-    `${JSON.stringify({ ...read.value.rest, providers: next }, null, 2)}\n`,
-    "utf8",
-  );
+  const file = modelsPath(agentDirectory);
+  await mkdirOwner(dirname(file));
+  await writeFile(file, `${JSON.stringify({ ...read.value.rest, providers: next }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: OWNER_FILE,
+  });
+  // `mode` applies only when the file is made; one already there keeps what it had.
+  await chmod(file, OWNER_FILE);
+  await chmod(dirname(file), OWNER_DIR);
   return { ok: true, value: undefined };
 }
 
