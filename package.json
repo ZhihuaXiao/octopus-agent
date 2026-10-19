@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "A notebook environment for agents, built on pi",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.19.0"

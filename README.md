@@ -232,3 +232,7 @@ npm run format
 ```
 
 The domain language is in [CONTEXT.md](CONTEXT.md). Decisions are in [docs/adr/](docs/adr/). Reaching the server from another machine is in [docs/remote.md](docs/remote.md).
+
+## License
+
+Octo is released under the [MIT License](LICENSE). Pi, which this package pins, is MIT as well.
