@@ -14,4 +14,7 @@ npm-debug.log*
 # Run records and artifacts: history, not program (ADR-0005)
 .octo/
 
+# Local audit notes, kept off the published history
+docs/security-audit.md
+
 .DS_Store

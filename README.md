@@ -4,6 +4,85 @@ A notebook environment for agents, built on [pi](https://github.com/earendil-wor
 
 A **notebook** is the file. A **cell** is an addressable unit inside it: a **prompt cell** is addressed to the agent, and a **bash cell** is a shell command that runs without the agent. Ordinary Markdown between cells is prose. Results live beside the notebook, not inside it.
 
+## Character
+
+Octo keeps a lab notebook for an agent. The Markdown file is the program. A run is something that happened to it. The two stay apart, so a pull request reviews the instructions, and the output of a run stays in the run record.
+
+That split decides the rest of the shape:
+
+- You write the work in the order a person wants to read it. A conclusion can sit at the top of the file and still run last.
+- You write every dependency yourself, as `uses` on a cell. Nothing is inferred from the order of the file, and a cycle is refused when the notebook is parsed.
+- A bash cell is for the part that should come out the same every time, and it costs no model call. A prompt cell is for the part you want the agent to do.
+- An isolated cell runs in a fresh context, so it does not see the other cells' conversation. Isolation is what lets it run beside them. Isolated cells with no edge between them run at the same time.
+- A mode is a file of its own: a system prompt, a default model, a tool list, and a skill set. The notebook names it. A run cannot pick a different one. Octo ships `code` (pi as pi is), `work` (a document rather than a codebase), and `bare` (no system prompt).
+- When the work is done, the notebook is still only the notebook. The record of the run — status, timings, the model that actually answered, tokens, cost, and the files a cell left — sits next to it under `.octo/runs/`.
+
+A bare `octo`, with no subcommand, is pi at the terminal. The notebook runner and the browser call the same engine, and pi is embedded in-process rather than driven as a subprocess. A chat you already had with pi can be copied into a notebook. Pi's session file is read and never written.
+
+There is one account and no sandbox. A prompt cell is an agent with your tools. A bash cell is a shell command. Anyone who can open the page can run code as the user who started the server. The server binds to loopback unless told otherwise, and the warning for that is in [docs/remote.md](docs/remote.md).
+
+## What enters the context
+
+The notebook is one Markdown file, so it is easy to keep, diff, and hand to someone else. A run of it can be exported as Markdown or HTML. What the model sees on a turn is a separate choice, and the cell type is how you make it.
+
+A notebook has one shared session. That session is the context of the prompt cells that speak into it.
+
+A prompt cell that is not isolated speaks into the session. When it runs, the context already holds the prompt cells that spoke there earlier: the prompt, and the reply. You do not name those cells to include them. They are already in the conversation, in the order they ran. For a cell like that, `uses` is optional. Leave it off and the earlier shared turns are still there.
+
+A bash cell never speaks into the session. Its output stays on the run record. An isolated prompt cell runs in a session made for that one turn and then dropped, so its reply is not added to the shared conversation either. A later prompt cell does not see either result as an earlier turn. `uses` does not change that. Naming a cell there makes this cell wait until that one has finished. It does not paste that cell's text into the prompt.
+
+An isolated cell therefore starts without the notebook's other turns. The only way for it to take up another cell's work is to read a file that cell wrote. The only way for a later cell to take up its work is to read a file it wrote, and to name it in `uses` so the read happens after the write. Its own reply is not waiting in the shared session under its id.
+
+That is also how a notebook of only isolated cells stays small. Each turn sees its own prompt and the files earlier cells left, not a thread of every answer so far. The tradeoff is the conversation cache. In the shared session the next turn reuses the growing prefix. A fresh session does not, so the same work can cost more. An isolated cell is still set up as the notebook's other prompt cells are: the same system prompt and the same tools. When those cells name the same model, a provider can still reuse that common prefix. What it cannot reuse is the thread of earlier answers.
+
+A bash cell is the same kind of boundary. It does not read the session, and the session does not read it. Another cell waits for it with `uses`, and reads what it wrote to a file.
+
+## What it is for
+
+The same few shapes cover most of the work the examples are built for.
+
+**A check you want to run again.** [examples/audit.md](examples/audit.md) is written conclusion-first. The cells run bottom-up, because `uses` says the report waits on the review and the review waits on a bash cell that names the directory. Next time, you change `--target` and run the file again. The diff of the notebook is the change in the question.
+
+**Several readings that must not colour each other.** [examples/survey.md](examples/survey.md) takes three isolated looks at the same tree — names, tests, comments — at the same time, then a summary that waits for all three and reads the notes they wrote. An isolated cell does not pass its conversation on. It passes a file.
+
+**The same job, many cases.** [examples/greet.md](examples/greet.md) declares `name`. On the command line that is `--name Ada`. In the browser, run view is the inputs as a form and one button, for someone who fills in the blank and does not edit the prompts. The value is passed through as typed, including into a shell command.
+
+**A report, and the files behind it.** [examples/report.md](examples/report.md) counts files with a bash cell, asks the agent to write `summary.md` into the directory that cell was given (`{{artifacts}}`), and gives the one-line headline a smaller model of its own. The files stay with the run. They are not pasted back into the notebook.
+
+**From a conversation to a procedure.** Work you already did with pi at the terminal can become a notebook: a prompt cell for each message you sent, a bash cell for each command you ran with `!`, and a record of what those turns already did. From the shell that is `octo import`. In the browser it is **Promote** on a chat in the list. Either way, pi's own file is left as it is.
+
+**An answer for someone who will not run it.** `octo export` writes one HTML or Markdown document: the prose, the cells, what each cell said and cost, and the files it left. Credentials this machine holds are struck out. The notebook file is not changed.
+
+**Office writing, or code as pi already does it.** A notebook in `work` mode is aimed at a document — a summary, a plan, a table — with a plain-language system prompt and pi's read, bash, edit, and write tools. It has no connectors to mail, calendars, or spreadsheets. A notebook in `code` mode is pi with pi's own prompt, tools, and skills. A notebook that names no mode runs on pi's defaults.
+
+## Seeing it work
+
+The screenshots below are the web interface started in this repository (`octo --web`), with the examples under `examples/`. The directory column is folded away so the notebook has the width.
+
+The list is every Markdown file under the served directory that parses and contains at least one cell. A README full of shell samples is not listed. Each row can set the notebook's mode and model, or open run view directly. Under the notebooks, chats pi has already had in this directory can be promoted into a notebook or deleted.
+
+![The notebook list, with the five examples and the chats pi has had in this directory](docs/images/notebook-list.png)
+
+Author view is the notebook as written. [examples/survey.md](examples/survey.md) is the shape in one page: a bash cell prepares a directory, three isolated prompt cells wait only on that and so may run together, and `summary` says `uses naming, tests, comments`, so it runs after all three, in the shared context.
+
+![Author view of survey.md: a bash cell, three isolated prompt cells, and a summary that uses all three](docs/images/author-survey.png)
+
+Running a cell streams the reply into the page and leaves the notebook file untouched. [examples/hello.md](examples/hello.md) is one prompt cell. After **Run all** the cell is `ok`, the thought is kept with the turn, and the reply is the word the prompt asked for.
+
+![Author view of hello.md after a run: the prompt, the model's thought, and the reply pong](docs/images/author-hello.png)
+
+Run view is the same notebook with the cells hidden. [examples/greet.md](examples/greet.md) declares one input, `name`. Filling it in and pressing **Run** runs both cells: the bash cell prints `Greeting Ada`, and the prompt cell answers in one sentence. The page then says whether the run finished.
+
+![Run view of greet.md after a run for Ada: the form, Greeting Ada from the bash cell, and Hello, Ada from the prompt cell](docs/images/run-greet.png)
+
+The same greet notebook from the shell, with the input named on the command line:
+
+```sh
+npm run octo -- run examples/greet.md --name Ada
+```
+
+The prompt cell's reply streams to the terminal. When the run finishes, octo prints the path of the run record under `.octo/runs/`. The bash cell's output is in that record, and in the browser, rather than mixed into the stream.
+
 ## Requirements
 
 - Node.js 22.19 or newer
