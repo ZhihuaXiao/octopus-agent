@@ -4,7 +4,7 @@ A notebook environment for agents, built on [pi](https://github.com/earendil-wor
 
 A **notebook** is the file. A **cell** is an addressable unit inside it: a **prompt cell** is addressed to the agent, and a **bash cell** is a shell command that runs without the agent. Ordinary Markdown between cells is prose. Results live beside the notebook, not inside it.
 
-## Character
+## Features
 
 Octo keeps a lab notebook for an agent. The Markdown file is the program. A run is something that happened to it. The two stay apart, so a pull request reviews the instructions, and the output of a run stays in the run record.
 
@@ -82,6 +82,92 @@ npm run octo -- run examples/greet.md --name Ada
 ```
 
 The prompt cell's reply streams to the terminal. When the run finishes, octo prints the path of the run record under `.octo/runs/`. The bash cell's output is in that record, and in the browser, rather than mixed into the stream.
+
+The pictures above are notebooks that ship with octo. The walkthrough below is one you write yourself.
+
+## A worked example
+
+This notebook builds an HTML Tetris game and then serves it. The writing is a prompt cell, so the model can look around the directory and leave files there. Serving the result is a bash cell: the same command every time, no model call, and nothing added to the conversation. That split is the whole demonstration.
+
+### Open the page
+
+Start octo in the directory the notebook should work in. The header of the pictures is that directory. The page in the first picture is asking for a password, so set one once:
+
+```sh
+octo password
+```
+
+`octo password` asks twice and stores a hash. It does not print the password, and the later flag does not take the password as its next word. From a checkout, with this directory as the current one:
+
+```sh
+npm run octo --web --port 8008 --password
+```
+
+Open `http://127.0.0.1:8008` and connect. The cookie replaces the password after that.
+
+![Connect with the password set by octo password](docs/images/login.png)
+
+A server without `--password` prints a URL with a token instead, and that form is only for loopback. Binding an address other machines can reach requires the password and is plain HTTP. Read [docs/remote.md](docs/remote.md) before using `--host`.
+
+### The list
+
+The page after you connect is the directory. Notebooks are marked with a star. Other files are listed so you can see they are there. Under the notebooks are chats pi has already had in this directory. **Promote** turns one into a notebook and leaves pi's session file alone. **New notebook** asks for a filename and writes a notebook with one empty prompt cell.
+
+![Notebooks and chats in the directory the server was started in](docs/images/homepage.png)
+
+This walkthrough uses **New notebook** and the name `Tetris_en`. The address becomes `#Tetris_en.md`, which is author view.
+
+### Ask for the game
+
+The new notebook opens on an empty prompt cell. Choose a model whose provider already has a key. The cell in the picture is `Oracle1/gemini-3.8-flash-high`, and its mode is **Agent**, so it may change files. **Plan** would only read and reply with a plan. **Ask** would only answer.
+
+The prompt is one sentence:
+
+```text
+Please generate a html version of Tetris.
+```
+
+**Run** on that cell sends it. The turn stays in the notebook's shared session: a later prompt cell sees this prompt, these tool calls, and this reply without your naming the cell in `uses`. The reply streams into the page. The notebook file is not filled in with the answer.
+
+The model does not invent the game from the sentence alone. It lists the directory, then reads the Tetris HTML already there, and writes the game into that same directory. Those tool calls are the bright part of the picture: `bash` for `ls`, then `read` on the HTML files. The green edge is a cell that finished.
+
+![The prompt cell after it ran: the request, then the tools it used](docs/images/case_coding_p1.png)
+
+Further down, the reply describes the game and how to start it: a controls table, and the command `python3 -m http.server 8080`. That text is part of the shared session. It is not yet a cell that runs.
+
+### Serve it without another model call
+
+Starting the server should not be a second conversation. **+ Bash cell** adds a cell whose body is the command the reply named:
+
+```sh
+python3 -m http.server 8080
+```
+
+Port `8080` is the game. Port `8008` is octo. A bash cell runs in the notebook's directory, spends nothing on a model, and does not speak into the shared session. Whatever it prints is kept on the run record. A later prompt cell does not receive that output as an earlier turn.
+
+`python3 -m http.server` does not exit, so the cell stays **running** and the process keeps listening. The square control on the cell or the button Interrupt on the top stops it. Closing the browser tab does not.
+
+![The end of the prompt cell's reply, and the bash cell serving the directory](docs/images/case_coding_p2.png)
+
+Fold the prompt cell and the notebook is the program in two lines. The prompt cell is `ok`. The bash cell is still `running`. 
+
+![Tetris_en.md folded to the prompt and the server command](docs/images/frontview.png)
+
+### Play
+
+While the bash cell is running, open `http://127.0.0.1:8080/`. That address is the directory the notebook was working in, served by the command in `cell-2`. The page is the game the prompt cell wrote: a 10 by 20 board, hold, next, and a score.
+
+![Tetris served from the bash cell on port 8080](docs/images/tetris_game.png)
+
+### What a third cell would see
+
+The two cells are already the context rule from [What enters the context](#what-enters-the-context).
+
+`cell-1` spoke into the shared session. Stop the server when you want another turn: a bash cell that is still listening has not finished, and the notebook runs one cell of the shared session at a time. A new prompt cell, with no `uses`, then still sees `cell-1`. Ask it to change the scoring or the colours and it is continuing that conversation, including the files the first turn read and wrote.
+
+`cell-2` did not speak into the session, and `uses=cell-2` would wait until the server cell has finished, not until it has started. Leave that edge off. The new cell learns that the game exists by reading the HTML file, the same way `cell-1` read the files that were already in the directory. The server log stays on the run record.
+
+Mark that follow-up `isolated` when it must not be coloured by the first conversation. It then starts empty. Hand it the game by the file, and name `uses=cell-1` only so it waits until that file has been written. That is the same shape as [examples/survey.md](examples/survey.md): a shared thread when the thread is the point, a fresh context when it is not.
 
 ## Requirements
 
