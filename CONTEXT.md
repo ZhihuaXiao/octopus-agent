@@ -21,6 +21,11 @@ _Avoid_: block, step, node, chunk
 A Cell whose body is addressed to the agent.
 _Avoid_: agent cell, LLM cell, query cell
 
+**Approach**:
+How a Prompt Cell takes its turn: agent, plan, or ask. Agent is the default and is left
+unwritten. Not a Mode.
+_Avoid_: mode, method, permission, sandbox
+
 **Bash Cell**:
 A Cell whose body is a shell command, run deterministically without the agent.
 _Avoid_: shell cell, script cell, command cell

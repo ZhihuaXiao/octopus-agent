@@ -233,7 +233,7 @@ Attributes on the opening fence:
 | `id` | Required for a cell. Unique in the notebook. |
 | `uses` | Cells that must finish successfully before this one. Several ids are separated by commas: `uses=naming,tests,comments`. |
 | `isolated` | Present or absent. This cell runs in a fresh conversation, not the notebook's shared one. |
-| `mode` | A prompt cell only: `agent` (the default, and left unwritten), `plan`, or `ask`. Plan may only read, and replies with a plan. Ask only answers, and is given no tools. This is not the notebook's mode. |
+| `approach` | A prompt cell only: `agent` (the default, and left unwritten), `plan`, or `ask`. Plan may only read, and replies with a plan. Ask only answers, and is given no tools. This is not the notebook's mode. |
 | `model` | This cell's model, overriding the notebook and the mode. |
 | `timeout` | This cell's limit, overriding the notebook's: `timeout=2m`. |
 

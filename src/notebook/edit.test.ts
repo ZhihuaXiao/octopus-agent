@@ -233,25 +233,25 @@ describe("applying an edit to a notebook", () => {
       const planned = edited(
         notebook,
         changing(notebook, isCell("a"), (cell) =>
-          cell.kind === "cell" ? { ...cell, mode: "plan" } : cell,
+          cell.kind === "cell" ? { ...cell, approach: "plan" } : cell,
         ),
       );
 
-      expect(planned).toBe("```prompt id=a mode=plan\nGo.\n```\n");
+      expect(planned).toBe("```prompt id=a approach=plan\nGo.\n```\n");
 
       const back = valid(planned);
       expect(
         edited(
           back,
           changing(back, isCell("a"), (cell) =>
-            cell.kind === "cell" ? { ...cell, mode: "agent" } : cell,
+            cell.kind === "cell" ? { ...cell, approach: "agent" } : cell,
           ),
         ),
       ).toBe("```prompt id=a\nGo.\n```\n");
     });
 
-    it("keeps a fence that already says mode=agent when nothing else changes", () => {
-      const source = "```prompt id=a mode=agent\nGo.\n```\n";
+    it("keeps a fence that already says approach=agent when nothing else changes", () => {
+      const source = "```prompt id=a approach=agent\nGo.\n```\n";
       expect(edited(valid(source), editOf(valid(source)))).toBe(source);
     });
 

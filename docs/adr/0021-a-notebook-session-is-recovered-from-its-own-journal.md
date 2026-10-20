@@ -46,7 +46,12 @@ The line is written before the event is sent, and synchronously, as pi appends i
 entries: a browser asks for everything since a number, so every number it has heard must
 name the same event in the Journal, and an event sent before it was on disk could be lost
 to a crash and its number given to another. The cost is a small write on the event loop per
-event, which pi already pays per entry.
+event, which pi already pays per entry. A line that cannot be written is not sent and its
+number is not kept. That Notebook Session stops taking new work. A Run already going is
+stopped in memory and left unfinished on disk, and the next command that would append tries
+the write: when it succeeds, the Run is journaled as Interrupted, the same conclusion a
+restart would write, and then the command proceeds. Other notebooks are not affected. A
+browser that reconnects before the write succeeds is told the last line that landed.
 
 A Journal that ends in a Run still in progress is a Run the process died in, since a server
 closing in an orderly way interrupts its Runs and journals their end before it stops. The

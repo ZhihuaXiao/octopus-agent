@@ -27,7 +27,7 @@ import {
   type CellSegment,
   type CellType,
   type Notebook,
-  type PromptMode,
+  type PromptApproach,
   type SourceLine,
   isCellSegment,
   parseNotebook,
@@ -51,10 +51,10 @@ export interface CellEdit {
   readonly uses: readonly string[];
   readonly isolated: boolean;
   /**
-   * How a Prompt Cell runs. Agent, and a Bash Cell, are left unwritten: the
-   * fence gains `mode` only for plan or ask.
+   * How a Prompt Cell takes its turn. Agent, and a Bash Cell, are left
+   * unwritten: the fence gains `approach` only for plan or ask.
    */
-  readonly mode?: PromptMode;
+  readonly approach?: PromptApproach;
   readonly model?: string;
   readonly timeout?: string;
 }
@@ -94,7 +94,7 @@ function declarationOf(cell: Cell): CellEdit {
     body: contentOf(cell.body),
     uses: cell.uses,
     isolated: cell.isolated,
-    ...(cell.mode !== undefined ? { mode: cell.mode } : {}),
+    ...(cell.approach !== undefined ? { approach: cell.approach } : {}),
     ...(cell.model !== undefined ? { model: cell.model } : {}),
     ...(cell.timeout !== undefined ? { timeout: formatDuration(cell.timeout) } : {}),
   };
@@ -278,7 +278,7 @@ function sameDeclaration(cell: Cell, edit: CellEdit): boolean {
     cell.uses.length === edit.uses.length &&
     cell.uses.every((used, at) => used === edit.uses[at]) &&
     cell.isolated === edit.isolated &&
-    (cell.mode ?? "agent") === (edit.mode ?? "agent") &&
+    (cell.approach ?? "agent") === (edit.approach ?? "agent") &&
     cell.model === edit.model &&
     (edit.timeout === undefined
       ? cell.timeout === undefined
@@ -295,7 +295,9 @@ function infoOf(edit: CellEdit): string {
   const parts = [edit.type, attribute("id", edit.id)];
   if (edit.uses.length > 0) parts.push(attribute("uses", edit.uses.join(",")));
   if (edit.isolated) parts.push("isolated");
-  if (edit.mode === "plan" || edit.mode === "ask") parts.push(attribute("mode", edit.mode));
+  if (edit.approach === "plan" || edit.approach === "ask") {
+    parts.push(attribute("approach", edit.approach));
+  }
   if (edit.model !== undefined) parts.push(attribute("model", edit.model));
   if (edit.timeout !== undefined) parts.push(attribute("timeout", edit.timeout));
   return parts.join(" ");

@@ -1,4 +1,14 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer as createHttpServer, request } from "node:http";
 import { createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -411,7 +421,7 @@ interface CellView {
   body: string;
   uses: string[];
   isolated: boolean;
-  mode?: string;
+  approach?: string;
   model?: string;
   timeout?: number;
   status: string;
@@ -2249,7 +2259,7 @@ type SegmentEdit =
       body: string;
       uses: string[];
       isolated: boolean;
-      mode?: string;
+      approach?: string;
       model?: string;
       timeout?: string;
     };
@@ -2273,7 +2283,7 @@ function editOf(state: NotebookSessionState): {
         body: cell.body.replace(/\r?\n$/, ""),
         uses: cell.uses,
         isolated: cell.isolated,
-        ...(cell.mode !== undefined ? { mode: cell.mode } : {}),
+        ...(cell.approach !== undefined ? { approach: cell.approach } : {}),
         ...(cell.model !== undefined ? { model: cell.model } : {}),
         ...(cell.timeout !== undefined ? { timeout: `${cell.timeout}ms` } : {}),
       };
@@ -4407,5 +4417,74 @@ describe("installed skills", () => {
 
     expect(response.status).toBe(422);
     expect(await response.text()).toContain("outside the directories cells may use");
+  });
+});
+
+/** The Journal file of the one session this server has open. */
+async function journalFile(directory: string): Promise<string> {
+  const names = (await readdir(join(directory, ".octo", "journals"))).filter((name) =>
+    name.endsWith(".jsonl"),
+  );
+  const name = names[0];
+  if (name === undefined) throw new Error("no journal");
+  return join(directory, ".octo", "journals", name);
+}
+
+describe("a journal that cannot be written", () => {
+  it("does not send the event, and takes the command once a line can be written", async () => {
+    const server = await serve({ "notes.md": "```bash id=go\necho hi\n```\n" });
+    const session = await open(server, "notes.md");
+    const file = await journalFile(server.directory);
+    const before = await readFile(file, "utf8");
+
+    await chmod(file, 0o444);
+    const refused = await post(server, `/api/sessions/${session.id}/cells/go/stop`);
+
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toMatch(/journal could not be written/);
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect((await stateOf(server, session.id)).sequence).toBe(session.sequence);
+
+    await chmod(file, 0o600);
+    expect((await post(server, `/api/sessions/${session.id}/cells/go/stop`)).status).toBe(204);
+    expect((await stateOf(server, session.id)).sequence).toBe(session.sequence + 1);
+  });
+
+  it("journals the interrupted end of a run when a later command can write", async () => {
+    const agent = createScriptedAgent([{ hangs: true, text: "partial" }]);
+    const server = await serve({ "hello.md": "```prompt id=greet\nSay hello.\n```\n" }, agent);
+    const session = await open(server, "hello.md");
+    expect(await run(server, session.id)).toBe(202);
+
+    let seen = session;
+    const started = Date.now();
+    while (seen.cells[0]?.status !== "running") {
+      if (Date.now() - started > 2000) throw new Error("the cell did not start");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      seen = await stateOf(server, session.id);
+    }
+
+    const file = await journalFile(server.directory);
+    const held = await readFile(file, "utf8");
+    await chmod(file, 0o444);
+    expect((await post(server, `/api/sessions/${session.id}/interrupt`)).status).toBe(204);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const mid = await stateOf(server, session.id);
+    expect(mid.running).toBe(true);
+    expect(mid.cells[0]?.status).toBe("running");
+    expect(await readFile(file, "utf8")).toBe(held);
+    expect((await get(server, `/api/sessions/${session.id}`)).status).toBe(200);
+
+    await chmod(file, 0o600);
+    const refused = await post(server, `/api/sessions/${session.id}/cells/greet/stop`);
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toMatch(/no service/);
+    const after = await stateOf(server, session.id);
+    expect(after.running).toBe(false);
+    expect(after.cells[0]).toMatchObject({
+      status: "interrupted",
+      error: "Interrupted",
+    });
   });
 });

@@ -224,8 +224,9 @@
           given. <strong>code</strong>, <strong>work</strong>, and <strong>bare</strong> come with
           octo and stay as they are. <strong>bare</strong> sends a prompt cell with no system
           prompt. A mode you add here is saved for your user and appears in the mode menu on each
-          notebook. Leave tools or skills unrestricted and the agent keeps pi's own. Saving rewrites
-          that mode's file.
+          notebook. Leave tools or skills unnamed and the agent keeps pi's own. Naming either is a
+          smaller set for the task, not a limit on what the account can do. Saving rewrites that
+          mode's file.
         </p>
         <p id="modes-status" class="status"></p>
         <ul id="modes-list" class="notebooks"></ul>
@@ -247,13 +248,14 @@
           </label>
           <label class="mode-flag">
             <input id="mode-limit-tools" type="checkbox" />
-            Only these tools, one name per line. An empty list allows none.
+            These tools, one name per line. An empty list names none, so the agent is given no
+            tools. That is not a sandbox.
           </label>
           <textarea id="mode-tools" hidden placeholder="read" aria-label="Tools"></textarea>
           <label class="mode-flag">
             <input id="mode-limit-skills" type="checkbox" />
-            Only these skills, one name per line. An empty list gives none. A notebook can still
-            name more.
+            These skills, one name per line. An empty list names none. A notebook can still name
+            more.
           </label>
           <textarea id="mode-skills" hidden placeholder="review" aria-label="Skills"></textarea>
           <label class="mode-flag">

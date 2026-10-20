@@ -89,7 +89,7 @@ describe("runNotebook", () => {
 
   it("tells a plan cell to plan and an ask cell only to answer", async () => {
     const path = await notebookFile(
-      "```prompt id=plan mode=plan\nLook.\n```\n\n```prompt id=ask mode=ask\nWhy?\n```\n\n```prompt id=act\nDo it.\n```\n",
+      "```prompt id=plan approach=plan\nLook.\n```\n\n```prompt id=ask approach=ask\nWhy?\n```\n\n```prompt id=act\nDo it.\n```\n",
     );
     const agent = createScriptedAgent([
       { text: "a plan" },

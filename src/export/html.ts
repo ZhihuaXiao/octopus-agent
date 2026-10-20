@@ -413,7 +413,7 @@ function markdownRenderer(credentials: readonly string[]) {
     const { record, from, artifacts, standing } = shown;
     const attributes = [
       declared.type,
-      declared.mode,
+      declared.approach,
       declared.isolated ? "isolated" : undefined,
       declared.uses.length > 0 ? `uses ${declared.uses.join(", ")}` : undefined,
       declared.model,

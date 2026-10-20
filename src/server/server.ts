@@ -1399,12 +1399,12 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
     !hasKeys(
       value,
       ["kind", "id", "type", "body", "uses", "isolated"],
-      ["model", "timeout", "mode"],
+      ["model", "timeout", "approach"],
     )
   ) {
     return undefined;
   }
-  const { id, type, body, uses, isolated, model, timeout, mode } = value;
+  const { id, type, body, uses, isolated, model, timeout, approach } = value;
   if (typeof id !== "string" || typeof body !== "string" || typeof isolated !== "boolean") {
     return undefined;
   }
@@ -1413,15 +1413,15 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
   if (model !== undefined && typeof model !== "string") return undefined;
   if (timeout !== undefined && typeof timeout !== "string") return undefined;
   if (
-    mode !== undefined &&
-    (type !== "prompt" || (mode !== "agent" && mode !== "plan" && mode !== "ask"))
+    approach !== undefined &&
+    (type !== "prompt" || (approach !== "agent" && approach !== "plan" && approach !== "ask"))
   ) {
     return undefined;
   }
   const cell: CellEdit = { kind: "cell", id, type, body, uses, isolated };
   return {
     ...cell,
-    ...(mode === "agent" || mode === "plan" || mode === "ask" ? { mode } : {}),
+    ...(approach === "agent" || approach === "plan" || approach === "ask" ? { approach } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
   };
@@ -1540,6 +1540,11 @@ async function serveSession(
       const asked = runRequestOf(await readJson(request));
       if (asked === undefined) {
         reply(response, 400, "The request may name cells to run and values for inputs, as JSON.\n");
+        return;
+      }
+      const journal = await session.ensureJournal();
+      if (journal !== undefined) {
+        reply(response, 422, `${journal}\n`);
         return;
       }
       if (!session.run(asked)) {

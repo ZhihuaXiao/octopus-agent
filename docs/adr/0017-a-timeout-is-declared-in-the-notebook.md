@@ -70,9 +70,10 @@ running would hold the Cell's output open — the Run would then wait for the ch
 which is the hang the timeout exists to end. What the command had written when it was stopped
 is kept, as the only account there is of how far it got. The group is killed outright rather
 than asked to stop first: a command that has already outrun its time is not owed a chance to
-ignore the request. A group of its own is also out of reach of the terminal's Ctrl-C and
-outlives a runner that dies, so only a Bash Cell with a timeout is given one; a Bash Cell
-nothing will stop early runs in the Run's own group, exactly as it did.
+ignore the request. Every Bash Cell is started in a group of its own, so a service it leaves
+running can be named and stopped after the shell has gone. A timeout is still the only thing
+that kills the Cell on its own. A group outlives a runner that dies, and it is out of reach
+of the terminal's Ctrl-C; stopping what it left is a later, explicit action from that Cell.
 
 A Notebook that declares no timeout anywhere is not protected from hanging. That is a
 deliberate absence rather than an oversight, and the place to change it is a default written

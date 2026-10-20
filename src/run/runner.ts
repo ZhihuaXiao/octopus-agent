@@ -17,7 +17,7 @@ import {
   type Cell,
   type InputValues,
   type Notebook,
-  type PromptMode,
+  type PromptApproach,
   bodyOf,
   cellsOf,
   formatDiagnostics,
@@ -231,15 +231,15 @@ const stopped = (stops: Stops) =>
  * What a Plan or Ask Cell is told before its own words. Agent is unsaid: that
  * Cell runs on the tools the Notebook already gave it.
  */
-const MODE_NOTE: Record<Exclude<PromptMode, "agent">, string> = {
+const APPROACH_NOTE: Record<Exclude<PromptApproach, "agent">, string> = {
   plan: "Plan mode. You may read files to understand the work, but you must not edit files, write files, or run commands. Reply with a plan: the steps, in order, and what each one would change.",
   ask: "Ask mode. Answer the question. Do not use tools and do not change any files.",
 };
 
-/** The body a Prompt Cell sends, with its mode said first when it is not agent. */
-function withMode(body: string, mode: PromptMode): string {
-  if (mode === "agent") return body;
-  return `${MODE_NOTE[mode]}\n\n${body}`;
+/** The body a Prompt Cell sends, with its approach said first when it is not agent. */
+function withApproach(body: string, approach: PromptApproach): string {
+  if (approach === "agent") return body;
+  return `${APPROACH_NOTE[approach]}\n\n${body}`;
 }
 
 /** A Prompt Cell's turn as the Run asks for it: what to say, and on what terms. */
@@ -248,8 +248,8 @@ interface Turn {
   readonly body: string;
   /** The model the Cell or the Notebook names, when either does. */
   readonly model?: string;
-  /** How the Cell runs. Absent, and agent, leave the session's tools alone. */
-  readonly mode?: PromptMode;
+  /** How the Cell takes its turn. Absent, and agent, leave the session's tools alone. */
+  readonly approach?: PromptApproach;
   /** How long the turn may take, when the Notebook bounds it. */
   readonly timeout?: number;
   /** Hears the reply as it is produced. */
@@ -274,7 +274,9 @@ async function runPromptCell(
       onThinking: turn.onThinking,
       onToolCall: turn.onToolCall,
       ...(turn.model !== undefined ? { model: turn.model } : {}),
-      ...(turn.mode !== undefined && turn.mode !== "agent" ? { mode: turn.mode } : {}),
+      ...(turn.approach !== undefined && turn.approach !== "agent"
+        ? { approach: turn.approach }
+        : {}),
       ...(stops.signal !== undefined ? { signal: stops.signal } : {}),
     });
     return { id: cell.id, type: "prompt", status: "ok", ...result };
@@ -468,11 +470,11 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     }
 
     const model = cleared.modelOf(cell);
-    const mode = cell.mode ?? "agent";
+    const approach = cell.approach ?? "agent";
     const turn: Turn = {
-      body: withMode(body, mode),
+      body: withApproach(body, approach),
       ...(model !== undefined ? { model } : {}),
-      ...(mode !== "agent" ? { mode } : {}),
+      ...(approach !== "agent" ? { approach } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
       ...(interrupt !== undefined ? { interrupt } : {}),
       onText: (text) => observe({ type: "cell-text", cell: cell.id, text }),

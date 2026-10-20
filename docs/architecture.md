@@ -69,7 +69,7 @@ TypeScript on Node 22.19 or newer, ESM. `tsc` compiles `src/` to `dist/`. The br
 
 ## The Notebook
 
-A Notebook is Markdown with YAML frontmatter, fenced Cells, and Prose between them. The fence tag is the Cell type: `prompt` or `bash`. A `bash` fence with no `id` stays Prose, so a shell snippet in documentation is not a Cell. Attributes on the fence are `id`, `uses`, `isolated`, `model`, and `timeout`. A `type` attribute may only restate the tag.
+A Notebook is Markdown with YAML frontmatter, fenced Cells, and Prose between them. The fence tag is the Cell type: `prompt` or `bash`. A `bash` fence with no `id` stays Prose, so a shell snippet in documentation is not a Cell. Attributes on the fence are `id`, `uses`, `isolated`, `approach`, `model`, and `timeout`. A `type` attribute may only restate the tag. `approach` is how a Prompt Cell takes its turn (`agent`, `plan`, or `ask`), and agent is left unwritten. It is not the Notebook's Mode.
 
 Parsing keeps the source in two places: the verbatim text of Prose and Cell bodies, and the verbatim lines that frame them. Serialising replays those bytes. An edit describes the whole Notebook and rewrites only what changed, so a diff of the file is the author's change. The Graph is checked at parse time: every `uses` edge is written by the author, every edge names a Cell, and no chain of edges closes. Document order breaks ties in the run order, so a Cell may be written after the Cell it uses and still run first.
 

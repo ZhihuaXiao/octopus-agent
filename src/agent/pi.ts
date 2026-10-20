@@ -276,7 +276,7 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
     },
 
     async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
-      const { signal, model, mode, onText, onThinking, onToolCall } = turnOptions;
+      const { signal, model, approach, onText, onThinking, onToolCall } = turnOptions;
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
       if (model !== undefined) await takeOn(model);
@@ -321,12 +321,13 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       /** How full the window was on the model the turn ran on, before an override is undone. */
       let context: ContextUsage | undefined;
       // Plan may look, and Ask may not act. The session's own tools return
-      // with the turn, so the Cell after this one is not left in this one's mode.
+      // with the turn, so the Cell after this one is not left in this one's approach.
       const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
-      const ownTools = mode === "plan" || mode === "ask" ? session.getActiveToolNames() : undefined;
+      const ownTools =
+        approach === "plan" || approach === "ask" ? session.getActiveToolNames() : undefined;
       if (ownTools !== undefined) {
         session.setActiveToolsByName(
-          mode === "plan" ? ownTools.filter((name) => READ_ONLY_TOOLS.has(name)) : [],
+          approach === "plan" ? ownTools.filter((name) => READ_ONLY_TOOLS.has(name)) : [],
         );
       }
       try {

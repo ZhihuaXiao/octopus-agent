@@ -47,9 +47,9 @@ export type CellType = "prompt" | "bash";
  * plan. Ask only answers, and is given no tools. Absent means agent, so a
  * Cell written before this choice existed still runs as it did.
  */
-export type PromptMode = "agent" | "plan" | "ask";
+export type PromptApproach = "agent" | "plan" | "ask";
 
-export const PROMPT_MODES: readonly PromptMode[] = ["agent", "plan", "ask"];
+export const PROMPT_APPROACHES: readonly PromptApproach[] = ["agent", "plan", "ask"];
 
 export interface Cell {
   readonly id: string;
@@ -61,10 +61,11 @@ export interface Cell {
   /** Whether the Cell runs in a fresh context rather than the shared one. */
   readonly isolated: boolean;
   /**
-   * How a Prompt Cell runs. Only `plan` and `ask` are stored: agent is the
-   * absence of a choice, and a Bash Cell has none.
+   * How a Prompt Cell takes its turn. Only `plan` and `ask` are stored: agent
+   * is the absence of a choice, and a Bash Cell has none. Not the Notebook's
+   * Mode, which is a file named in frontmatter.
    */
-  readonly mode?: Exclude<PromptMode, "agent">;
+  readonly approach?: Exclude<PromptApproach, "agent">;
   /** Overrides the Notebook's model for this Cell alone. */
   readonly model?: string;
   /**
@@ -118,7 +119,7 @@ export type ParseResult =
 const FRONTMATTER_DELIMITER = "---";
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const INDENTED_FENCE = /^ {1,3}(`{3,}|~{3,})(.*)$/;
-const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "mode", "model", "timeout"];
+const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "approach", "model", "timeout"];
 /** The attributes that are this project's own invention, so no snippet has one. */
 const CELL_ONLY_ATTRIBUTES = CELL_ATTRIBUTES.filter((key) => key !== "id");
 const MISSING_ID = "Cell is missing an id";
@@ -259,7 +260,7 @@ function readCell(
   let id: string | undefined;
   let uses: readonly string[] = [];
   let isolated = false;
-  let mode: Exclude<PromptMode, "agent"> | undefined;
+  let approach: Exclude<PromptApproach, "agent"> | undefined;
   let model: string | undefined;
   let timeout: number | undefined;
   const seen = new Set<string>();
@@ -327,18 +328,18 @@ function readCell(
       continue;
     }
 
-    if (key === "mode") {
-      // A Bash Cell has no agent to put in a mode, so the attribute would
+    if (key === "approach") {
+      // A Bash Cell has no agent to approach the work, so the attribute would
       // otherwise sit on the fence and change nothing.
       if (tag !== "prompt") {
-        errors.push({ line, message: `"mode" is only for a prompt cell` });
+        errors.push({ line, message: `"approach" is only for a prompt cell` });
         continue;
       }
       if (value !== "agent" && value !== "plan" && value !== "ask") {
-        errors.push({ line, message: `"mode" must be agent, plan, or ask` });
+        errors.push({ line, message: `"approach" must be agent, plan, or ask` });
         continue;
       }
-      if (value !== "agent") mode = value;
+      if (value !== "agent") approach = value;
       continue;
     }
 
@@ -361,7 +362,7 @@ function readCell(
     body,
     uses,
     isolated,
-    ...(mode !== undefined ? { mode } : {}),
+    ...(approach !== undefined ? { approach } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
   };

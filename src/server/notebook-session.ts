@@ -123,8 +123,8 @@ export interface CellView {
   /** The Cells this one declares a Dependency on. */
   readonly uses: readonly string[];
   readonly isolated: boolean;
-  /** How a Prompt Cell runs, when it is not the agent default. */
-  readonly mode?: "plan" | "ask";
+  /** How a Prompt Cell takes its turn, when it is not the agent default. */
+  readonly approach?: "plan" | "ask";
   /** The model the Cell names for itself, when it does. */
   readonly model?: string;
   /** The Cell's own Timeout in milliseconds, when it declares one. */
@@ -359,11 +359,17 @@ export interface NotebookSession {
    */
   export(run?: string, format?: ExportFormat): Promise<Exported>;
   /**
+   * Writes the unfinished Run's end, when the journal had refused a line, and
+   * reports the problem when it still cannot. Reads do not call this.
+   */
+  ensureJournal(): Promise<string | undefined>;
+  /**
    * The Notebook's file has been renamed to `nextPath`, and this session is
    * that file still: later saves and Runs use the new path, and the Journal
-   * records the name so a server that starts later finds it there.
+   * records the name so a server that starts later finds it there. False when
+   * the rename could not be written.
    */
-  relocate(nextPath: string, nextNotebook: string): void;
+  relocate(nextPath: string, nextNotebook: string): boolean;
   /**
    * Writes `model` into the Notebook, or removes the field when `model` is
    * absent, and tells whoever is watching. A model the Notebook already names
@@ -556,7 +562,6 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     if (baseline === undefined) return;
     const next = reviewsBetween(baseline, await readTextFiles(directory));
     if (sameReviewList(listedReviews(), next)) return;
-    reviews = new Map(next.map((review) => [review.path, review]));
     observe({ type: "text-changed", reviews: next });
   };
 
@@ -564,9 +569,22 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     baseline = baselineUnder(await readTextFiles(directory), listedReviews());
   };
 
-  const dispatch = (numbered: NumberedEvent) => {
-    events.push(numbered);
-    journal.append(numbered);
+  /**
+   * Set when a line could not be written. This session then refuses every
+   * command that would append, until one of them can write the end of a Run
+   * left unfinished and then do its own work. Reads do not try the write.
+   */
+  let journalBlocked = false;
+
+  const noteJournalFailure = (cause: unknown) => {
+    journalBlocked = true;
+    process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
+    // Stop the Run producing events that cannot be written. The end is
+    // journaled later, once a line can be, as a recovery would write it.
+    if (current !== undefined) current.controller.abort();
+  };
+
+  const tell = (numbered: NumberedEvent) => {
     for (const listener of listeners) {
       // A listener's failure is its own: the events are emitted from inside the
       // Run, and a socket that could not be written to must not stop a Cell.
@@ -579,13 +597,49 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   };
 
   /**
-   * Numbers an event and sends it on. Given a function, the event is made
-   * after the number is taken, for one that carries the state: the state then
-   * stands at the event itself, and a browser that adopts it has heard it.
+   * Writes one numbered line and keeps it. Nothing is told yet: the caller
+   * applies the event to the session first, so a listener that reads the
+   * state finds the event already there. A failed write keeps neither the
+   * event nor its number.
    */
-  const emit = (event: NotebookSessionEvent | (() => NotebookSessionEvent)) => {
+  const commit = (event: NotebookSessionEvent): NumberedEvent | undefined => {
+    const numbered = { sequence: sequence + 1, ...event };
+    try {
+      journal.append(numbered);
+    } catch (cause) {
+      noteJournalFailure(cause);
+      return undefined;
+    }
+    journalBlocked = false;
     sequence += 1;
-    dispatch({ sequence, ...(typeof event === "function" ? event() : event) });
+    events.push(numbered);
+    return numbered;
+  };
+
+  /**
+   * Numbers an event and sends it on, once the line is on disk. Given a
+   * function, the event is made before the write is tried, for one that
+   * carries the state: the state then stands at the event itself.
+   */
+  const emit = (event: NotebookSessionEvent | (() => NotebookSessionEvent)): boolean => {
+    // The number is taken before a function builds the event, so a snapshot of
+    // the session carries the number the line will have. A failed write gives
+    // the number back.
+    const previous = sequence;
+    sequence += 1;
+    const body = typeof event === "function" ? event() : event;
+    const numbered = { sequence, ...body };
+    try {
+      journal.append(numbered);
+    } catch (cause) {
+      sequence = previous;
+      noteJournalFailure(cause);
+      return false;
+    }
+    journalBlocked = false;
+    events.push(numbered);
+    tell(numbered);
+    return true;
   };
 
   const viewOf = (cell: Cell): CellView => {
@@ -595,7 +649,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       body: cell.body,
       uses: cell.uses,
       isolated: cell.isolated,
-      ...(cell.mode !== undefined ? { mode: cell.mode } : {}),
+      ...(cell.approach !== undefined ? { approach: cell.approach } : {}),
       ...(cell.model !== undefined ? { model: cell.model } : {}),
       ...(cell.timeout !== undefined ? { timeout: cell.timeout } : {}),
     };
@@ -704,9 +758,12 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     }
   };
 
-  const observe = (event: NotebookSessionEvent) => {
+  const observe = (event: NotebookSessionEvent): boolean => {
+    const numbered = commit(event);
+    if (numbered === undefined) return false;
     absorb(event);
-    emit(event);
+    tell(numbered);
+    return true;
   };
 
   const state = (): NotebookSessionState => ({
@@ -723,19 +780,63 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         ? { kind: "cell", id: segment.cell.id }
         : { kind: "prose", text: segment.text },
     ),
-    running: current !== undefined,
+    running: current !== undefined || (journalBlocked && inProgress !== undefined),
     ...(inProgress !== undefined ? { run: inProgress.run } : {}),
     sequence,
     cells: cellsOf(parsed).map(viewOf),
     ...(reviews.size > 0 ? { reviews: listedReviews() } : {}),
   });
 
-  /** Makes `bytes` the Notebook the session holds, and tells whoever is watching. */
-  const adopt = (bytes: string, made: Notebook) => {
+  /**
+   * Makes `bytes` the Notebook the session holds, and tells whoever is watching.
+   * A journal that cannot take the line leaves the session holding what it held.
+   */
+  const adopt = (bytes: string, made: Notebook): boolean => {
+    const previous = { source, parsed, revision };
     source = bytes;
     parsed = made;
     revision = revisionOf(bytes);
-    emit(() => ({ type: "notebook-changed", session: state() }));
+    if (emit(() => ({ type: "notebook-changed", session: state() }))) return true;
+    source = previous.source;
+    parsed = previous.parsed;
+    revision = previous.revision;
+    return false;
+  };
+
+  const JOURNAL_PROBLEM =
+    "The journal could not be written, so this notebook is not taking changes until it can.";
+
+  /**
+   * When the journal refused a line during a Run, writes that Run's end the
+   * way a server starting again would, and only then lets the command proceed.
+   * With no Run unfinished, the command's own line is the try.
+   */
+  const recoverJournal = async (): Promise<string | undefined> => {
+    if (!journalBlocked) return undefined;
+    if (current !== undefined) await current.over.catch(() => undefined);
+    if (inProgress === undefined) return undefined;
+    const lost = inProgress;
+    const written = await readRunRecord(path, lost.run);
+    if (written !== undefined) {
+      for (const record of written.cells) {
+        if (results.has(record.id)) continue;
+        if (!observe({ type: "cell-ended", record })) return JOURNAL_PROBLEM;
+      }
+      if (!observe({ type: "run-ended", record: written })) return JOURNAL_PROBLEM;
+      return undefined;
+    }
+    if (!(await settle(lost))) return JOURNAL_PROBLEM;
+    return undefined;
+  };
+
+  let journalGate: Promise<unknown> = Promise.resolve();
+  const ensureJournal = (): Promise<string | undefined> => {
+    const run = journalGate.then(recoverJournal, recoverJournal);
+    journalGate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   };
 
   /** A Run's unaccepted edit of the Notebook itself, which a save must not write over. */
@@ -745,6 +846,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       : undefined;
 
   const save = async (request: SaveRequest): Promise<Saved> => {
+    const journal = await ensureJournal();
+    if (journal !== undefined) return { kind: "refused", problem: journal };
     const blocked = blockedByReview();
     if (blocked !== undefined) return { kind: "refused", problem: blocked };
     // The file first: a Notebook is edited in any editor (ADR-0002), and one
@@ -760,7 +863,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       // A file that no longer parses is still the file: the revision moves to
       // it, so a save made knowingly can put a readable Notebook back, and
       // the Cells shown stay the last ones that could be read.
-      adopt(onDisk, found.ok ? found.notebook : parsed);
+      if (!adopt(onDisk, found.ok ? found.notebook : parsed)) {
+        return { kind: "refused", problem: JOURNAL_PROBLEM };
+      }
       return {
         kind: "changed",
         problem: `${notebook} changed on disk since it was opened${found.ok ? "" : `, and cannot now be read:\n${found.problem}`}`,
@@ -774,8 +879,12 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     const made = readable(applyEdit(parsed, edit), `Cannot save ${notebook}`);
     if (!made.ok) return { kind: "refused", problem: made.problem };
 
+    const previous = source;
     await writeFile(path, made.source, "utf8");
-    adopt(made.source, made.notebook);
+    if (!adopt(made.source, made.notebook)) {
+      await writeFile(path, previous, "utf8");
+      return { kind: "refused", problem: JOURNAL_PROBLEM };
+    }
     return { kind: "saved" };
   };
 
@@ -784,6 +893,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     value: string | undefined,
     rewrite: (notebook: Notebook, value: string | undefined) => EditResult,
   ): Promise<Saved> => {
+    const journal = await ensureJournal();
+    if (journal !== undefined) return { kind: "refused", problem: journal };
     const blocked = blockedByReview();
     if (blocked !== undefined) return { kind: "refused", problem: blocked };
     const onDisk = await readFile(path, "utf8").catch((cause: NodeJS.ErrnoException) => {
@@ -793,14 +904,18 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     if (onDisk !== undefined && onDisk !== source) {
       const found = readable(parseNotebook(onDisk), `Cannot open ${notebook}`);
       if (!found.ok) return { kind: "refused", problem: found.problem };
-      adopt(onDisk, found.notebook);
+      if (!adopt(onDisk, found.notebook)) return { kind: "refused", problem: JOURNAL_PROBLEM };
     }
     if (parsed.metadata[field] === value) return { kind: "saved" };
 
     const made = readable(rewrite(parsed, value), `Cannot save ${notebook}`);
     if (!made.ok) return { kind: "refused", problem: made.problem };
+    const previous = source;
     await writeFile(path, made.source, "utf8");
-    adopt(made.source, made.notebook);
+    if (!adopt(made.source, made.notebook)) {
+      await writeFile(path, previous, "utf8");
+      return { kind: "refused", problem: JOURNAL_PROBLEM };
+    }
     return { kind: "saved" };
   };
 
@@ -839,6 +954,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   const stop = async (
     cellId: string,
   ): Promise<{ ok: true } | { ok: false; status: 404 | 422; problem: string }> => {
+    const journal = await ensureJournal();
+    if (journal !== undefined) return { ok: false, status: 422, problem: journal };
     const cell = cellsOf(parsed).find((item) => item.id === cellId);
     if (cell === undefined) {
       return { ok: false, status: 404, problem: `No cell named "${cellId}" in this notebook.` };
@@ -859,12 +976,15 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       }
     }
     if (halt !== undefined && current !== undefined) await current.over;
-    else emit(() => ({ type: "notebook-changed", session: state() }));
+    else if (!emit(() => ({ type: "notebook-changed", session: state() }))) {
+      return { ok: false, status: 422, problem: JOURNAL_PROBLEM };
+    }
     return { ok: true };
   };
 
   const retargetText = (from: string, to: string): Promise<void> =>
     withReviews(async () => {
+      if ((await ensureJournal()) !== undefined) return;
       const review = reviews.get(from);
       if (review !== undefined) {
         reviews.delete(from);
@@ -880,6 +1000,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
 
   const forgetText = (name: string): Promise<void> =>
     withReviews(async () => {
+      if ((await ensureJournal()) !== undefined) return;
       const review = reviews.get(name);
       baseline?.delete(name);
       if (review === undefined) return;
@@ -899,11 +1020,10 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
    * did write — the process died between writing it and journaling its end —
    * is concluded with that record, not a second one written over it.
    */
-  const settle = async (lost: InProgress): Promise<void> => {
+  const settle = async (lost: InProgress): Promise<boolean> => {
     const written = await readRunRecord(path, lost.run);
     if (written !== undefined) {
-      observe({ type: "run-ended", record: written });
-      return;
+      return observe({ type: "run-ended", record: written });
     }
 
     const endedAt = new Date().toISOString();
@@ -928,7 +1048,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         cell.type === "prompt"
           ? { ...interrupted, type: "prompt", ...emptyResult }
           : { ...interrupted, type: "bash", stdout: "", stderr: "", exitCode: null };
-      observe({ type: "cell-ended", record });
+      if (!observe({ type: "cell-ended", record })) return false;
     }
 
     const record = await concludeRun({
@@ -941,7 +1061,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       cells: ended,
       allCells: cellsOf(parsed),
     });
-    observe({ type: "run-ended", record });
+    return observe({ type: "run-ended", record });
   };
 
   // Heard over, to stand where the session before stood. Nothing is emitted
@@ -957,11 +1077,15 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   }
   // A Run the journal leaves in progress is one the server died in: the
   // process that ran it is gone, so it ends here, and is said to.
-  if (inProgress !== undefined) await settle(inProgress);
+  if (inProgress !== undefined && !(await settle(inProgress))) {
+    throw new Error(JOURNAL_PROBLEM);
+  }
   // The file as it is now is what the session holds, and the browsers that
   // were watching hold what it was: a Notebook edited while no server ran is
   // as much a change as one saved from another browser, and is said to be.
-  if (held !== undefined && held !== revision) adopt(source, parsed);
+  if (held !== undefined && held !== revision && !adopt(source, parsed)) {
+    throw new Error(JOURNAL_PROBLEM);
+  }
 
   /**
    * Accepts or rejects one open review. The Notebook file, when it is the
@@ -970,6 +1094,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
    * session cannot open, which stays under review and changes nothing.
    */
   const decide = async (name: string, decision: "accept" | "reject"): Promise<TextDecided> => {
+    const journal = await ensureJournal();
+    if (journal !== undefined) return { kind: "refused", problem: journal };
     const named = textPath(directory, name);
     if (named === undefined) return { kind: "invalid" };
     const review = reviews.get(named);
@@ -1008,13 +1134,18 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       }
     }
 
-    if (adopting !== undefined) adopt(adopting.bytes, adopting.notebook);
-    observe({ type: "text-changed", reviews: listedReviews() });
+    if (adopting !== undefined && !adopt(adopting.bytes, adopting.notebook)) {
+      return { kind: "refused", problem: JOURNAL_PROBLEM };
+    }
+    if (!observe({ type: "text-changed", reviews: listedReviews() })) {
+      return { kind: "refused", problem: JOURNAL_PROBLEM };
+    }
     return { kind: "decided" };
   };
 
   /** Takes up a text save of this Notebook, when the result can still be opened. */
   const readNotebookFromDisk = async (): Promise<void> => {
+    if ((await ensureJournal()) !== undefined) return;
     let bytes: string;
     try {
       bytes = await readFile(path, "utf8");
@@ -1033,6 +1164,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     id,
 
     state,
+
+    ensureJournal,
 
     save(request) {
       const saved = saving.then(() => save(request));
@@ -1054,7 +1187,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     },
 
     run(request) {
-      if (current !== undefined) return false;
+      if (current !== undefined || (journalBlocked && inProgress !== undefined)) return false;
       const controller = new AbortController();
 
       const observeRun = (event: RunEvent) => {
@@ -1183,14 +1316,20 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       };
     },
 
-    relocate(nextPath, nextNotebook) {
+    relocate(nextPath, nextNotebook): boolean {
+      try {
+        // Not one of the numbered events: it says where the file went, which a
+        // server starting reads off the Journal, and the browsers are told by
+        // the change that follows. The name changes only once this line is written.
+        journal.append({ type: "renamed", notebook: nextNotebook });
+      } catch (cause) {
+        noteJournalFailure(cause);
+        return false;
+      }
       path = nextPath;
       notebook = nextNotebook;
-      // Not one of the numbered events: it says where the file went, which a
-      // server starting reads off the Journal, and the browsers are told by
-      // the change that follows.
-      journal.append({ type: "renamed", notebook: nextNotebook });
       emit(() => ({ type: "notebook-changed", session: state() }));
+      return true;
     },
 
     export: (run, format) =>
@@ -1322,27 +1461,35 @@ export async function createNotebookSessions(
 
     const before = journaled.get(path);
     const id = before?.id ?? randomUUID();
-    const journal = openJournal(directory, id);
-    if (before === undefined) {
-      const header: JournalHeader = {
-        type: "opened",
+    let session: NotebookSession;
+    try {
+      const journal = openJournal(directory, id);
+      if (before === undefined) {
+        const header: JournalHeader = {
+          type: "opened",
+          notebook: relativePath,
+          revision: revisionOf(source),
+        };
+        journal.append(header);
+      }
+      session = await createNotebookSession({
+        id,
+        path,
         notebook: relativePath,
-        revision: revisionOf(source),
+        source,
+        parsed: found.notebook,
+        agent,
+        journal,
+        directory,
+        access,
+        ...(before !== undefined ? { recovered: before } : {}),
+      });
+    } catch (cause) {
+      return {
+        kind: "refused",
+        problem: cause instanceof Error ? cause.message : String(cause),
       };
-      journal.append(header);
     }
-    const session = await createNotebookSession({
-      id,
-      path,
-      notebook: relativePath,
-      source,
-      parsed: found.notebook,
-      agent,
-      journal,
-      directory,
-      access,
-      ...(before !== undefined ? { recovered: before } : {}),
-    });
     // Taken up only now: a recovery that failed halfway — the record of a Run
     // left unfinished could not be written — leaves the Journal to be tried
     // again, rather than a second one begun beside it.
@@ -1424,13 +1571,23 @@ export async function createNotebookSessions(
       const source = fileWithin(directory, from);
       if (source === undefined) return { kind: "absent" };
       const session = byPath.get(source);
+      if (session !== undefined) {
+        const journal = await session.ensureJournal();
+        if (journal !== undefined) return { kind: "invalid", problem: journal };
+      }
       if (session?.state().running) return { kind: "running" };
 
       const renamed = await renameNotebook(directory, from, to);
       if (renamed.kind !== "renamed" || session === undefined) return renamed;
       const target = fileWithin(directory, renamed.entry.path);
       if (target === undefined || target === source) return renamed;
-      session.relocate(target, renamed.entry.path);
+      if (!session.relocate(target, renamed.entry.path)) {
+        return {
+          kind: "invalid",
+          problem:
+            "The journal could not be written, so this notebook is not taking changes until it can.",
+        };
+      }
       byPath.delete(source);
       byPath.set(target, session);
       return renamed;

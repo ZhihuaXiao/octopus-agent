@@ -105,7 +105,7 @@ import {
  *   body: string,
  *   uses: string[],
  *   isolated: boolean,
- *   mode?: "plan" | "ask",
+ *   approach?: "plan" | "ask",
  *   model?: string,
  *   timeout?: number,
  *   status: CellState,
@@ -2796,8 +2796,8 @@ function renderCell(cell, session, running) {
   heading.append(make("span", "cell-id", cell.id), make("span", "cell-type", cell.type));
   if (cell.isolated) heading.append(make("span", "cell-attribute", "isolated"));
   if (cell.type === "prompt") {
-    const mode = cell.mode === "plan" ? "Plan" : cell.mode === "ask" ? "Ask" : "Agent";
-    heading.append(make("span", "cell-attribute", mode));
+    const approach = cell.approach === "plan" ? "Plan" : cell.approach === "ask" ? "Ask" : "Agent";
+    heading.append(make("span", "cell-attribute", approach));
   }
   if (cell.uses.length > 0)
     heading.append(make("span", "cell-attribute", `uses ${cell.uses.join(", ")}`));
@@ -3807,7 +3807,7 @@ async function interrupt() {
  *   body: string,
  *   uses: string,
  *   isolated: boolean,
- *   mode: "agent" | "plan" | "ask",
+ *   approach: "agent" | "plan" | "ask",
  *   model: string,
  *   timeout: string,
  *   folded: boolean,
@@ -3877,7 +3877,7 @@ function draftSegments(state) {
       body: cell.body.replace(/\r?\n$/, ""),
       uses: cell.uses.join(", "),
       isolated: cell.isolated,
-      mode: cell.mode === "plan" || cell.mode === "ask" ? cell.mode : "agent",
+      approach: cell.approach === "plan" || cell.approach === "ask" ? cell.approach : "agent",
       model: cell.model ?? "",
       timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
       folded: isFolded(cellFoldKey(cell.id)),
@@ -3962,7 +3962,9 @@ function saveRequestOf(edited) {
           .map((name) => name.trim())
           .filter((name) => name !== ""),
         isolated: segment.isolated,
-        ...(segment.type === "prompt" && segment.mode !== "agent" ? { mode: segment.mode } : {}),
+        ...(segment.type === "prompt" && segment.approach !== "agent"
+          ? { approach: segment.approach }
+          : {}),
         ...(model === "" ? {} : { model }),
         ...(timeout === "" ? {} : { timeout }),
       };
@@ -4534,7 +4536,7 @@ function blankCell(type, before) {
     body: "",
     uses: "",
     isolated: false,
-    mode: "agent",
+    approach: "agent",
     model: "",
     timeout: "",
     folded: false,
@@ -4671,7 +4673,7 @@ function renderDraftCell(cell, at) {
   const mode = document.createElement("select");
   mode.className = "draft-mode";
   mode.title =
-    "How this prompt cell runs. Agent may change files. Plan only reads and replies with a plan. Ask only answers.";
+    "How this prompt cell takes its turn. Agent uses the notebook's tools. Plan reads and replies with a plan. Ask answers without tools. None of these is a sandbox.";
   /** @type {readonly (readonly [string, string])[]} */
   const modes = [
     ["agent", "Agent"],
@@ -4682,13 +4684,13 @@ function renderDraftCell(cell, at) {
     const choice = document.createElement("option");
     choice.value = value;
     choice.textContent = label;
-    choice.selected = cell.mode === value;
+    choice.selected = cell.approach === value;
     mode.append(choice);
   }
   mode.addEventListener("change", () => {
-    cell.mode = mode.value === "plan" || mode.value === "ask" ? mode.value : "agent";
+    cell.approach = mode.value === "plan" || mode.value === "ask" ? mode.value : "agent";
   });
-  modeLabel.append("mode", mode);
+  modeLabel.append("approach", mode);
   modeLabel.hidden = cell.type !== "prompt";
 
   type.addEventListener("change", () => {

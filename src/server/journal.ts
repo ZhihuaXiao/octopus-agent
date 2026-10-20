@@ -63,6 +63,8 @@ export interface Journal {
    * appends are, so that nothing a browser is told has yet to reach the disk:
    * a browser that comes back after a crash asks for everything since a
    * number, and every number it heard must be the same event in the Journal.
+   * Throws when the line cannot be written. The caller must not send the
+   * event, or keep its number, until a later append succeeds (ADR-0021).
    */
   append(entry: object): void;
 }
@@ -78,15 +80,11 @@ export function openJournal(directory: string, id: string): Journal {
   return {
     append(entry) {
       const line: JournalLine = { at: new Date().toISOString(), ...entry };
-      // A line that could not be written is reported, and the lines after it
-      // are still tried: the Journal is the session's memory, not its Run,
-      // and a full disk should not stop a Cell.
-      try {
-        appendFileSync(path, `${JSON.stringify(line)}\n`, { encoding: "utf8", mode: OWNER_FILE });
-        protectOwnerSync(path);
-      } catch (cause) {
-        process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
-      }
+      // A line that cannot be written must not be told to anyone. The session
+      // keeps the number for a line that lands, and a full disk stops this
+      // session taking new work rather than inventing a gap (ADR-0021).
+      appendFileSync(path, `${JSON.stringify(line)}\n`, { encoding: "utf8", mode: OWNER_FILE });
+      protectOwnerSync(path);
     },
   };
 }

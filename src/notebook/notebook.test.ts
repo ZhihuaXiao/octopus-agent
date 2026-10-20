@@ -323,9 +323,11 @@ Summarise it.
   });
 
   it("reads plan and ask, and treats agent as no choice", () => {
-    expect(cellsOf(valid("```prompt id=a mode=plan\nGo.\n```\n"))[0]?.mode).toBe("plan");
-    expect(cellsOf(valid("```prompt id=a mode=ask\nGo.\n```\n"))[0]?.mode).toBe("ask");
-    expect(cellsOf(valid("```prompt id=a mode=agent\nGo.\n```\n"))[0]?.mode).toBeUndefined();
+    expect(cellsOf(valid("```prompt id=a approach=plan\nGo.\n```\n"))[0]?.approach).toBe("plan");
+    expect(cellsOf(valid("```prompt id=a approach=ask\nGo.\n```\n"))[0]?.approach).toBe("ask");
+    expect(
+      cellsOf(valid("```prompt id=a approach=agent\nGo.\n```\n"))[0]?.approach,
+    ).toBeUndefined();
   });
 });
 
@@ -451,16 +453,22 @@ describe("malformed notebooks", () => {
     expect(error?.message).toContain(`Unknown cell attribute "bogus"`);
   });
 
-  it("reports a mode a prompt cell cannot run in", () => {
-    expect(problems("```prompt id=a mode=work\nGo.\n```\n")).toEqual([
-      { line: 1, message: `"mode" must be agent, plan, or ask` },
+  it("reports an approach a prompt cell cannot take", () => {
+    expect(problems("```prompt id=a approach=work\nGo.\n```\n")).toEqual([
+      { line: 1, message: `"approach" must be agent, plan, or ask` },
     ]);
   });
 
-  it("reports a mode on a bash cell", () => {
-    expect(problems("```bash id=a mode=plan\nx\n```\n")).toEqual([
-      { line: 1, message: `"mode" is only for a prompt cell` },
+  it("reports an approach on a bash cell", () => {
+    expect(problems("```bash id=a approach=plan\nx\n```\n")).toEqual([
+      { line: 1, message: `"approach" is only for a prompt cell` },
     ]);
+  });
+
+  it("reports a cell fence that still says mode", () => {
+    expect(problems("```prompt id=a mode=plan\nGo.\n```\n")[0]?.message).toContain(
+      `Unknown cell attribute "mode"`,
+    );
   });
 
   it("reports an isolated attribute that is not a boolean", () => {
