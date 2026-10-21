@@ -3849,6 +3849,35 @@ describe("model settings", () => {
     expect((await post(server, "/api/models/key", { provider: "anthropic" })).status).toBe(400);
   });
 
+  it("counts a custom provider's own key as a key that is set", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+
+    expect(
+      (
+        await post(server, "/api/models/providers", {
+          providers: [
+            {
+              id: "Azure",
+              baseUrl: "https://example.openai.azure.com/openai/v1",
+              api: "openai-responses",
+              apiKey: "azure-key-value",
+              models: ["gpt-6-sol"],
+            },
+          ],
+        })
+      ).status,
+    ).toBe(204);
+
+    const page = (await (await get(server, "/api/models")).json()) as {
+      keyed: string[];
+      providers: { id: string; apiKeySet: boolean }[];
+    };
+    expect(page.providers.find((provider) => provider.id === "Azure")?.apiKeySet).toBe(true);
+    expect(page.keyed).toContain("Azure");
+    expect(JSON.stringify(page)).not.toContain("azure-key-value");
+  });
+
   it("will not test a model that is not configured", async () => {
     const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
     const server = await serve({}, unusedAgent(), { agentDirectory });

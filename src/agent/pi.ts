@@ -11,11 +11,11 @@ import {
   createAgentSession,
   getAgentDir,
   hasTrustRequiringProjectResources,
-  resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 
 import { contextUsage } from "../pi/context.js";
 import { customContextWindow, customThinking, enableCustomThinking } from "../pi/model-window.js";
+import { namedModel } from "../pi/named-model.js";
 import { createAssistantTextStream } from "../pi/streaming.js";
 import { decideTrust } from "../pi/trust.js";
 import { failureOf, summariseTurn, thoughtIn } from "../pi/turn.js";
@@ -212,12 +212,9 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
    */
   const own = session.model;
 
-  /** The model a Notebook names, `provider/model`, as pi's own `--model` reads it. */
+  /** The model a Notebook names, `provider/model`, looked up by that pair. */
   const resolveModel = (named: string): Model => {
-    const { model, error } = resolveCliModel({
-      cliModel: named,
-      modelRuntime: session.modelRuntime,
-    });
+    const { model, error } = namedModel(session.modelRuntime, named);
     if (model === undefined) throw new Error(error ?? `No model named "${named}" is available.`);
     return model;
   };

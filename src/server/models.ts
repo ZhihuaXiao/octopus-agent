@@ -76,7 +76,7 @@ export interface ModelPage {
   readonly thinkingLevels: readonly string[];
   readonly apis: readonly string[];
   readonly models: readonly ModelChoice[];
-  /** Providers that already have a stored credential. The key itself is not included. */
+  /** Providers that already have a stored credential, in pi's `auth.json` or as a custom provider's own key. The key itself is not included. */
   readonly keyed: readonly string[];
   readonly providers: readonly CustomProvider[];
 }
@@ -482,10 +482,17 @@ async function listModels(
           : 1,
     );
   const credentials = await runtime.value.listCredentials();
-  return {
-    ok: true,
-    value: { models, keyed: credentials.map((credential) => credential.providerId).sort() },
-  };
+  const providers = await readProviders(agentDirectory);
+  if (!providers.ok) return providers;
+  // A custom provider keeps its key in `models.json` rather than in pi's
+  // `auth.json`, and pi calls the model with that key all the same. Counting
+  // only the credentials would tell the page no key was set for a provider
+  // whose key was typed into its own card.
+  const keyed = new Set(credentials.map((credential) => credential.providerId));
+  for (const provider of providers.value) {
+    if (provider.apiKeySet) keyed.add(provider.id);
+  }
+  return { ok: true, value: { models, keyed: [...keyed].sort() } };
 }
 
 async function openRuntime(agentDirectory: string): Promise<ModelResult<ModelRuntime>> {
