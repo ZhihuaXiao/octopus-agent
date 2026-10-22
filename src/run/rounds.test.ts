@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { Cell } from "../notebook/notebook.js";
-import { attachSystemPrompt, readCellRounds } from "./rounds.js";
+import { attachSystemPrompt, readCellRounds, roundFromRecord } from "./rounds.js";
 
 type AppendableMessage = Parameters<SessionManager["appendMessage"]>[0];
 
@@ -175,5 +175,51 @@ describe("a cell's model rounds", () => {
     const noted = attachSystemPrompt(read.value, "You are a careful assistant.");
     expect(noted.systemPrompt).toBe("You are a careful assistant.");
     expect(attachSystemPrompt(read.value, undefined).systemPrompt).toBeUndefined();
+  });
+
+  it("makes a round of what the record kept when the session is gone", () => {
+    const kept = {
+      id: "greet",
+      type: "prompt" as const,
+      status: "ok" as const,
+      text: "Hello, world",
+      thinking: "A greeting is wanted.",
+      toolCalls: [{ name: "bash", input: { command: "echo hi" } }],
+      usage: { inputTokens: 12, outputTokens: 3, cost: 0 },
+      model: "anthropic/claude-sonnet-4",
+      retries: [],
+      artifacts: [],
+      startedAt: "2026-10-21T00:00:00.000Z",
+      endedAt: "2026-10-21T00:00:01.000Z",
+    };
+
+    expect(roundFromRecord(kept)).toEqual({
+      kind: "model",
+      text: "Hello, world",
+      thinking: "A greeting is wanted.",
+      model: "anthropic/claude-sonnet-4",
+      inputTokens: 12,
+      outputTokens: 3,
+      toolCalls: [{ name: "bash", input: { command: "echo hi" } }],
+    });
+  });
+
+  it("makes no round of a record whose turn said and thought nothing", () => {
+    const silent = {
+      id: "greet",
+      type: "prompt" as const,
+      status: "error" as const,
+      text: "",
+      toolCalls: [],
+      usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
+      model: "",
+      retries: [],
+      artifacts: [],
+      error: "No API key for azure/gpt-6-sol",
+      startedAt: "2026-10-21T00:00:00.000Z",
+      endedAt: "2026-10-21T00:00:01.000Z",
+    };
+
+    expect(roundFromRecord(silent)).toBeUndefined();
   });
 });

@@ -64,6 +64,7 @@ import {
   type RoundsResult,
   attachSystemPrompt,
   readCellRounds,
+  roundFromRecord,
 } from "../run/rounds.js";
 import {
   type RefusalKind,
@@ -112,6 +113,21 @@ import {
 export type CellState = "idle" | "running" | CellStatus | "stale";
 
 /**
+ * One piece of a Cell's turn, as it happened: a thought, something said, or a
+ * tool invoked.
+ *
+ * Kept in the order the turn produced them, because that order is the turn —
+ * a thought, then the tool it led to, then the reply that tool made possible.
+ * The Run Record's `thinking`, `text` and `toolCalls` are the same pieces
+ * grouped by kind, which is what a record is for; this is what drawing one
+ * needs. A Bash Cell's output is a single `text` part.
+ */
+export type CellPart =
+  | { kind: "thinking"; text: string }
+  | { kind: "tool"; name: string; input: unknown; result?: string; isError?: boolean }
+  | { kind: "text"; text: string };
+
+/**
  * One Cell as the browser draws it: what the Notebook declares of it, and what
  * running it has produced so far.
  */
@@ -142,6 +158,13 @@ export interface CellView {
   readonly thinking?: string;
   /** The tools the agent has invoked so far, or invoked, in the order it did. */
   readonly toolCalls: readonly ToolCall[];
+  /**
+   * The same turn as `thinking`, `text` and `toolCalls` hold, in the order it
+   * happened, for a browser drawing the Cell as the Rounds dialog reads it.
+   * Absent for a Cell that has produced nothing, and for a result read from a
+   * Run Record that kept no order — a browser then groups the three fields.
+   */
+  readonly parts?: readonly CellPart[];
   /**
    * The files the Cell left, as its record names them: paths relative to the
    * directory of the Run named by `run`, which is where the server serves them
@@ -475,6 +498,31 @@ const noteFailure = (cause: unknown) => {
   process.stderr.write(`${cause instanceof Error ? cause.stack : String(cause)}\n`);
 };
 
+/**
+ * Adds a fragment to the last piece of the turn's kind, or begins a new one.
+ * Pi streams a thought or a reply a token at a time; a kind that comes back
+ * after a tool call was invoked in between is a new piece, and where it sits
+ * in the order is the point.
+ */
+function addToTurn(parts: CellPart[], kind: "text" | "thinking", fragment: string): void {
+  const last = parts.at(-1);
+  // `last.kind !== "tool"` is what leaves a text piece with a text field to
+  // add to; a tool call between two fragments of the same kind makes the
+  // second a piece of its own, which is the order the turn happened in.
+  if (last !== undefined && last.kind !== "tool" && last.kind === kind) {
+    last.text += fragment;
+    return;
+  }
+  parts.push(
+    kind === "text" ? { kind: "text", text: fragment } : { kind: "thinking", text: fragment },
+  );
+}
+
+/** What a turn's text pieces say in total, in order, with nothing between. */
+function textOfParts(parts: readonly CellPart[]): string {
+  return parts.map((part) => (part.kind === "text" ? part.text : "")).join("");
+}
+
 const sameReviewList = (a: readonly TextReview[], b: readonly TextReview[]): boolean =>
   a.length === b.length &&
   a.every((review, index) => {
@@ -516,8 +564,22 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   /** What the Cells in flight have said and done so far, and since when. */
   const speaking = new Map<
     string,
-    { text: string; thinking: string; readonly calls: ToolCall[]; readonly startedAt: string }
+    {
+      text: string;
+      thinking: string;
+      readonly calls: ToolCall[];
+      /** The same, in the order it happened: what a browser draws the Cell from. */
+      readonly parts: CellPart[];
+      readonly startedAt: string;
+    }
   >();
+  /**
+   * Each Cell's last turn in order, by Cell id, kept past the end of the turn
+   * that produced it: the Run Record groups the same pieces by kind, and the
+   * order is only here. Cleared when the Cell starts again, which is when the
+   * order it holds stops being the order of anything.
+   */
+  const turns = new Map<string, CellPart[]>();
   /** The Run before this one, for the next to carry on from. */
   let last: RunRecord | undefined;
   /**
@@ -662,6 +724,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         text: inFlight.text,
         ...(inFlight.thinking !== "" ? { thinking: inFlight.thinking } : {}),
         toolCalls: inFlight.calls,
+        ...(inFlight.parts.length > 0 ? { parts: inFlight.parts } : {}),
         artifacts: [],
         ...(inProgress !== undefined ? { run: inProgress.run } : {}),
         ...(cell.type === "bash" ? { service: true } : {}),
@@ -674,6 +737,15 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     }
 
     const { record, run } = found;
+    // The order the turn happened in, which the record does not keep: a turn
+    // heard in this session has it, and one read back from a record does not.
+    // A Bash Cell's output is one piece and needs no order of its own.
+    const parts =
+      record.type === "bash"
+        ? record.stdout === ""
+          ? undefined
+          : [{ kind: "text" as const, text: record.stdout }]
+        : turns.get(cell.id);
     return {
       ...declared,
       status: stale.has(cell.id) ? "stale" : record.status,
@@ -682,6 +754,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         ? { thinking: record.thinking }
         : {}),
       toolCalls: record.type === "prompt" ? record.toolCalls : [],
+      ...(parts !== undefined && parts.length > 0 ? { parts } : {}),
       artifacts: record.artifacts,
       run,
       ...(record.type === "prompt" && record.context !== undefined
@@ -716,28 +789,65 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         break;
       }
       case "cell-started":
-        speaking.set(event.cell, { text: "", thinking: "", calls: [], startedAt: at });
+        // A Cell starting again begins a turn of its own: whatever order the
+        // last one held is the order of nothing now.
+        turns.delete(event.cell);
+        speaking.set(event.cell, {
+          text: "",
+          thinking: "",
+          calls: [],
+          parts: [],
+          startedAt: at,
+        });
         break;
       case "cell-text": {
         const inFlight = speaking.get(event.cell);
-        if (inFlight !== undefined) inFlight.text += event.text;
+        if (inFlight === undefined) break;
+        inFlight.text += event.text;
+        addToTurn(inFlight.parts, "text", event.text);
         break;
       }
       case "cell-thinking": {
         const inFlight = speaking.get(event.cell);
-        if (inFlight !== undefined) inFlight.thinking += event.thinking;
+        if (inFlight === undefined) break;
+        inFlight.thinking += event.thinking;
+        addToTurn(inFlight.parts, "thinking", event.thinking);
         break;
       }
-      case "cell-tool-call":
-        speaking.get(event.cell)?.calls.push(event.call);
+      case "cell-tool-call": {
+        const inFlight = speaking.get(event.cell);
+        if (inFlight === undefined) break;
+        inFlight.calls.push(event.call);
+        inFlight.parts.push({
+          kind: "tool",
+          name: event.call.name,
+          input: event.call.input,
+          ...(event.call.result !== undefined ? { result: event.call.result } : {}),
+          ...(event.call.isError ? { isError: true } : {}),
+        });
         break;
-      case "cell-ended":
+      }
+      case "cell-ended": {
+        const inFlight = speaking.get(event.record.id);
         speaking.delete(event.record.id);
         ended.push(event.record);
         // The Run named itself before any Cell started, so a Cell that ended has
         // a Run to be recorded against; the empty name is never reached.
         results.set(event.record.id, { record: event.record, run: inProgress?.run ?? "" });
+        // Kept only when what was heard is what the record holds: a record that
+        // says the turn said nothing — an interrupted one, whose half-reply is
+        // not kept — must not be drawn with a reply the stream left behind.
+        if (
+          event.record.type === "prompt" &&
+          inFlight !== undefined &&
+          textOfParts(inFlight.parts) === event.record.text
+        ) {
+          turns.set(event.record.id, inFlight.parts);
+        } else {
+          turns.delete(event.record.id);
+        }
         break;
+      }
       case "run-ended":
         last = event.record;
         stale = new Set(event.record.stale);
@@ -1284,7 +1394,23 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       if (found.record.type !== "prompt") {
         return { ok: false, problem: "A bash cell does not call a model." };
       }
-      const recorded = recordedTurn(cellId, found.record);
+      const kept = found.record;
+      const recorded = recordedTurn(cellId, kept);
+      // What the record kept, as the rounds to show when the Agent Session
+      // cannot be read: the reply is still accounted for even where the
+      // session that would give its message-by-message form is gone.
+      const fromRecord = (problem: string): CellRounds => {
+        const round = roundFromRecord(kept);
+        return attachSystemPrompt(
+          {
+            ...recorded,
+            rounds: round === undefined ? [] : [round],
+            roundsProblem: problem,
+          },
+          kept.systemPrompt,
+        );
+      };
+
       const anchor = found.record.anchor;
       if (anchor === undefined) {
         return {
@@ -1300,7 +1426,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       if (record?.agentSession === undefined) {
         return {
           ok: true,
-          value: { ...recorded, roundsProblem: "The agent session for this cell is not on disk." },
+          value: fromRecord(
+            "The agent session for this cell is not on disk. The reply below is what the run recorded.",
+          ),
         };
       }
       const read = readCellRounds(
@@ -1309,7 +1437,12 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         cellId,
         cellsOf(parsed),
       );
-      if (!read.ok) return { ok: true, value: { ...recorded, roundsProblem: read.problem } };
+      if (!read.ok) {
+        return {
+          ok: true,
+          value: fromRecord(`${read.problem} The reply below is what the run recorded.`),
+        };
+      }
       return {
         ok: true,
         value: attachSystemPrompt(read.value, found.record.systemPrompt),

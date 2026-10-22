@@ -12,6 +12,10 @@ import type { Environment } from "./environment.js";
 export interface ToolCall {
   name: string;
   input: unknown;
+  /** What the tool returned, once it had. */
+  result?: string;
+  /** Whether the tool finished with an error. */
+  isError?: boolean;
 }
 
 /**
@@ -255,6 +259,16 @@ export interface Agent {
   readonly environment: Environment;
   /** Where this Agent Session is kept, for a later Run to carry on from it. */
   readonly agentSession: string | undefined;
+  /**
+   * Whether an Agent Session this agent was asked to reopen was reopened, or
+   * was not there to reopen and it started one of its own instead.
+   *
+   * An agent that starts a session of its own when asked for one that is gone,
+   * rather than failing, has to say which it did: the Anchors a Run carries on
+   * from address entries in the session that was asked for, and there is
+   * nothing in the new one to fork at.
+   */
+  readonly reopenedAgentSession: boolean;
   dispose(): Promise<void>;
 }
 

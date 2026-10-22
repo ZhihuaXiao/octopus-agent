@@ -219,7 +219,7 @@ function redactingRenderer(credentials: readonly string[]) {
       .replace(/'/g, "&#39;");
 
   const toolCall = (call: ToolCall) =>
-    `<li><details><summary><span class="tool-name">${show(call.name)}</span> <span class="tool-gist">${show(gistOf(call.input, hide))}</span></summary><pre>${show(abridged(call.input, hide))}</pre></details></li>`;
+    `<li><details><summary><span class="tool-name">${show(call.name)}</span> <span class="tool-gist">${show(gistOf(call.input, hide))}</span></summary><pre>${show(abridged(call.input, hide))}</pre>${call.result !== undefined && call.name !== "read" && call.name !== "write" ? `<pre class="tool-result">${show(call.result)}</pre>` : ""}</details></li>`;
 
   /**
    * An Artifact embedded: an image drawn, a text file shown and offered under

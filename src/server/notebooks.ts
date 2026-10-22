@@ -38,6 +38,7 @@ import {
 import { type Notebook, cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
 import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
+import { markdownFiles, isSkipped } from "../util/tree.js";
 import { isTextFile } from "./text-files.js";
 
 export interface NotebookEntry {
@@ -52,13 +53,6 @@ export interface NotebookEntry {
 }
 
 const NOTEBOOK_EXTENSION = ".md";
-
-/**
- * Directories no Notebook of the project lives in: what a package manager
- * installed, and the dot-directories — version control, run records (`.octo`),
- * an editor's settings — that are a tool's own rather than the author's.
- */
-const isSkipped = (name: string) => name === "node_modules" || name.startsWith(".");
 
 /** A Notebook's path as the server names it: relative to the served directory, forward slashes. */
 export const pathWithin = (directory: string, file: string) =>
@@ -79,28 +73,6 @@ async function readEntry(directory: string, file: string): Promise<NotebookEntry
   const parsed = parseNotebook(await readFile(file, "utf8"));
   if (!parsed.ok || cellsOf(parsed.notebook).length === 0) return undefined;
   return entryOf(directory, file, parsed.notebook);
-}
-
-/**
- * Every Markdown file under `directory`, not descending into a skipped
- * directory at all: a project's `node_modules` can hold more files than the
- * rest of it put together. A symbolic link is neither a file nor a directory
- * here, so a link that loops back is never followed.
- */
-async function markdownFiles(directory: string): Promise<string[]> {
-  const dirents = await readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const dirent of dirents) {
-    const path = join(directory, dirent.name);
-    if (dirent.isDirectory()) {
-      if (!isSkipped(dirent.name)) files.push(...(await markdownFiles(path)));
-    } else if (dirent.isFile() && extname(dirent.name) === NOTEBOOK_EXTENSION) {
-      files.push(path);
-    }
-  }
-
-  return files;
 }
 
 /**

@@ -94,11 +94,16 @@ import {
  *   modified: string,
  * }} ChatEntry
  * @typedef {{ chats: ChatEntry[] }} ChatList
- * @typedef {{ name: string, input: unknown }} ToolCall
+ * @typedef {{ name: string, input: unknown, result?: string, isError?: boolean }} ToolCall
  * @typedef {"system" | "tools" | "rules" | "skills" | "conversation"} ContextPartName
  * @typedef {{ name: ContextPartName, tokens: number }} ContextPart
  * @typedef {{ tokens: number, window?: number, estimated: boolean, parts: ContextPart[] }} ContextUsage
  * @typedef {"idle" | "running" | "ok" | "error" | "timeout" | "interrupted" | "stale"} CellState
+ * @typedef {(
+ *   | { kind: "thinking", text: string }
+ *   | { kind: "tool", name: string, input: unknown, result?: string, isError?: boolean }
+ *   | { kind: "text", text: string }
+ * )} CellPart
  * @typedef {{
  *   id: string,
  *   type: "prompt" | "bash",
@@ -112,6 +117,7 @@ import {
  *   text: string,
  *   thinking?: string,
  *   toolCalls: ToolCall[],
+ *   parts?: CellPart[],
  *   artifacts: string[],
  *   run?: string,
  *   error?: string,
@@ -1411,20 +1417,242 @@ const abridged = (input) =>
   ) ?? "";
 
 /**
+ * One tool call as a card: collapsed, showing only the tool's name and a gist
+ * of what it was given. A turn makes many, and the reply is what the reader is
+ * here for; what each one carried is a click away.
  * @param {ToolCall} call
- * @returns {HTMLLIElement}
+ * @returns {HTMLDetailsElement}
  */
 function renderToolCall(call) {
-  const item = make("li", "tool-call");
   const details = document.createElement("details");
+  details.className = "cell-part tool-call";
+  if (call.isError) details.classList.add("failed");
   const summary = document.createElement("summary");
   summary.append(
     make("span", "tool-name", call.name),
     make("span", "tool-gist", gistOf(call.input)),
   );
   details.append(summary, make("pre", "tool-input", abridged(call.input)));
-  item.append(details);
-  return item;
+  if (
+    call.result !== undefined &&
+    call.result !== "" &&
+    call.name !== "read" &&
+    call.name !== "write"
+  ) {
+    details.append(make("pre", "tool-result", call.result));
+  }
+  return details;
+}
+
+/**
+ * What the model thought, in its place in the turn. Collapsed: a thought is
+ * there for whoever wants it, and the reply is what the Cell is read for.
+ * @param {string} thinking
+ * @returns {HTMLDetailsElement}
+ */
+function renderThought(thinking) {
+  const thought = document.createElement("details");
+  thought.className = "cell-part cell-thinking";
+  thought.append(make("summary", "", "Thinking"), make("pre", "round-thinking", thinking));
+  return thought;
+}
+
+/**
+ * One piece of a turn, by what it is, marked with its place among all the
+ * turn's pieces — the Run View leaves the tool calls out, and a piece is still
+ * to be found by where it sits in the turn rather than where it sits on the
+ * page. A text piece is the cell's own output node, marked `.streamed`, since
+ * that is what a fragment of the reply is appended to as it arrives.
+ * @param {CellPart} part
+ * @param {number} index
+ * @returns {HTMLElement}
+ */
+function renderPart(part, index) {
+  /** @type {HTMLElement} */
+  let node;
+  if (part.kind === "thinking") node = renderThought(part.text);
+  else if (part.kind === "tool") {
+    node = renderToolCall({
+      name: part.name,
+      input: part.input,
+      ...(part.result !== undefined ? { result: part.result } : {}),
+      ...(part.isError ? { isError: true } : {}),
+    });
+  } else {
+    node = make("div", "cell-part cell-output streamed");
+    fillOutput(node, part.text);
+  }
+  node.dataset.part = String(index);
+  return node;
+}
+
+/**
+ * The pieces of a turn in the order they happened. A server that kept the
+ * order says so with `parts`; one that did not — a result read back from a Run
+ * Record, or a page talking to a server older than this one — is given the
+ * grouped fields, which is the best order there is without it: what was
+ * thought, then what was invoked, then what was said.
+ * @param {CellView} cell
+ * @returns {CellPart[]}
+ */
+function partsOf(cell) {
+  if (cell.parts !== undefined) return cell.parts;
+  /** @type {CellPart[]} */
+  const parts = [];
+  if (cell.thinking !== undefined && cell.thinking !== "") {
+    parts.push({ kind: "thinking", text: cell.thinking });
+  }
+  for (const call of cell.toolCalls)
+    parts.push({
+      kind: "tool",
+      name: call.name,
+      input: call.input,
+      ...(call.result !== undefined ? { result: call.result } : {}),
+      ...(call.isError ? { isError: true } : {}),
+    });
+  if (cell.text !== "") parts.push({ kind: "text", text: cell.text });
+  return parts;
+}
+
+/**
+ * Draws a Cell's turn as the Rounds dialog reads it: each thought, tool call
+ * and piece of the reply where it happened, rather than the thoughts together
+ * and the calls together. The Run View leaves the tool calls out, which is
+ * what that view is for.
+ * @param {HTMLElement} node
+ * @param {CellView} cell
+ * @param {{ tools?: boolean }} [options]
+ */
+function fillStream(node, cell, options = {}) {
+  const nodes = partsOf(cell)
+    .map((part, index) => ({ part, index }))
+    .filter(({ part }) => options.tools !== false || part.kind !== "tool")
+    .map(({ part, index }) => renderPart(part, index));
+  node.replaceChildren(...nodes);
+}
+
+/**
+ * The turn in whichever view is drawn: the Author View's stream, or the Run
+ * View's, which draws the same pieces with the tool calls left out.
+ * @param {string} id
+ * @returns {HTMLElement | null}
+ */
+function streamOf(id) {
+  const found = cellItem(id)?.querySelector(".cell-stream, .run-step-stream");
+  return found instanceof HTMLElement ? found : null;
+}
+
+/**
+ * The last piece of the turn, when the page's last node is it. A fragment
+ * arriving afterwards belongs there, and one arriving after anything else —
+ * a thought, a tool call — begins a piece of its own.
+ * @param {HTMLElement} stream
+ * @param {number} index the last piece's place in the turn
+ * @param {string} kind the class the piece would carry
+ */
+function continues(stream, index, kind) {
+  const last = stream.lastElementChild;
+  return (
+    last !== null &&
+    last.getAttribute("data-part") === String(index) &&
+    last.classList.contains(kind)
+  );
+}
+
+/**
+ * Appends a fragment of the reply to the turn on the page: to the last piece
+ * when that piece is the reply, and to a new one when something has happened
+ * since.
+ * @param {string} id
+ * @param {string} text
+ */
+function appendText(id, text) {
+  const stream = streamOf(id);
+  if (stream === null) return;
+  const cell = cellNamed(id);
+  const parts = cell?.parts;
+  if (parts === undefined) {
+    const last = stream.lastElementChild;
+    if (last !== null && last.classList.contains("streamed")) {
+      fillOutput(last, `${last.textContent ?? ""}${text}`);
+      return;
+    }
+    const output = make("div", "cell-part cell-output streamed");
+    fillOutput(output, text);
+    stream.append(output);
+    return;
+  }
+  const index = parts.length - 1;
+  const last = parts[index];
+  const said = last?.kind === "text" ? last.text : "";
+  if (continues(stream, index, "streamed")) {
+    fillOutput(/** @type {HTMLElement} */ (stream.lastElementChild), said);
+    return;
+  }
+  stream.append(renderPart({ kind: "text", text: said }, index));
+}
+
+/**
+ * Appends a fragment of the thought to the turn on the page, joining the last
+ * piece when that piece is a thought.
+ * @param {string} id
+ * @param {string} thinking
+ */
+function appendThinking(id, thinking) {
+  const stream = streamOf(id);
+  if (stream === null) return;
+  const parts = cellNamed(id)?.parts;
+  if (parts === undefined) {
+    const last = stream.lastElementChild;
+    if (last !== null && last.classList.contains("cell-thinking")) {
+      const pre = last.querySelector("pre");
+      if (pre !== null) pre.textContent = `${pre.textContent ?? ""}${thinking}`;
+      return;
+    }
+    stream.append(renderThought(thinking));
+    return;
+  }
+  const index = parts.length - 1;
+  const last = parts[index];
+  if (last?.kind !== "thinking") return;
+  if (continues(stream, index, "cell-thinking")) {
+    const pre = stream.lastElementChild?.querySelector("pre") ?? null;
+    if (pre !== null) pre.textContent = last.text;
+    return;
+  }
+  stream.append(renderPart(last, index));
+}
+
+/**
+ * Adds one tool call to the turn on the page, as the agent invokes it. The Run
+ * View shows no tool calls, and has no place to put one.
+ * @param {string} id
+ * @param {ToolCall} call
+ */
+function appendToolCall(id, call) {
+  const stream = cellItem(id)?.querySelector(".cell-stream");
+  if (!(stream instanceof HTMLElement)) return;
+  const parts = cellNamed(id)?.parts;
+  stream.append(renderPart({ kind: "tool", ...call }, parts === undefined ? 0 : parts.length - 1));
+}
+
+/**
+ * What the text pieces of a turn say in total, in order, with nothing between.
+ * @param {readonly CellPart[]} parts
+ */
+function textOfParts(parts) {
+  return parts.map((part) => (part.kind === "text" ? part.text : "")).join("");
+}
+
+/**
+ * The Cell's element in whichever view is drawn, or nothing when it is not.
+ * @param {string} id
+ */
+function cellItem(id) {
+  const listName = view === "author" ? "segments" : "run-steps";
+  return (
+    document.getElementById(listName)?.querySelector(`[data-cell="${CSS.escape(id)}"]`) ?? null
+  );
 }
 
 /** The files the server serves as pictures, which the page draws rather than links. */
@@ -1515,10 +1743,14 @@ function setOutputFormat(format) {
 /** Draws every visible reply again, in the format now chosen. */
 function repaintOutputs() {
   if (watching === undefined) return;
-  const root = element(view === "author" ? "segments" : "run-steps");
   for (const cell of watching.state.cells) {
-    const output = root.querySelector(`[data-cell="${CSS.escape(cell.id)}"] .streamed`);
-    if (output !== null) fillOutput(output, cell.text);
+    const stream = streamOf(cell.id);
+    if (stream === null) continue;
+    partsOf(cell).forEach((part, index) => {
+      if (part.kind !== "text") return;
+      const node = stream.querySelector(`[data-part="${index}"]`);
+      if (node !== null) fillOutput(node, part.text);
+    });
   }
 }
 
@@ -2133,8 +2365,13 @@ function renderRounds(value) {
   query.append(make("h3", "", "You"), make("p", "", value.query === "" ? "(empty)" : value.query));
   /** @type {Node[]} */
   const nodes = [query];
+  // Said either way: a turn whose session is gone still has a reply to show,
+  // and the reader is owed the reason it is one round rather than the several
+  // the session would have given.
   if (value.rounds.length === 0) {
     nodes.push(make("p", "", value.roundsProblem ?? "The model did not answer."));
+  } else if (value.roundsProblem !== undefined) {
+    nodes.push(make("p", "rounds-problem", value.roundsProblem));
   }
   let count = 0;
   for (const round of value.rounds) {
@@ -2824,15 +3061,12 @@ function renderCell(cell, session, running) {
   heading.append(make("span", "cell-preview", foldPreview(cell.body)));
 
   const body = make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
-  const calls = make("ol", "tool-calls");
-  calls.append(...cell.toolCalls.map(renderToolCall));
-  const output = make("div", "cell-output streamed");
-  fillOutput(output, cell.text);
-  const thinking = renderThinking(cell.thinking);
+  // The turn as it happened: each thought, call and piece of the reply where
+  // it sits, as the Rounds dialog reads it. A Cell that has not run has none.
+  const stream = make("div", "cell-stream");
+  fillStream(stream, cell);
 
-  item.append(heading, body, calls);
-  if (thinking !== undefined) item.append(thinking);
-  item.append(output);
+  item.append(heading, body, stream);
   askForThinking(cell);
   if (cell.error !== undefined) item.append(make("p", "cell-error", cell.error));
   if (cell.artifacts.length > 0 && cell.run !== undefined) {
@@ -3451,39 +3685,26 @@ function renderSession() {
 }
 
 /**
- * What the model thought, above the reply. Open, so the cell shows the thought
- * rather than only that there was one. Absent when it recorded none.
- * @param {string | undefined} thinking
- * @returns {HTMLDetailsElement | undefined}
- */
-function renderThinking(thinking) {
-  if (thinking === undefined || thinking === "") return undefined;
-  const thought = document.createElement("details");
-  thought.className = "cell-thinking";
-  thought.open = true;
-  thought.append(make("summary", "", "Thinking"), make("pre", "round-thinking", thinking));
-  return thought;
-}
-
-/**
  * Puts `cell`'s thought into the cell on the page, leaving a thought the
- * reader has collapsed closed.
+ * reader has collapsed closed. A thought read back from a Run Record — the
+ * record keeps it apart from the reply — goes where the turn begins, since
+ * that is where a turn's first thought sits.
  * @param {CellView} cell
  */
 function showThinking(cell) {
   if (cell.thinking === undefined || cell.thinking === "") return;
-  const listName = view === "author" ? "segments" : "run-steps";
-  const root = document.getElementById(listName);
-  if (root === null) return;
-  const item = root.querySelector(`[data-cell="${CSS.escape(cell.id)}"]`);
-  if (item === null) return;
-  const block = item.querySelector(".cell-thinking");
+  const stream = streamOf(cell.id);
+  if (stream === null) return;
+  const block = stream.querySelector(".cell-thinking");
   if (!(block instanceof HTMLDetailsElement)) {
-    const made = renderThinking(cell.thinking);
-    if (made === undefined) return;
-    const output = item.querySelector(".streamed");
-    if (output !== null) output.before(made);
-    else item.append(made);
+    // The thought was not part of what the Cell began with, so it has no place
+    // among the pieces on the page: it goes first, and every piece after it is
+    // drawn again at the place it now holds.
+    if (cell.parts === undefined) cell.parts = partsOf(cell);
+    else if (!cell.parts.some((part) => part.kind === "thinking")) {
+      cell.parts.unshift({ kind: "thinking", text: cell.thinking });
+    }
+    fillStream(stream, cell, { tools: stream.classList.contains("cell-stream") });
     return;
   }
   const pre = block.querySelector("pre");
@@ -3542,42 +3763,18 @@ function askForThinking(cell) {
 }
 
 /**
- * Appends to one Cell's output without redrawing the rest, since text arrives
- * a fragment at a time and a redraw per fragment would flicker. Whichever view
- * is drawn has the Cell's output somewhere on the page.
- * @param {string} id
- * @param {string} text
+ * Adds a fragment to the Cell's last piece of the turn when that piece is of
+ * the same kind, and begins a new one otherwise: a reply that comes back after
+ * a tool call was invoked is a piece of its own, and where it sits is the point.
+ * @param {CellView} cell
+ * @param {"text" | "thinking"} kind
+ * @param {string} fragment
  */
-function appendText(id, text) {
-  const list = view === "author" ? "segments" : "run-steps";
-  const output = element(list).querySelector(`[data-cell="${CSS.escape(id)}"] .streamed`);
-  if (output === null) return;
-  const cell = cellNamed(id);
-  fillOutput(output, cell === undefined ? `${output.textContent ?? ""}${text}` : cell.text);
-}
-
-/**
- * Appends to one Cell's thought without redrawing the rest, for the same
- * reason the reply is appended: it arrives a fragment at a time.
- * @param {string} id
- * @param {string} thinking
- */
-function appendThinking(id, thinking) {
-  const cell = cellNamed(id);
-  if (cell === undefined) return;
-  cell.thinking = `${cell.thinking ?? ""}${thinking}`;
-  showThinking(cell);
-}
-
-/**
- * Adds one card to one Cell's tool calls, for the same reason: a turn may make
- * many, and each should appear as it happens without the page jumping.
- * @param {string} id
- * @param {ToolCall} call
- */
-function appendToolCall(id, call) {
-  const calls = element("segments").querySelector(`[data-cell="${id}"] .tool-calls`);
-  if (calls !== null) calls.append(renderToolCall(call));
+function pushPart(cell, kind, fragment) {
+  if (cell.parts === undefined) return;
+  const last = cell.parts.at(-1);
+  if (last !== undefined && last.kind === kind) last.text += fragment;
+  else cell.parts.push({ kind, text: fragment });
 }
 
 /**
@@ -3613,7 +3810,13 @@ function apply(event) {
     case "cell-started": {
       const cell = cellNamed(event.cell);
       if (cell !== undefined) {
-        Object.assign(cell, { status: "running", text: "", toolCalls: [], artifacts: [] });
+        Object.assign(cell, {
+          status: "running",
+          text: "",
+          toolCalls: [],
+          parts: [],
+          artifacts: [],
+        });
         delete cell.thinking;
         delete cell.error;
         delete cell.context;
@@ -3626,17 +3829,34 @@ function apply(event) {
     }
     case "cell-text": {
       const cell = cellNamed(event.cell);
-      if (cell !== undefined) cell.text += event.text;
+      if (cell !== undefined) {
+        cell.text += event.text;
+        pushPart(cell, "text", event.text);
+      }
       appendText(event.cell, event.text);
       return;
     }
     case "cell-thinking": {
+      const cell = cellNamed(event.cell);
+      if (cell !== undefined) {
+        cell.thinking = `${cell.thinking ?? ""}${event.thinking}`;
+        pushPart(cell, "thinking", event.thinking);
+      }
       appendThinking(event.cell, event.thinking);
       return;
     }
     case "cell-tool-call": {
       const cell = cellNamed(event.cell);
-      if (cell !== undefined) cell.toolCalls.push(event.call);
+      if (cell !== undefined) {
+        cell.toolCalls.push(event.call);
+        cell.parts?.push({
+          kind: "tool",
+          name: event.call.name,
+          input: event.call.input,
+          ...(event.call.result !== undefined ? { result: event.call.result } : {}),
+          ...(event.call.isError ? { isError: true } : {}),
+        });
+      }
       appendToolCall(event.cell, event.call);
       return;
     }
@@ -3649,6 +3869,13 @@ function apply(event) {
           cell.thinking = event.record.thinking;
         else delete cell.thinking;
         cell.toolCalls = event.record.toolCalls ?? [];
+        // A turn whose record kept none of what was streamed — an interrupted
+        // one, whose half-reply is not kept — must not be drawn with it either.
+        if (event.record.type === "bash") {
+          cell.parts = cell.text === "" ? [] : [{ kind: "text", text: cell.text }];
+        } else if (textOfParts(cell.parts ?? []) !== cell.text) {
+          delete cell.parts;
+        }
         cell.artifacts = event.record.artifacts;
         if (event.record.context !== undefined) cell.context = event.record.context;
         else delete cell.context;
@@ -5323,12 +5550,9 @@ function renderStep(cell, session) {
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
-  const output = make("div", "run-step-output streamed");
-  fillOutput(output, cell.text);
-  const thinking = renderThinking(cell.thinking);
-  item.append(heading);
-  if (thinking !== undefined) item.append(thinking);
-  item.append(output);
+  const stream = make("div", "run-step-stream");
+  fillStream(stream, cell, { tools: false });
+  item.append(heading, stream);
   askForThinking(cell);
   if (cell.artifacts.length > 0 && cell.run !== undefined) {
     const run = cell.run;

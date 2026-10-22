@@ -61,7 +61,7 @@ function joined(blocks: Map<number, string>): string {
 export function createAssistantTextStream(): AssistantTextStream {
   const blocks = new Map<number, string>();
   const thoughts = new Map<number, string>();
-  let settled: string | undefined;
+  const messages: string[] = [];
 
   const assembled = () =>
     [...blocks.keys()]
@@ -74,12 +74,21 @@ export function createAssistantTextStream(): AssistantTextStream {
       if (!isRecord(event)) return nothing;
 
       if (event.type === "message_end") {
+        if (!isRecord(event.message)) return nothing;
+        // Non-assistant messages (user prompts, tool results) also emit
+        // message_end; their text is not part of the assistant's reply.
+        if (event.message.role !== undefined && event.message.role !== "assistant") {
+          return nothing;
+        }
+
         const previous = assembled();
-        settled = textOf(event.message);
+        const settled = textOf(event.message);
         const previousThought = joined(thoughts);
         const thought = thinkingBlocksOf(
           isRecord(event.message) ? event.message.content : undefined,
         );
+        messages.push(settled);
+        blocks.clear();
         // The next message numbers its blocks from the start again. Kept
         // here, a later thought would be glued onto this one.
         thoughts.clear();
@@ -112,7 +121,7 @@ export function createAssistantTextStream(): AssistantTextStream {
     },
 
     text() {
-      return settled ?? assembled();
+      return [...messages, assembled()].join("");
     },
   };
 }

@@ -751,6 +751,32 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       throw refuse("agent", cause instanceof Error ? cause.message : String(cause));
     });
 
+  // Whether the session the Run carried on from was there to reopen. An agent
+  // asked for a session that is gone starts one of its own rather than putting
+  // a second session under the first one's name, and says so here: its Anchors
+  // are entries in a session that no longer exists, so there is nowhere in the
+  // new one to fork and nothing for the record to name.
+  const forgottenSession =
+    options.continues?.agentSession !== undefined && !shared.reopenedAgentSession;
+  if (forgottenSession) {
+    process.stderr.write(
+      `The agent session ${options.continues?.agentSession ?? ""} is gone, so ${path} starts one of its own; the anchors recorded in it cannot be forked at.\n`,
+    );
+  }
+
+  // A Run carrying on from one whose Agent Session is gone still carries on
+  // from its results — its Stale set and its Cells' outcomes stand — but none
+  // of its Anchors does: each names an entry in the session that is gone, so
+  // there is nowhere in the new session to fork. Emptied rather than left, so
+  // that neither the fork below nor the record this Run writes names an Anchor
+  // that addresses nothing.
+  const continues =
+    options.continues === undefined
+      ? undefined
+      : forgottenSession
+        ? { ...options.continues, anchors: {} }
+        : options.continues;
+
   try {
     const problems = checkEnvironment(metadata, shared.environment, mode);
     if (problems.length > 0) throw refuse("environment", problems);
@@ -770,7 +796,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       allCells: cellsOf(parsed.notebook),
       timeoutOf: (cell) => timeoutOf(parsed.notebook, cell),
       modelOf: (cell) => modelOf(parsed.notebook, cell) ?? mode?.model,
-      ...(options.continues !== undefined ? { continues: options.continues } : {}),
+      ...(continues !== undefined ? { continues } : {}),
       observe: options.observe ?? (() => undefined),
       ...(options.signal !== undefined ? { interrupt: options.signal } : {}),
       ...(options.bashStops !== undefined ? { bashStops: options.bashStops } : {}),

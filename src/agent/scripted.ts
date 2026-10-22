@@ -12,6 +12,12 @@ import {
 } from "./agent.js";
 import type { Environment } from "./environment.js";
 
+/** One step in a scripted turn, for turns that interleave thoughts, tools and text. */
+export type ScriptedStep =
+  | { kind: "thinking"; text: string }
+  | { kind: "tool"; call: ToolCall }
+  | { kind: "text"; text: string };
+
 /**
  * One scripted turn: what the agent yields, what it fails with, what the
  * provider transiently failed with — after which the agent tries again, as pi
@@ -22,7 +28,12 @@ import type { Environment } from "./environment.js";
  * halfway had.
  */
 export type ScriptedTurn =
-  | ({ text: string } & Partial<Omit<CellResult, "text" | "retries">>)
+  | ({ text: string; steps?: readonly ScriptedStep[] } & Partial<
+      Omit<CellResult, "text" | "retries">
+    >)
+  | ({ steps: readonly ScriptedStep[]; text?: string } & Partial<
+      Omit<CellResult, "text" | "retries">
+    >)
   | { error: string; usage?: Usage }
   | { transient: string }
   | { hangs: true; text?: string; toolCalls?: ToolCall[]; usage?: Usage };
@@ -161,6 +172,9 @@ export function createScriptedAgent(
   const create = async (asked: AgentSetup): Promise<Agent> => {
     // A Run reopening a session names it; one starting a session gets a name of
     // its own, so an Isolated Cell's context is visibly not the shared one.
+    // Scripted sessions are names and not files, so one asked for is taken as
+    // one there is: what a real agent does with a path that is gone is pinned
+    // in `pi.test.ts`, where there is a filesystem to be gone from.
     const session = asked.agentSession ?? nameSession(setups.length);
     setups.push(asked);
     sessions.push(session);
@@ -171,6 +185,7 @@ export function createScriptedAgent(
     return {
       environment,
       agentSession: session,
+      reopenedAgentSession: asked.agentSession !== undefined,
 
       async prompt(body: string, options: TurnOptions = {}): Promise<CellResult> {
         const { signal, model, onText, onThinking, onToolCall } = options;
@@ -217,13 +232,34 @@ export function createScriptedAgent(
 
           // Announced one at a time, thought, then spoken in one piece, all before
           // the turn resolves, which is the least a real turn streams: everything
-          // above the boundary hears the calls, the thinking and the text before
-          // it holds the result, as it would from pi — whose tools run before its
-          // reply.
-          const toolCalls: ToolCall[] = turn.toolCalls ?? [];
-          for (const call of toolCalls) onToolCall?.(call);
-          if (turn.thinking !== undefined && turn.thinking !== "") onThinking?.(turn.thinking);
-          onText?.(turn.text);
+          // above the boundary hears the thinking, the calls and the text before
+          // it holds the result, as it would from pi — whose thinking happens
+          // before its tools run, and tools run before its reply.
+          const steps = "steps" in turn ? turn.steps : undefined;
+          let text = "text" in turn && typeof turn.text === "string" ? turn.text : "";
+          let thinking =
+            "thinking" in turn && typeof turn.thinking === "string" ? turn.thinking : undefined;
+          let toolCalls: ToolCall[] =
+            "toolCalls" in turn && Array.isArray(turn.toolCalls) ? [...turn.toolCalls] : [];
+
+          if (steps !== undefined) {
+            for (const step of steps) {
+              if (step.kind === "thinking") {
+                onThinking?.(step.text);
+                thinking = thinking === undefined ? step.text : `${thinking}\n\n${step.text}`;
+              } else if (step.kind === "tool") {
+                onToolCall?.(step.call);
+                toolCalls.push(step.call);
+              } else if (step.kind === "text") {
+                onText?.(step.text);
+                text += step.text;
+              }
+            }
+          } else {
+            if (thinking !== undefined && thinking !== "") onThinking?.(thinking);
+            for (const call of toolCalls) onToolCall?.(call);
+            onText?.(text);
+          }
 
           const usage: Usage = turn.usage ?? noUsage;
           // Anchors are opaque to everything above the boundary, so a counter is
@@ -234,10 +270,8 @@ export function createScriptedAgent(
           held.push({ body, anchor });
 
           return {
-            text: turn.text,
-            ...(turn.thinking !== undefined && turn.thinking !== ""
-              ? { thinking: turn.thinking }
-              : {}),
+            text,
+            ...(thinking !== undefined && thinking !== "" ? { thinking } : {}),
             toolCalls,
             usage,
             // What served the turn: the script's word when it has one, else the

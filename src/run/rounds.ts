@@ -18,6 +18,7 @@ import type { Cell } from "../notebook/notebook.js";
 import { textBlocksOf, thinkingBlocksOf } from "../pi/turn.js";
 import { isRecord } from "../util/guards.js";
 import { anchorBefore, type Anchors } from "./anchor.js";
+import type { PromptCellRecord } from "./record.js";
 
 /** How long one piece of a round may be. Past that, the rest is left off. */
 const LONGEST = 20_000;
@@ -255,6 +256,34 @@ export function readCellRounds(
   }
 
   return { ok: true, value: { query, prompts, rounds: rounds.map(published) } };
+}
+
+/**
+ * The round a Cell's turn leaves when its Agent Session cannot be read, made
+ * from what the Run Record kept.
+ *
+ * One round rather than several, because the record keeps what the turn said
+ * and thought as a whole and not message by message: a turn that replied
+ * around three tool calls is one reply here, with the calls in the order they
+ * were made. Tool results are the Agent Session's and are not in the record,
+ * so the calls carry their arguments and nothing else.
+ *
+ * Nothing at all when the record has nothing to say: a turn that failed before
+ * the model answered left no reply to stand in for the one it never gave.
+ */
+export function roundFromRecord(record: PromptCellRecord): ModelRound | undefined {
+  const text = clip(record.text);
+  const thinking = clip(record.thinking ?? "");
+  if (text === "" && thinking === "" && record.toolCalls.length === 0) return undefined;
+  return {
+    kind: "model",
+    text,
+    ...(thinking !== "" ? { thinking } : {}),
+    ...(record.model !== "" ? { model: record.model } : {}),
+    ...(record.usage.inputTokens > 0 ? { inputTokens: record.usage.inputTokens } : {}),
+    ...(record.usage.outputTokens > 0 ? { outputTokens: record.usage.outputTokens } : {}),
+    toolCalls: record.toolCalls.map((call) => ({ name: call.name, input: call.input })),
+  };
 }
 
 /**

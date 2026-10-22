@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import {
   type AgentSession,
   DefaultPackageManager,
@@ -18,7 +20,8 @@ import { customContextWindow, customThinking, enableCustomThinking } from "../pi
 import { namedModel } from "../pi/named-model.js";
 import { createAssistantTextStream } from "../pi/streaming.js";
 import { decideTrust } from "../pi/trust.js";
-import { failureOf, summariseTurn, thoughtIn } from "../pi/turn.js";
+import { failureOf, summariseTurn, textBlocksOf, thoughtIn } from "../pi/turn.js";
+import { isRecord } from "../util/guards.js";
 import {
   type Agent,
   type AgentSetup,
@@ -118,6 +121,17 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
   if (decision.record) trustStore.set(workspace, decision.trusted);
 
   const { systemPrompt, skills } = options;
+  // A session asked for that is not on disk is not reopened. Pi opens a path
+  // that is gone as a new session at that path, so reopening one would put a
+  // second session under the first one's name and leave every Anchor in it
+  // addressing nothing — and the turns would be appended to a file no earlier
+  // Run ever wrote. A session that was moved or deleted takes its Anchors with
+  // it (ADR-0014), so a Run that finds it gone starts a session of its own.
+  const reopened =
+    options.agentSession !== undefined && existsSync(options.agentSession)
+      ? options.agentSession
+      : undefined;
+  const forgotten = options.agentSession !== undefined && reopened === undefined;
   // Empty is a bare turn: no override, because pi reads an empty prompt as
   // "use the built-in one". The extension below removes that prompt, and
   // everything pi would append to it, once the turn is about to be sent.
@@ -153,8 +167,8 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
     ...(options.tools !== undefined ? { tools: [...options.tools] } : {}),
     // Left to pi unless a session is being reopened, so that where a new one is
     // filed stays pi's decision rather than becoming ours to keep in step.
-    ...(options.agentSession !== undefined
-      ? { sessionManager: SessionManager.open(options.agentSession, undefined, workspace) }
+    ...(reopened !== undefined
+      ? { sessionManager: SessionManager.open(reopened, undefined, workspace) }
       : {}),
   });
 
@@ -272,6 +286,14 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       return session.sessionFile;
     },
 
+    /**
+     * Whether the Agent Session this Run asked to carry on from was reopened,
+     * or not there to reopen. False for a session pi started itself.
+     */
+    get reopenedAgentSession() {
+      return reopened !== undefined;
+    },
+
     async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
       const { signal, model, approach, onText, onThinking, onToolCall } = turnOptions;
       // Before anything is subscribed to or counted: a model that cannot be had
@@ -299,13 +321,37 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       };
       signal?.addEventListener("abort", stop, { once: true });
 
+      const inFlightCalls = new Map<string, { name: string; input: unknown }>();
       const unsubscribe = session.subscribe((event) => {
         if (event.type === "agent_start" && signal?.aborted) stop();
         if (event.type === "auto_retry_start") retries.push({ error: event.errorMessage });
-        // As pi starts the tool, with the arguments it validated: the same
-        // call `summariseTurn` reads off the message afterwards, heard now.
+        // As pi starts the tool, remember its input arguments.
         if (event.type === "tool_execution_start") {
-          onToolCall?.({ name: event.toolName, input: event.args ?? null });
+          inFlightCalls.set(event.toolCallId, { name: event.toolName, input: event.args ?? null });
+        }
+        // As pi finishes the tool, announce the call with its validated input and result.
+        if (event.type === "tool_execution_end") {
+          const start = inFlightCalls.get(event.toolCallId);
+          inFlightCalls.delete(event.toolCallId);
+          const name = event.toolName ?? start?.name ?? "";
+          const input = start?.input ?? null;
+          let result: string | undefined;
+          if (event.result !== undefined && event.result !== null) {
+            if (typeof event.result === "string") result = event.result;
+            else if (isRecord(event.result)) {
+              if (Array.isArray(event.result.content)) {
+                result = textBlocksOf(event.result.content);
+              } else if (typeof event.result.text === "string") {
+                result = event.result.text;
+              }
+            }
+          }
+          onToolCall?.({
+            name,
+            input,
+            ...(result !== undefined ? { result } : {}),
+            ...(event.isError ? { isError: true } : {}),
+          });
         }
         const revealed = stream.accept(event);
         if (revealed.thinking !== "") onThinking?.(revealed.thinking);

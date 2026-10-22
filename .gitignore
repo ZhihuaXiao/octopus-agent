@@ -16,5 +16,7 @@ npm-debug.log*
 
 # Local audit notes, kept off the published history
 docs/security-audit.md
+test.md
+test1.md
 
 .DS_Store

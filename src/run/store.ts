@@ -4,6 +4,7 @@ import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 import { OWNER_FILE, mkdirOwner, protectOwner } from "../util/owner.js";
 import { within } from "../util/paths.js";
+import { markdownFiles } from "../util/tree.js";
 import type { RunRecord } from "./record.js";
 
 /**
@@ -182,4 +183,38 @@ export async function latestRunId(notebookPath: string): Promise<string | undefi
     if ((await runFile(notebookPath, run, "record.json")) !== undefined) return run;
   }
   return undefined;
+}
+
+/**
+ * Every Agent Session the Notebooks under `directory` have run in, by the path
+ * a Run Record names one at.
+ *
+ * Read to tell a Chat from a Notebook's own Agent Session: both are pi session
+ * files in the same place, and only the first is a Chat. The records are the
+ * one thing that knows which is which, since a session the server runs is
+ * named by the record of the Run that ran in it. Every Notebook under the
+ * directory is read, however deep, skipping what `notebooks.ts` skips — a
+ * record found under one is a session that belongs to a Notebook, and a file
+ * that does not parse is passed over rather than failing the lot.
+ */
+export async function notebookAgentSessions(directory: string): Promise<Set<string>> {
+  const sessions = new Set<string>();
+  for (const notebook of await markdownFiles(directory)) {
+    for (const run of await runsOf(notebook)) {
+      const record = await readRunRecord(notebook, run).catch(() => undefined);
+      if (record?.agentSession !== undefined) sessions.add(resolve(record.agentSession));
+    }
+  }
+  return sessions;
+}
+
+/** The names of a Notebook's Run directories, as they sort on disk. */
+async function runsOf(notebookPath: string): Promise<string[]> {
+  const entries = await readdir(runsDirectory(notebookPath), { withFileTypes: true }).catch(
+    (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return [];
+      throw cause;
+    },
+  );
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 }

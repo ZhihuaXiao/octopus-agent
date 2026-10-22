@@ -175,4 +175,48 @@ describe("createAssistantTextStream", () => {
 
     expect(revealed.thinking).toBe("");
   });
+
+  it("ignores user and tool result messages on message_end", () => {
+    const stream = createAssistantTextStream();
+
+    const userEnd = stream.accept({
+      type: "message_end",
+      message: { role: "user", content: [{ type: "text", text: "What's this project?" }] },
+    });
+    expect(userEnd).toEqual({ text: "", thinking: "" });
+
+    const toolEnd = stream.accept({
+      type: "message_end",
+      message: { role: "toolResult", content: [{ type: "text", text: "total 236\n..." }] },
+    });
+    expect(toolEnd).toEqual({ text: "", thinking: "" });
+    expect(stream.text()).toBe("");
+  });
+
+  it("accumulates text across multiple assistant messages in one turn", () => {
+    const stream = createAssistantTextStream();
+
+    expect(stream.accept(delta(0, "Let me check: ")).text).toBe("Let me check: ");
+    stream.accept({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me check: " },
+          { type: "toolCall", name: "bash" },
+        ],
+      },
+    });
+
+    expect(stream.accept(delta(0, "Found 2 files.")).text).toBe("Found 2 files.");
+    stream.accept({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Found 2 files." }],
+      },
+    });
+
+    expect(stream.text()).toBe("Let me check: Found 2 files.");
+  });
 });

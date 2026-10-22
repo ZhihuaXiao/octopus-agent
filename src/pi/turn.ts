@@ -18,6 +18,12 @@ import { isRecord } from "../util/guards.js";
 const assistantMessagesOf = (turn: readonly unknown[]) =>
   turn.filter(isRecord).filter((message) => message.role === "assistant");
 
+/** How long one tool result may be. Past that, the rest is left off. */
+const LONGEST_RESULT = 20_000;
+
+const clipResult = (text: string) =>
+  text.length <= LONGEST_RESULT ? text : `${text.slice(0, LONGEST_RESULT)}\n…`;
+
 /**
  * Reads what one turn cost and did.
  *
@@ -30,6 +36,18 @@ export function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text"
 
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cost: 0 };
   const toolCalls: ToolCall[] = [];
+
+  // Match tool results to calls by id so each tool call records what it returned.
+  const toolResults = new Map<string, { result: string; isError?: boolean }>();
+  for (const message of turn.filter(isRecord)) {
+    if (message.role !== "toolResult") continue;
+    const id = typeof message.toolCallId === "string" ? message.toolCallId : undefined;
+    const result = clipResult(textBlocksOf(message.content));
+    const isError = message.isError === true;
+    if (id !== undefined) {
+      toolResults.set(id, { result, ...(isError ? { isError: true } : {}) });
+    }
+  }
 
   for (const message of assistantMessages) {
     if (isRecord(message.usage)) {
@@ -44,9 +62,13 @@ export function summariseTurn(turn: readonly unknown[]): Omit<CellResult, "text"
     if (!Array.isArray(message.content)) continue;
     for (const block of (message.content as unknown[]).filter(isRecord)) {
       if (block.type !== "toolCall") continue;
+      const id = typeof block.id === "string" ? block.id : undefined;
+      const ended = id !== undefined ? toolResults.get(id) : undefined;
       toolCalls.push({
         name: typeof block.name === "string" ? block.name : "",
         input: block.arguments ?? null,
+        ...(ended?.result !== undefined ? { result: ended.result } : {}),
+        ...(ended?.isError ? { isError: true } : {}),
       });
     }
   }

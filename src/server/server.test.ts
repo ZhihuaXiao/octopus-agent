@@ -426,7 +426,15 @@ interface CellView {
   timeout?: number;
   status: string;
   text: string;
-  toolCalls: { name: string; input: unknown }[];
+  toolCalls: { name: string; input: unknown; result?: string; isError?: boolean }[];
+  parts?: {
+    kind: string;
+    text?: string;
+    name?: string;
+    input?: unknown;
+    result?: string;
+    isError?: boolean;
+  }[];
   artifacts: string[];
   run?: string;
   error?: string;
@@ -1145,6 +1153,108 @@ describe("running a notebook in its session", () => {
       { id: "greet", status: "ok", text: "Listed", toolCalls: calls },
     ]);
     await browser.close();
+  });
+
+  it("preserves a cell's turn in interleaved chronological parts order", async () => {
+    const calls = [{ name: "bash", input: { command: "ls" } }];
+    const agent = createScriptedAgent([
+      { text: "Listed", thinking: "weighing it", toolCalls: calls },
+    ]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+
+    const state = await stateOf(server, session.id);
+    expect(state.cells[0]?.parts).toEqual([
+      { kind: "thinking", text: "weighing it" },
+      { kind: "tool", name: "bash", input: { command: "ls" } },
+      { kind: "text", text: "Listed" },
+    ]);
+    await browser.close();
+  });
+
+  it("carries tool call result on parts and toolCalls", async () => {
+    const calls = [{ name: "bash", input: { command: "ls" }, result: "file.txt" }];
+    const agent = createScriptedAgent([
+      { text: "Listed", thinking: "weighing it", toolCalls: calls },
+    ]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+
+    const state = await stateOf(server, session.id);
+    expect(state.cells[0]?.parts).toEqual([
+      { kind: "thinking", text: "weighing it" },
+      { kind: "tool", name: "bash", input: { command: "ls" }, result: "file.txt" },
+      { kind: "text", text: "Listed" },
+    ]);
+    expect(state.cells[0]?.toolCalls).toEqual([
+      { name: "bash", input: { command: "ls" }, result: "file.txt" },
+    ]);
+    await browser.close();
+  });
+
+  it("interleaves multiple thoughts, tools and text pieces in true arrival order", async () => {
+    const agent = createScriptedAgent([
+      {
+        steps: [
+          { kind: "thinking", text: "plan first" },
+          { kind: "tool", call: { name: "bash", input: { command: "ls" } } },
+          { kind: "thinking", text: "evaluate result" },
+          { kind: "tool", call: { name: "read", input: { path: "README.md" } } },
+          { kind: "text", text: "All done!" },
+        ],
+      },
+    ]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+
+    const state = await stateOf(server, session.id);
+    expect(state.cells[0]?.parts).toEqual([
+      { kind: "thinking", text: "plan first" },
+      { kind: "tool", name: "bash", input: { command: "ls" } },
+      { kind: "thinking", text: "evaluate result" },
+      { kind: "tool", name: "read", input: { path: "README.md" } },
+      { kind: "text", text: "All done!" },
+    ]);
+    await browser.close();
+  });
+
+  it("preserves interleaved parts after server restart from journal", async () => {
+    const agent = createScriptedAgent([
+      {
+        steps: [
+          { kind: "thinking", text: "step 1" },
+          { kind: "tool", call: { name: "bash", input: { command: "ls" } } },
+          { kind: "text", text: "done" },
+        ],
+      },
+    ]);
+    const server = await serve({ "hello.md": hello }, agent);
+    const session = await open(server, "hello.md");
+    const browser = await watch(server, session.id);
+
+    await run(server, session.id);
+    await browser.next("run-ended");
+    await browser.close();
+
+    const again = await restart(server);
+    const recovered = await stateOf(again, session.id);
+    expect(recovered.cells[0]?.parts).toEqual([
+      { kind: "thinking", text: "step 1" },
+      { kind: "tool", name: "bash", input: { command: "ls" } },
+      { kind: "text", text: "done" },
+    ]);
   });
 
   it("streams a cell's text while the cell is still running", async () => {
@@ -3642,6 +3752,37 @@ describe("promoting a chat", () => {
     expect((await get(server, `/api/chats/no-such-chat`, { method: "DELETE" })).status).toBe(404);
     expect((await post(server, `/api/chats/${kept.id}`, {})).status).toBe(405);
   });
+
+  it("refuses to delete a session a notebook's run points into", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const named = chatIn(server, chatDirectory, chat("Count the files.", "Three."));
+
+    // A run record naming this session, as a notebook's own run would name the
+    // one it spoke into. Pi lists it as a Chat all the same.
+    const run = join(server.directory, ".octo/runs/hello/2026-10-21T00-00-00-000Z-test");
+    await mkdir(run, { recursive: true });
+    await writeFile(
+      join(run, "record.json"),
+      JSON.stringify({
+        id: "2026-10-21T00-00-00-000Z-test",
+        notebook: join(server.directory, "hello.md"),
+        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+        agentSession: named.file,
+        startedAt: "2026-10-21T00:00:00.000Z",
+        endedAt: "2026-10-21T00:00:01.000Z",
+        cells: [],
+        stale: [],
+        anchors: { greet: "entry-1" },
+      }),
+      "utf8",
+    );
+
+    const response = await get(server, `/api/chats/${named.id}`, { method: "DELETE" });
+
+    expect(response.status).toBe(422);
+    expect(await response.text()).toMatch(/notebook's own/);
+    expect(await readFile(named.file, "utf8")).toContain("Count the files.");
+  });
 });
 
 describe("model settings", () => {
@@ -4356,7 +4497,9 @@ describe("a cell's model rounds", () => {
     expect(await later.json()).toMatchObject({
       query: "Say hello.",
       prompts: ["Say hello."],
-      rounds: [],
+      // The session is gone, but the record kept what the turn said, so the
+      // reply is still shown rather than only the reason it cannot be expanded.
+      rounds: [{ kind: "model", text: "Hello, world", toolCalls: [] }],
       toolCalls: [],
       roundsProblem: expect.stringMatching(/not on disk/),
     });

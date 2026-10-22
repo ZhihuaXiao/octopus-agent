@@ -19,6 +19,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { importSession } from "../import/pi-session.js";
 import { titleOf } from "../notebook/notebook.js";
+import { notebookAgentSessions } from "../run/store.js";
 import { within } from "../util/paths.js";
 import { type NotebookEntry, notebookTarget, pathWithin } from "./notebooks.js";
 
@@ -118,6 +119,13 @@ export type Removed =
 /**
  * Removes the Chat pi lists under `id`: the session file itself, and nothing
  * else. A Notebook promoted from it is a copy, and stays.
+ *
+ * A Notebook's own Agent Session is not a Chat, though pi lists it in the same
+ * place and cannot tell the two apart: a Chat is work done once at the
+ * terminal, and a Notebook Session's Agent Session is what its Runs' Anchors
+ * address (ADR-0014), so deleting it would take every Anchor the Notebook has
+ * with it and leave its Cells' rounds unreadable. What the Run Records name is
+ * therefore refused, with the reason said rather than the row quietly hidden.
  */
 export async function deleteChat(
   directory: string,
@@ -136,6 +144,13 @@ export async function deleteChat(
     return {
       kind: "refused",
       problem: "The chat is not kept with the others, so it was left as it is.",
+    };
+  }
+  if ((await notebookAgentSessions(directory)).has(file)) {
+    return {
+      kind: "refused",
+      problem:
+        "That session is a notebook's own, which its runs' anchors point into, so it was left as it is.",
     };
   }
 

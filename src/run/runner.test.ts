@@ -993,6 +993,35 @@ describe("anchoring", () => {
     expect(again.resumptions).toEqual([first.anchors[0]]);
   });
 
+  it("starts a session of its own when the one it continues is gone", async () => {
+    const path = await notebookFile(twoCells);
+    const first = createScriptedAgent([{ text: "first done" }, { text: "second done" }]);
+    const before = await runNotebook(path, { agent: first.create });
+
+    // A session file that was moved or deleted takes its Runs' Anchors with it
+    // (ADR-0014). The agent is asked for it and finds it gone, which it says by
+    // starting one of its own: reopening it would put a second session under
+    // the first one's name, with every Anchor addressing nothing.
+    const gone = { ...before, agentSession: join(dirname(path), "deleted-session.jsonl") };
+    const again = createScriptedAgent([{ text: "second, again" }]);
+    const forgetful: AgentFactory = async (setup) => ({
+      ...(await again.create(setup)),
+      agentSession: "a-session-of-its-own",
+      reopenedAgentSession: false,
+    });
+    const rerun = await runNotebook(path, {
+      agent: forgetful,
+      continues: gone,
+      cells: ["second"],
+    });
+
+    // No fork at an Anchor the session that is gone held, and the record names
+    // the session this Run actually spoke into rather than the one it lost.
+    expect(again.resumptions).toEqual([undefined]);
+    expect(rerun.anchors).toEqual({ second: again.anchors[0] });
+    expect(rerun.agentSession).toBe("a-session-of-its-own");
+  });
+
   it("forks once and then carries on, rather than forking before every cell", async () => {
     const path = await notebookOf(promptCell("a"), promptCell("b"), promptCell("c"));
     const first = readyAgent();

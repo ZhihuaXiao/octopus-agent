@@ -918,6 +918,12 @@ header #tree-new {
   margin: 0 0 0.3rem;
 }
 
+.rounds-problem {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
 .round pre,
 .round-thinking,
 .round-result,
@@ -1632,19 +1638,27 @@ button.context-ring svg {
   opacity: 0.5;
 }
 
-/* What the agent did, one card per tool call, before what it said. */
-.tool-calls {
-  list-style: none;
+/* A cell's turn, in the order it happened: a thought, a tool call, the reply. */
+.cell-stream,
+.run-step-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
   margin: 0.5rem 0 0;
-  padding: 0;
 }
 
-.tool-calls:empty {
+.cell-stream:empty,
+.run-step-stream:empty {
   display: none;
 }
 
+/* Each piece is compact until the reader asks for more: a tool call and a
+   thought are one line closed, and the reply is the only thing always shown. */
+.cell-part {
+  margin: 0;
+}
+
 .tool-call {
-  margin: 0.25rem 0;
   border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
   border-radius: 0.3rem;
   font-size: 0.85rem;
@@ -1659,13 +1673,17 @@ button.context-ring svg {
   list-style: none;
 }
 
+.tool-call summary::-webkit-details-marker {
+  display: none;
+}
+
 .tool-call summary::before {
   content: "▸";
   opacity: 0.5;
   font-size: 0.75rem;
 }
 
-.tool-call details[open] summary::before {
+.tool-call[open] summary::before {
   content: "▾";
 }
 
@@ -1692,8 +1710,22 @@ button.context-ring svg {
   opacity: 0.85;
 }
 
+.tool-result {
+  margin: 0;
+  padding: 0.4rem 0.6rem 0.6rem 1.7rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  border-top: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  opacity: 0.85;
+}
+
+.tool-call.failed {
+  border-color: color-mix(in srgb, var(--error-color, #ef4444) 40%, transparent);
+}
+
 .cell-output {
-  margin: 0.5rem 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: ui-monospace, monospace;
@@ -1706,16 +1738,39 @@ button.context-ring svg {
 }
 
 .cell-thinking {
-  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
 }
 
 .cell-thinking summary {
   cursor: pointer;
-  font-size: 0.85rem;
+  list-style: none;
+  opacity: 0.7;
+}
+
+.cell-thinking summary::-webkit-details-marker {
+  display: none;
+}
+
+.cell-thinking summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.4rem;
+  opacity: 0.5;
+  font-size: 0.75rem;
+}
+
+.cell-thinking[open] summary::before {
+  content: "▾";
 }
 
 .cell-thinking pre {
   margin: 0.3rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 2px solid color-mix(in srgb, currentColor 18%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  opacity: 0.8;
 }
 
 .cell-error {
@@ -2191,78 +2246,54 @@ button.context-ring svg {
   color: #a855f7;
 }
 
-.run-step-output {
-  margin: 0.5rem 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: ui-monospace, monospace;
-  font-size: 0.9rem;
-}
-
-.cell-output.markdown,
-.run-step-output.markdown {
+.cell-output.markdown {
   white-space: normal;
   font-family: inherit;
 }
 
-.cell-output.markdown > :first-child,
-.run-step-output.markdown > :first-child {
+.cell-output.markdown > :first-child {
   margin-top: 0;
 }
 
-.cell-output.markdown > :last-child,
-.run-step-output.markdown > :last-child {
+.cell-output.markdown > :last-child {
   margin-bottom: 0;
 }
 
 .cell-output.markdown p,
-.run-step-output.markdown p,
 .cell-output.markdown ul,
-.run-step-output.markdown ul,
 .cell-output.markdown ol,
-.run-step-output.markdown ol,
 .cell-output.markdown blockquote,
-.run-step-output.markdown blockquote,
-.cell-output.markdown pre,
-.run-step-output.markdown pre {
+.cell-output.markdown pre {
   margin: 0.45rem 0;
 }
 
 .cell-output.markdown ul,
-.run-step-output.markdown ul,
-.cell-output.markdown ol,
-.run-step-output.markdown ol {
+.cell-output.markdown ol {
   padding-left: 1.4rem;
 }
 
-.cell-output.markdown ul,
-.run-step-output.markdown ul {
+.cell-output.markdown ul {
   list-style: disc;
 }
 
-.cell-output.markdown ol,
-.run-step-output.markdown ol {
+.cell-output.markdown ol {
   list-style: decimal;
 }
 
-.cell-output.markdown table,
-.run-step-output.markdown table {
+.cell-output.markdown table {
   border-collapse: collapse;
   margin: 0.45rem 0;
   font-size: 0.9rem;
 }
 
 .cell-output.markdown th,
-.run-step-output.markdown th,
-.cell-output.markdown td,
-.run-step-output.markdown td {
+.cell-output.markdown td {
   border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
   padding: 0.25rem 0.55rem;
   vertical-align: top;
 }
 
-.cell-output.markdown th,
-.run-step-output.markdown th {
+.cell-output.markdown th {
   font-weight: 600;
   text-align: left;
 }
@@ -2270,41 +2301,29 @@ button.context-ring svg {
 .cell-output.markdown h2,
 .cell-output.markdown h3,
 .cell-output.markdown h4,
-.cell-output.markdown h5,
-.run-step-output.markdown h2,
-.run-step-output.markdown h3,
-.run-step-output.markdown h4,
-.run-step-output.markdown h5 {
+.cell-output.markdown h5 {
   font-size: 1rem;
   margin: 0.7rem 0 0.3rem;
 }
 
-.cell-output.markdown code,
-.run-step-output.markdown code {
+.cell-output.markdown code {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
 }
 
-.cell-output.markdown pre,
-.run-step-output.markdown pre {
+.cell-output.markdown pre {
   white-space: pre-wrap;
   padding: 0.5rem 0.7rem;
   border-radius: 0.3rem;
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
-.cell-output.markdown a,
-.run-step-output.markdown a {
+.cell-output.markdown a {
   color: inherit;
 }
 
-.cell-output.markdown blockquote,
-.run-step-output.markdown blockquote {
+.cell-output.markdown blockquote {
   margin-left: 0;
   padding-left: 0.8rem;
   border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
-}
-
-.run-step-output:empty {
-  display: none;
 }
