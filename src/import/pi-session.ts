@@ -69,7 +69,7 @@ const SESSION_COPY = "session.jsonl";
  * followed until the next thing the user did — the assistant's messages, the
  * tools' results, and whatever else pi recorded on the way.
  */
-interface Turn {
+export interface Turn {
   readonly kind: "prompt";
   readonly asked: SessionEntry;
   /** Appended to while the path is walked, until the next thing the user did. */
@@ -77,7 +77,7 @@ interface Turn {
 }
 
 /** A command the user ran at pi's prompt with `!`, which pi ran itself and recorded. */
-interface RanCommand {
+export interface RanCommand {
   readonly kind: "bash";
   readonly entry: SessionEntry;
   readonly command: string;
@@ -87,10 +87,10 @@ interface RanCommand {
 }
 
 /** What one Cell is made of: a turn, or a command the user ran. */
-type CellSource = Turn | RanCommand;
+export type CellSource = Turn | RanCommand;
 
 /** The Cells to be made along the Chat's active path: each user message a turn, each `!` command a command. */
-function cellSourcesOf(path: readonly SessionEntry[]): CellSource[] {
+export function cellSourcesOf(path: readonly SessionEntry[]): CellSource[] {
   const sources: CellSource[] = [];
   for (const entry of path) {
     // Read the typed message. `isRecord` would keep only `toolResult`: pi's other
@@ -120,7 +120,7 @@ function cellSourcesOf(path: readonly SessionEntry[]): CellSource[] {
 }
 
 /** The messages among a turn's entries, which is what a turn is read off. */
-const messagesOf = (turn: Turn) =>
+export const messagesOf = (turn: Turn) =>
   turn.followed.flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
 
 /**

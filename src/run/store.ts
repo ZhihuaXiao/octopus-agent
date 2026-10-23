@@ -205,6 +205,30 @@ export async function notebookAgentSessions(directory: string): Promise<Set<stri
       if (record?.agentSession !== undefined) sessions.add(resolve(record.agentSession));
     }
   }
+  const runsRoot = join(directory, OCTO_DIRECTORY, "runs");
+  const notebookDirs = await readdir(runsRoot, { withFileTypes: true }).catch(
+    (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return [];
+      throw cause;
+    },
+  );
+  for (const dir of notebookDirs) {
+    if (!dir.isDirectory()) continue;
+    const runDirs = await readdir(join(runsRoot, dir.name), { withFileTypes: true }).catch(
+      (cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return [];
+        throw cause;
+      },
+    );
+    for (const run of runDirs) {
+      if (!run.isDirectory()) continue;
+      const file = join(runsRoot, dir.name, run.name, "record.json");
+      const record = await readFile(file, "utf8")
+        .then((text) => JSON.parse(text) as RunRecord)
+        .catch(() => undefined);
+      if (record?.agentSession !== undefined) sessions.add(resolve(record.agentSession));
+    }
+  }
   return sessions;
 }
 

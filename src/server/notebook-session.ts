@@ -74,7 +74,7 @@ import {
   runNotebook,
 } from "../run/runner.js";
 import { serviceAlive, stopService } from "../run/shell.js";
-import { listArtifacts, readRunRecord, runFile } from "../run/store.js";
+import { latestRunId, listArtifacts, readRunRecord, runFile } from "../run/store.js";
 import {
   type FoundJournal,
   type Journal,
@@ -1195,6 +1195,72 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   // as much a change as one saved from another browser, and is said to be.
   if (held !== undefined && held !== revision && !adopt(source, parsed)) {
     throw new Error(JOURNAL_PROBLEM);
+  }
+
+  // When opening fresh with no journal replay (e.g. newly promoted from a chat
+  // or run from the CLI), restore results from the latest recorded run.
+  if (last === undefined && results.size === 0) {
+    const latest = await latestRunId(path);
+    if (latest !== undefined) {
+      const record = await readRunRecord(path, latest);
+      if (record !== undefined) {
+        last = record;
+        stale = new Set(record.stale);
+        for (const cell of record.cells) {
+          results.set(cell.id, { record: cell, run: record.id });
+          if (cell.type === "prompt") {
+            const parts: CellPart[] = [];
+            if (record.agentSession !== undefined) {
+              const cellRounds = readCellRounds(
+                record.agentSession,
+                record.anchors,
+                cell.id,
+                cellsOf(parsed),
+              );
+              if (cellRounds.ok) {
+                for (const round of cellRounds.value.rounds) {
+                  if (round.thinking !== undefined && round.thinking !== "") {
+                    parts.push({ kind: "thinking", text: round.thinking });
+                  }
+                  for (const call of round.toolCalls) {
+                    parts.push({
+                      kind: "tool",
+                      name: call.name,
+                      input: call.input,
+                      ...(call.result !== undefined ? { result: call.result } : {}),
+                      ...(call.isError ? { isError: true } : {}),
+                    });
+                  }
+                  if (round.text !== "") {
+                    parts.push({ kind: "text", text: round.text });
+                  }
+                }
+              }
+            }
+            if (parts.length === 0) {
+              if (cell.thinking !== undefined && cell.thinking !== "") {
+                parts.push({ kind: "thinking", text: cell.thinking });
+              }
+              for (const call of cell.toolCalls) {
+                parts.push({
+                  kind: "tool",
+                  name: call.name,
+                  input: call.input,
+                  ...(call.result !== undefined ? { result: call.result } : {}),
+                  ...(call.isError ? { isError: true } : {}),
+                });
+              }
+              if (cell.text !== "") {
+                parts.push({ kind: "text", text: cell.text });
+              }
+            }
+            if (parts.length > 0) {
+              turns.set(cell.id, parts);
+            }
+          }
+        }
+      }
+    }
   }
 
   /**

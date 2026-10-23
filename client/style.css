@@ -835,7 +835,8 @@ header #tree-new {
 }
 
 #cell-rounds-dialog,
-#notebook-model-dialog {
+#notebook-model-dialog,
+#chat-details-dialog {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 0.4rem;
   padding: 1rem 1.2rem;
@@ -845,11 +846,13 @@ header #tree-new {
 }
 
 #cell-rounds-dialog::backdrop,
-#notebook-model-dialog::backdrop {
+#notebook-model-dialog::backdrop,
+#chat-details-dialog::backdrop {
   background: color-mix(in srgb, canvastext 40%, transparent);
 }
 
-#cell-rounds-dialog {
+#cell-rounds-dialog,
+#chat-details-dialog {
   max-width: 44rem;
   width: calc(100vw - 2rem);
   max-height: 85vh;
@@ -863,7 +866,8 @@ header #tree-new {
 }
 
 #cell-rounds-dialog h2,
-#notebook-model-dialog h2 {
+#notebook-model-dialog h2,
+#chat-details-dialog h2 {
   margin: 0;
 }
 

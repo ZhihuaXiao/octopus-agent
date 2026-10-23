@@ -3691,10 +3691,16 @@ describe("promoting a chat", () => {
       { path: "chats/audit.md", title: "Audit", model: "anthropic/claude-sonnet-4-5" },
     ]);
 
-    // Opened into a session of its own, its Cells the chat's messages.
+    // Opened into a session of its own, its Cells the chat's messages and previous running results.
     const opened = await open(server, "chats/audit.md");
     expect(opened.cells).toEqual([
-      expect.objectContaining({ id: "cell-1", type: "prompt", body: "Audit it.\n" }),
+      expect.objectContaining({
+        id: "cell-1",
+        type: "prompt",
+        body: "Audit it.\n",
+        status: "ok",
+        text: "Audited.",
+      }),
     ]);
 
     // With a Run Record of what the chat did beside it, and pi's file untouched.
@@ -3782,6 +3788,223 @@ describe("promoting a chat", () => {
     expect(response.status).toBe(422);
     expect(await response.text()).toMatch(/notebook's own/);
     expect(await readFile(named.file, "utf8")).toContain("Count the files.");
+  });
+
+  it("lists only chats from octo cli runs, omitting prompt cell runs", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const cliChat = chatIn(server, chatDirectory, chat("Count the files.", "Three."));
+    const promptCellRun = chatIn(
+      server,
+      chatDirectory,
+      chat("Say hello.", "Hello, world!"),
+      "Prompt cell run",
+    );
+
+    // A run record naming promptCellRun, as a notebook's prompt cell run would.
+    const run = join(server.directory, ".octo/runs/hello/2026-10-21T00-00-00-000Z-test");
+    await mkdir(run, { recursive: true });
+    await writeFile(
+      join(run, "record.json"),
+      JSON.stringify({
+        id: "2026-10-21T00-00-00-000Z-test",
+        notebook: join(server.directory, "hello.md"),
+        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+        agentSession: promptCellRun.file,
+        startedAt: "2026-10-21T00:00:00.000Z",
+        endedAt: "2026-10-21T00:00:01.000Z",
+        cells: [],
+        stale: [],
+        anchors: { greet: "entry-1" },
+      }),
+      "utf8",
+    );
+
+    const response = await get(server, "/api/chats");
+    expect(response.status).toBe(200);
+    const listed = (await response.json()) as { chats: { id: string }[] };
+    expect(listed.chats.map((entry) => entry.id)).toEqual([cliChat.id]);
+
+    // Promoting a prompt cell run is refused because it is not a chat
+    expect(
+      (await post(server, `/api/chats/${promptCellRun.id}/promote`, { to: "promoted.md" })).status,
+    ).toBe(404);
+  });
+
+  it("omits prompt cell runs that are recorded in a journal before a record is written", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const cliChat = chatIn(server, chatDirectory, chat("Count the files.", "Three."));
+    const inFlightRun = chatIn(server, chatDirectory, chat("In flight prompt.", "Thinking..."));
+
+    // Write a journal event with agentSession pointing to inFlightRun.file
+    const journalDir = join(server.directory, ".octo", "journals");
+    await mkdir(journalDir, { recursive: true });
+    await writeFile(
+      join(journalDir, "active-session.jsonl"),
+      `${JSON.stringify({ at: "2026-10-21T00:00:00.000Z", type: "opened", notebook: "hello.md", revision: "rev-1" })}\n${JSON.stringify({
+        sequence: 1,
+        at: "2026-10-21T00:00:00.000Z",
+        type: "run-started",
+        run: "active-run",
+        cells: ["greet"],
+        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+        agentSession: inFlightRun.file,
+      })}\n`,
+      "utf8",
+    );
+
+    const response = await get(server, "/api/chats");
+    expect(response.status).toBe(200);
+    const listed = (await response.json()) as { chats: { id: string }[] };
+    expect(listed.chats.map((entry) => entry.id)).toEqual([cliChat.id]);
+  });
+
+  it("returns the details of executed commands and results for a chat", async () => {
+    const { server, chatDirectory } = await serveWithChats();
+    const assistantWithTool: AppendableMessage = {
+      role: "assistant",
+      content: [
+        { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls -la" } },
+        { type: "text", text: "Here are the files." },
+      ],
+      timestamp: Date.now(),
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+    };
+    const toolResult: AppendableMessage = {
+      role: "toolResult",
+      toolCallId: "call_1",
+      toolName: "bash",
+      content: [{ type: "text", text: "file1.txt\nfile2.txt" }],
+      isError: false,
+      timestamp: Date.now(),
+    };
+    const bashCommand = {
+      role: "bashExecution",
+      command: "git status",
+      output: "On branch main\nnothing to commit",
+      exitCode: 0,
+      cancelled: false,
+      timestamp: Date.now(),
+    } as unknown as AppendableMessage;
+
+    const messages: AppendableMessage[] = [
+      bashCommand,
+      { role: "user", content: "List the files.", timestamp: Date.now() },
+      assistantWithTool,
+      toolResult,
+    ];
+
+    const { id } = chatIn(server, chatDirectory, messages, "Investigation");
+    const response = await get(server, `/api/chats/${id}`);
+    expect(response.status).toBe(200);
+    const details = (await response.json()) as {
+      id: string;
+      name?: string;
+      details: {
+        type: string;
+        command?: string;
+        output?: string;
+        prompt?: string;
+        text?: string;
+        toolCalls?: { name: string; input: unknown; result?: string }[];
+      }[];
+    };
+    expect(details.id).toBe(id);
+    expect(details.name).toBe("Investigation");
+    expect(details.details).toHaveLength(2);
+    expect(details.details[0]).toEqual({
+      type: "bash",
+      command: "git status",
+      output: "On branch main\nnothing to commit",
+      exitCode: 0,
+      cancelled: false,
+    });
+    expect(details.details[1]).toEqual({
+      type: "prompt",
+      prompt: "List the files.",
+      text: "Here are the files.",
+      toolCalls: [
+        {
+          name: "bash",
+          input: { command: "ls -la" },
+          result: "file1.txt\nfile2.txt",
+        },
+      ],
+    });
+
+    expect((await get(server, "/api/chats/no-such-id")).status).toBe(404);
+  });
+
+  it("restores previous running information after promoting a chat into a notebook", async () => {
+    const { server, chatDirectory } = await serveWithChats();
+    const bashCommand = {
+      role: "bashExecution",
+      command: "echo test",
+      output: "test output\n",
+      exitCode: 0,
+      cancelled: false,
+      timestamp: Date.now(),
+    } as unknown as AppendableMessage;
+    const userPrompt: AppendableMessage = {
+      role: "user",
+      content: "Check status.",
+      timestamp: Date.now(),
+    };
+    const assistantReply: AppendableMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "Status is green." }],
+      timestamp: Date.now(),
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+    };
+
+    const { id } = chatIn(
+      server,
+      chatDirectory,
+      [bashCommand, userPrompt, assistantReply],
+      "Health Check",
+    );
+    const promoted = await post(server, `/api/chats/${id}/promote`, { to: "health.md" });
+    expect(promoted.status).toBe(201);
+
+    const opened = await open(server, "health.md");
+    expect(opened.cells).toHaveLength(2);
+    expect(opened.cells[0]).toMatchObject({
+      id: "cell-1",
+      type: "bash",
+      body: "echo test\n",
+      status: "ok",
+      text: "test output\n",
+      parts: [{ kind: "text", text: "test output\n" }],
+    });
+    expect(opened.cells[1]).toMatchObject({
+      id: "cell-2",
+      type: "prompt",
+      body: "Check status.\n",
+      status: "ok",
+      text: "Status is green.",
+      parts: [{ kind: "text", text: "Status is green." }],
+    });
   });
 });
 
