@@ -149,8 +149,9 @@ _Avoid_: checkpoint, marker, cursor, pointer
 
 **Chat**:
 An Agent Session pi had at the terminal, in the file pi wrote it to: work done once, in
-conversation, that no Notebook yet describes. Named as what it is to a Notebook — the thing
-an Import is made from — and never a thing the server runs or shows live.
+conversation, that no Notebook yet describes. Agent sessions run by notebook prompt cells
+are excluded from the chat list. Named as what it is to a Notebook — the thing an Import is
+made from — and never a thing the server runs or shows live.
 _Avoid_: conversation, transcript, terminal session, pi session (unqualified)
 
 **Import**:
@@ -163,7 +164,8 @@ _Avoid_: convert, migrate, sync
 **Promote**:
 An Import of a Chat chosen from pi's own list of the Workspace's Chats, in the browser,
 rather than named by its path at the command line. The same implementation as Import, with
-a different way of saying which Chat.
+a different way of saying which Chat. Opening the promoted Notebook immediately restores
+previous running results from the Run Record.
 _Avoid_: upgrade, save as notebook, convert
 
 **Export**:
@@ -176,7 +178,7 @@ _Avoid_: share, publish, snapshot, archive
 ### The interfaces
 
 **Author View**:
-The Notebook shown as Cells, for writing and running them.
+The Notebook shown as Cells, for writing and running them, including editing cells in place.
 _Avoid_: edit mode, editor, developer mode
 
 **Run View**:

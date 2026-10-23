@@ -62,4 +62,6 @@ the author to say.
 Listing a Workspace's Chats goes through `SessionManager.list`, which makes pi's session
 directory for the Workspace when it does not yet exist — an empty directory pi makes itself
 the moment it is run there, and not a session file. It is the one thing about a Workspace an
-import can be said to touch, and it is what pi would have done.
+import can be said to touch, and it is what pi would have done. Agent Sessions belonging to
+Notebooks (from Run Records or active Journals) are excluded from the listing, keeping the
+list focused on interactive CLI chats and protecting Notebook sessions from deletion.
