@@ -843,6 +843,21 @@ header #tree-new {
   max-width: 32rem;
   color: canvastext;
   background: canvas;
+  box-sizing: border-box;
+}
+
+#cell-rounds-dialog:not([open]),
+#notebook-model-dialog:not([open]),
+#chat-details-dialog:not([open]) {
+  display: none;
+}
+
+#cell-rounds-dialog[open],
+#notebook-model-dialog[open],
+#chat-details-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
 }
 
 #cell-rounds-dialog::backdrop,
@@ -855,14 +870,18 @@ header #tree-new {
 #chat-details-dialog {
   max-width: 44rem;
   width: calc(100vw - 2rem);
-  max-height: 85vh;
-  overflow: auto;
 }
 
 #notebook-model-dialog {
   width: min(32rem, calc(100vw - 2rem));
-  max-height: 85vh;
-  overflow: auto;
+}
+
+#cell-rounds-body,
+#chat-details-body,
+#notebook-model-body {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 #cell-rounds-dialog h2,
@@ -893,10 +912,34 @@ header #tree-new {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-shrink: 0;
 }
 
 .rounds-heading h2 {
   margin: 0;
+}
+
+.rounds-heading button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.rounds-heading button:hover,
+.rounds-heading button:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 .round {
