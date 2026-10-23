@@ -49,7 +49,7 @@ The same few shapes cover most of the work the examples are built for.
 
 **A report, and the files behind it.** [examples/report.md](examples/report.md) counts files with a bash cell, asks the agent to write `summary.md` into the directory that cell was given (`{{artifacts}}`), and gives the one-line headline a smaller model of its own. The files stay with the run. They are not pasted back into the notebook.
 
-**From a conversation to a procedure.** Work you already did with pi at the terminal can become a notebook: a prompt cell for each message you sent, a bash cell for each command you ran with `!`, and a record of what those turns already did. From the shell that is `octo import`. In the browser it is **Promote** on a chat in the list. Either way, pi's own file is left as it is.
+**From a conversation to a procedure.** Work you already did with pi at the terminal can become a notebook: a prompt cell for each message you sent, a bash cell for each command you ran with `!`, and a record of what those turns already did. From the shell that is `octo import`. In the browser it is **Promote** on a chat in the list, with previous running results restored immediately into the notebook. Chat details can also be inspected before promoting. Either way, pi's own file is left as it is.
 
 **An answer for someone who will not run it.** `octo export` writes one HTML or Markdown document: the prose, the cells, what each cell said and cost, and the files it left. Credentials this machine holds are struck out. The notebook file is not changed.
 
@@ -59,7 +59,7 @@ The same few shapes cover most of the work the examples are built for.
 
 The screenshots below are the web interface started in this repository (`octo --web`), with the examples under `examples/`. The directory column is folded away so the notebook has the width.
 
-The list is every Markdown file under the served directory that parses and contains at least one cell. A README full of shell samples is not listed. Each row can set the notebook's mode and model, or open run view directly. Under the notebooks, chats pi has already had in this directory can be promoted into a notebook or deleted.
+The list is every Markdown file under the served directory that parses and contains at least one cell. A README full of shell samples is not listed. Each row can set the notebook's mode and model, or open run view directly. Under the notebooks, chats from interactive octo CLI runs in this directory can be inspected for details, promoted into a notebook with previous running results restored, or deleted (agent sessions run by notebook prompt cells are excluded).
 
 ![The notebook list, with the five examples and the chats pi has had in this directory](docs/images/notebook-list.png)
 
@@ -111,7 +111,7 @@ A server without `--password` prints a URL with a token instead, and that form i
 
 ### The list
 
-The page after you connect is the directory. Notebooks are marked with a star. Other files are listed so you can see they are there. Under the notebooks are chats pi has already had in this directory. **Promote** turns one into a notebook and leaves pi's session file alone. **New notebook** asks for a filename and writes a notebook with one empty prompt cell.
+The page after you connect is the directory. Notebooks are marked with a star. Other files are listed so you can see they are there. Under the notebooks are chats from interactive octo CLI runs in this directory. Click a chat or **Details** to see what it executed and said. **Promote** turns one into a notebook, restores its previous running results, and leaves pi's session file alone. **New notebook** asks for a filename and writes a notebook with one empty prompt cell.
 
 ![Notebooks and chats in the directory the server was started in](docs/images/homepage.png)
 
@@ -227,7 +227,7 @@ Bound to `0.0.0.0` or `::`, the server prints the loopback URL and one URL for e
 
 `--cell-access` chooses where a notebook's cells may operate. `served`, the web default, keeps the workspace under the directory the server was started in. `user`, the default for `octo run`, allows any directory that account can already reach. A directory, repeated once per root (`--cell-access /data --cell-access /work`), is the range. This bounds the workspace a cell is given. It is not a sandbox.
 
-Closing the browser does not stop a run. Restarting the server recovers each notebook session from its journal.
+Closing the browser does not stop a run. A heartbeat notices when the server restarts and prompts to reconnect automatically, recovering each notebook session from its journal.
 
 ### Import a chat
 
