@@ -269,6 +269,8 @@ function askToConnect(method) {
     watching = undefined;
   }
   draft = undefined;
+  editingCellId = undefined;
+  cellDrafts.clear();
   element("session-status").textContent = "";
   element("status").textContent = "";
 
@@ -1455,6 +1457,14 @@ let fileSource = "";
 /** @type {Map<string, string>} */
 const fileDrafts = new Map();
 
+/** The cell currently being edited in-place in author view, when one is. */
+/** @type {string | undefined} */
+let editingCellId;
+
+/** Unsaved text of a cell being edited in-place, by cell id. */
+/** @type {Map<string, string>} */
+const cellDrafts = new Map();
+
 /** Whether the file editor breaks long lines. Kept while the page is open. */
 let fileWrap = false;
 
@@ -2457,11 +2467,12 @@ function copyButton(text, symbol) {
 }
 
 /**
- * Opens the notebook editor with the cursor in this cell's text.
+ * Opens inline editing for this cell.
  * @param {CellView} cell
  */
 function cellEditButton(cell) {
   const button = symbolButton("cell-edit", `Edit ${cell.id}`, editIcon());
+  button.disabled = cell.status === "running";
   button.addEventListener("click", () => editCell(cell.id));
   return button;
 }
@@ -3174,11 +3185,12 @@ function formatTokens(tokens) {
  * @returns {HTMLLIElement}
  */
 function renderCell(cell, session, running) {
-  const item = make("li", `cell ${cell.type} ${cell.status}`);
+  const isEditing = cell.id === editingCellId;
+  const item = make("li", `cell ${cell.type} ${cell.status}${isEditing ? " editing" : ""}`);
   item.dataset.cell = cell.id;
   const key = cellFoldKey(cell.id);
   const folded = isFolded(key);
-  if (folded) item.classList.add("folded");
+  if (folded && !isEditing) item.classList.add("folded");
 
   const heading = make("div", "cell-header");
   heading.append(foldButton(item, key, `this ${cell.type} cell`, folded));
@@ -3206,13 +3218,17 @@ function renderCell(cell, session, running) {
   );
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
-  heading.append(cellEditButton(cell), runOne);
+  const editBtn = cellEditButton(cell);
+  if (isEditing) editBtn.hidden = true;
+  heading.append(editBtn, runOne);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
   heading.append(make("span", "cell-preview", foldPreview(cell.body)));
 
-  const body = make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
+  const body = isEditing
+    ? renderInlineCellEditor(cell)
+    : make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
   // The turn as it happened: each thought, call and piece of the reply where
   // it sits, as the Rounds dialog reads it. A Cell that has not run has none.
   const stream = make("div", "cell-stream");
@@ -3228,6 +3244,172 @@ function renderCell(cell, session, running) {
     item.append(artifacts);
   }
   return item;
+}
+
+/**
+ * An inline editor for this cell's body in author view.
+ * @param {CellView} cell
+ * @returns {HTMLDivElement}
+ */
+function renderInlineCellEditor(cell) {
+  const editor = make("div", "cell-inline-editor");
+  const draftText = cellDrafts.get(cell.id) ?? cell.body.replace(/\r?\n$/, "");
+  const field = textarea(
+    draftText,
+    (value) => {
+      cellDrafts.set(cell.id, value);
+    },
+    cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER,
+  );
+  const wrap = make("div", "skill-field");
+  wrap.append(field);
+
+  /** @type {DraftCell} */
+  const fakeDraftCell = {
+    kind: "cell",
+    id: cell.id,
+    type: cell.type,
+    body: draftText,
+    uses: cell.uses.join(", "),
+    isolated: cell.isolated,
+    approach: cell.approach === "plan" || cell.approach === "ask" ? cell.approach : "agent",
+    model: cell.model ?? "",
+    timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
+    folded: false,
+  };
+  field.addEventListener("input", () => {
+    fakeDraftCell.body = field.value;
+    cellDrafts.set(cell.id, field.value);
+  });
+  attachSkillMenu(field, fakeDraftCell);
+  attachFileMenu(field, fakeDraftCell);
+
+  const actions = make("div", "cell-inline-actions");
+  const saveBtn = make("button", "cell-save", "Save");
+  saveBtn.type = "button";
+  const cancelBtn = make("button", "cell-cancel", "Cancel");
+  cancelBtn.type = "button";
+  const status = make("span", "cell-inline-status");
+
+  saveBtn.addEventListener("click", () => void saveCellEdit(cell, field.value, status, saveBtn));
+  cancelBtn.addEventListener("click", () => cancelCellEdit(cell.id));
+
+  field.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      const openMenu = wrap.querySelector(".skill-menu:not([hidden])");
+      if (openMenu !== null) return;
+      event.preventDefault();
+      cancelCellEdit(cell.id);
+    } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void saveCellEdit(cell, field.value, status, saveBtn);
+    }
+  });
+
+  actions.append(saveBtn, cancelBtn, status);
+  editor.append(wrap, actions);
+
+  queueMicrotask(() => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+
+  return editor;
+}
+
+/**
+ * @param {CellView} cell
+ * @param {string} body
+ */
+function cellDeclaration(cell, body) {
+  return {
+    kind: "cell",
+    id: cell.id,
+    type: cell.type,
+    body: body.replace(/\r?\n$/, ""),
+    uses: [...cell.uses],
+    isolated: cell.isolated,
+    ...(cell.type === "prompt" && cell.approach !== undefined ? { approach: cell.approach } : {}),
+    ...(cell.model !== undefined && cell.model !== "" ? { model: cell.model } : {}),
+    ...(cell.timeout !== undefined ? { timeout: formatDuration(cell.timeout) } : {}),
+  };
+}
+
+/**
+ * Saves changes made to a single cell's body.
+ * @param {CellView} cell
+ * @param {string} newBody
+ * @param {HTMLSpanElement} status
+ * @param {HTMLButtonElement} button
+ */
+async function saveCellEdit(cell, newBody, status, button) {
+  if (watching === undefined) return;
+  const { state } = watching;
+  button.disabled = true;
+  status.textContent = "Saving…";
+  try {
+    const segments = state.segments.map((segment) => {
+      if (segment.kind === "prose") {
+        return { kind: "prose", text: segment.text };
+      }
+      const candidate = state.cells.find((c) => c.id === segment.id);
+      if (candidate === undefined) {
+        return {
+          kind: "cell",
+          id: segment.id,
+          type: "prompt",
+          body: "",
+          uses: [],
+          isolated: false,
+        };
+      }
+      const body = candidate.id === cell.id ? newBody : candidate.body;
+      return cellDeclaration(candidate, body);
+    });
+    const response = await request(`/api/sessions/${state.id}/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        base: state.revision,
+        segments,
+        ...(state.frontmatter !== undefined && state.frontmatter !== ""
+          ? { frontmatter: state.frontmatter }
+          : {}),
+      }),
+    });
+    if (!response.ok) {
+      const problem = (await response.text()).trim() || `The server answered ${response.status}`;
+      if (response.status === 409) {
+        const now = await request(`/api/sessions/${state.id}`);
+        if (now.ok) {
+          watching.state = /** @type {NotebookSessionState} */ (await now.json());
+        }
+        status.textContent = `${problem}\nSave again to write over it, or cancel to see what it holds now.`;
+      } else {
+        status.textContent = problem;
+      }
+      button.disabled = false;
+      return;
+    }
+    cellDrafts.delete(cell.id);
+    editingCellId = undefined;
+    watching.state = /** @type {NotebookSessionState} */ (await response.json());
+    renderSession();
+  } catch (cause) {
+    status.textContent = `Could not save: ${describe(cause)}`;
+    button.disabled = false;
+  }
+}
+
+/**
+ * @param {string} id
+ */
+function cancelCellEdit(id) {
+  cellDrafts.delete(id);
+  if (editingCellId === id) {
+    editingCellId = undefined;
+    renderSession();
+  }
 }
 
 /**
@@ -5162,6 +5344,8 @@ function renderEditor() {
 
 function beginEditing() {
   if (watching === undefined || draft !== undefined) return;
+  editingCellId = undefined;
+  cellDrafts.clear();
   openPane = "notebook";
   draft = draftOf(watching.state);
   element("editor-status").textContent = "";
@@ -5173,20 +5357,27 @@ function beginEditing() {
 }
 
 /**
- * Opens the editor on the cell `id`, with the cursor in its text.
+ * Opens inline editing on the cell `id`.
  * @param {string} id
  */
 function editCell(id) {
   if (watching === undefined) return;
-  if (draft === undefined) beginEditing();
-  const segments = draft?.segments;
-  if (segments === undefined) return;
-  const at = segments.findIndex((segment) => segment.kind === "cell" && segment.id === id);
-  if (at < 0) return;
-  const segment = segments[at];
-  if (segment?.kind === "cell") segment.folded = false;
-  renderEditor();
-  focusSegment(at);
+  if (draft !== undefined) {
+    const at = draft.segments.findIndex((segment) => segment.kind === "cell" && segment.id === id);
+    if (at >= 0) {
+      const segment = draft.segments[at];
+      if (segment !== undefined) segment.folded = false;
+      renderEditor();
+      focusSegment(at);
+    }
+    return;
+  }
+  if (editingCellId !== undefined && editingCellId !== id) {
+    cellDrafts.delete(editingCellId);
+  }
+  editingCellId = id;
+  openedForNotebook().add(cellFoldKey(id));
+  renderSession();
 }
 
 /** @param {string} value */
@@ -5347,6 +5538,8 @@ async function loadCellModels(load) {
 
 function stopEditing() {
   draft = undefined;
+  editingCellId = undefined;
+  cellDrafts.clear();
   element("draft").replaceChildren();
   const status = element("session-status");
   if (status.textContent === "Save or cancel the draft before choosing a model.")
@@ -5938,6 +6131,8 @@ async function showSession(notebook) {
   }
   watching?.socket.close();
   watching = undefined;
+  editingCellId = undefined;
+  cellDrafts.clear();
   status.textContent = `Opening ${notebook}…`;
 
   /** @type {NotebookSessionState} */
@@ -6062,6 +6257,8 @@ function route() {
   if (asked === "") {
     watching?.socket.close();
     watching = undefined;
+    editingCellId = undefined;
+    cellDrafts.clear();
     void showList();
   } else {
     void refreshTree();
@@ -6911,7 +7108,7 @@ element("run-form").addEventListener("submit", (event) => {
   void startRun(undefined, valuesTyped());
 });
 element("run-stop").addEventListener("click", () => void interrupt());
-element("edit").addEventListener("click", beginEditing);
+element("edit").addEventListener("click", () => beginEditing());
 element("file-accept").addEventListener("click", () => void decideOpenFile("accept"));
 element("file-reject").addEventListener("click", () => void decideOpenFile("reject"));
 element("file-edit").addEventListener("click", beginFileEdit);
