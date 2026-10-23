@@ -257,6 +257,21 @@ function askToConnect(method) {
   const form = /** @type {HTMLFormElement} */ (element("connect-form"));
   const secret = /** @type {HTMLInputElement} */ (element("secret"));
   const status = element("connect-status");
+
+  element("workspace").hidden = true;
+  element("modes").hidden = true;
+  element("models").hidden = true;
+  const tabs = element("tab-notebook").parentElement;
+  if (tabs) tabs.hidden = true;
+  element("tree-new").hidden = true;
+  if (watching !== undefined) {
+    watching.socket.close();
+    watching = undefined;
+  }
+  draft = undefined;
+  element("session-status").textContent = "";
+  element("status").textContent = "";
+
   element("connect-message").textContent = CONNECT_MESSAGES[method];
   element("connect-label").textContent = method === "token" ? "Token" : "Password";
   secret.value = "";
@@ -284,8 +299,18 @@ function askToConnect(method) {
       if (response.ok) {
         form.removeEventListener("submit", submit);
         panel.hidden = true;
+        if (tabs) tabs.hidden = false;
+        element("tree-new").hidden = false;
+        element("workspace").hidden = false;
         asking = undefined;
         connected();
+        if (element("tab-modes").getAttribute("aria-current") === "page") {
+          void openModes();
+        } else if (element("tab-models").getAttribute("aria-current") === "page") {
+          void openModels();
+        } else {
+          route();
+        }
         return;
       }
       status.textContent =
@@ -1280,7 +1305,10 @@ function renderChatDetails(chat) {
       nodes.push(block);
     } else {
       const block = make("section", "round");
-      block.append(make("h3", "", "You"), make("p", "", item.prompt === "" ? "(empty)" : item.prompt));
+      block.append(
+        make("h3", "", "You"),
+        make("p", "", item.prompt === "" ? "(empty)" : item.prompt),
+      );
       if (item.thinking !== undefined && item.thinking !== "") {
         const thought = document.createElement("details");
         thought.className = "cell-thinking";
@@ -6027,6 +6055,7 @@ async function reconnect(lost, wait) {
 }
 
 function route() {
+  if (asking !== undefined) return;
   const hash = location.hash.slice(1);
   view = hash.startsWith(RUN_VIEW_PREFIX) ? "run" : "author";
   asked = decodeURIComponent(view === "run" ? hash.slice(RUN_VIEW_PREFIX.length) : hash);
@@ -6994,3 +7023,25 @@ element("editor").addEventListener("submit", (event) => {
 });
 window.addEventListener("hashchange", route);
 route();
+
+/** How often to check that the Connection is still known to the server. */
+const HEARTBEAT_INTERVAL = 2000;
+
+async function checkConnection() {
+  if (asking !== undefined) return;
+  try {
+    const response = await fetch("/api/notebooks");
+    if (response.status === 401) {
+      /** @type {{ authenticate?: Method }} */
+      const told = await response.json().catch(() => ({}));
+      void askToConnect(told.authenticate ?? "password");
+    }
+  } catch {
+    // The server is restarting or unreachable; retry on the next interval.
+  }
+}
+
+setInterval(() => void checkConnection(), HEARTBEAT_INTERVAL);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void checkConnection();
+});

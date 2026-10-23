@@ -3840,15 +3840,17 @@ describe("promoting a chat", () => {
     await mkdir(journalDir, { recursive: true });
     await writeFile(
       join(journalDir, "active-session.jsonl"),
-      `${JSON.stringify({ at: "2026-10-21T00:00:00.000Z", type: "opened", notebook: "hello.md", revision: "rev-1" })}\n${JSON.stringify({
-        sequence: 1,
-        at: "2026-10-21T00:00:00.000Z",
-        type: "run-started",
-        run: "active-run",
-        cells: ["greet"],
-        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
-        agentSession: inFlightRun.file,
-      })}\n`,
+      `${JSON.stringify({ at: "2026-10-21T00:00:00.000Z", type: "opened", notebook: "hello.md", revision: "rev-1" })}\n${JSON.stringify(
+        {
+          sequence: 1,
+          at: "2026-10-21T00:00:00.000Z",
+          type: "run-started",
+          run: "active-run",
+          cells: ["greet"],
+          environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+          agentSession: inFlightRun.file,
+        },
+      )}\n`,
       "utf8",
     );
 
