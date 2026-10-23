@@ -17,10 +17,13 @@ import { resolve } from "node:path";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { importSession } from "../import/pi-session.js";
+import { type ToolCall } from "../agent/agent.js";
+import { cellSourcesOf, importSession, messagesOf } from "../import/pi-session.js";
 import { titleOf } from "../notebook/notebook.js";
+import { saidIn, summariseTurn, textBlocksOf, thoughtIn } from "../pi/turn.js";
 import { notebookAgentSessions } from "../run/store.js";
 import { within } from "../util/paths.js";
+import { readJournals } from "./journal.js";
 import { type NotebookEntry, notebookTarget, pathWithin } from "./notebooks.js";
 
 /** One Chat as the browser lists it: enough to tell it from the others. */
@@ -47,7 +50,25 @@ export interface ChatsOptions {
 }
 
 /**
- * The Chats pi has had in `directory`, the latest first, as pi lists them.
+ * Every Agent Session that belongs to a Notebook under `directory`, both from
+ * completed Run Records and from Notebook Sessions' Journals.
+ */
+async function servedNotebookSessions(directory: string): Promise<Set<string>> {
+  const sessions = await notebookAgentSessions(directory);
+  for (const journal of await readJournals(directory).catch(() => [])) {
+    for (const line of journal.lines) {
+      if (typeof line.agentSession === "string") {
+        sessions.add(resolve(line.agentSession));
+      }
+    }
+  }
+  return sessions;
+}
+
+/**
+ * The Chats pi has had in `directory`, the latest first, as pi lists them,
+ * showing only chats from octo cli runs and omitting any session a prompt
+ * cell ran in.
  * Pi makes its directory for them when it is not yet there — an empty
  * directory pi makes itself the moment it runs there, and not a session file.
  */
@@ -55,15 +76,120 @@ export async function listChats(
   directory: string,
   options: ChatsOptions = {},
 ): Promise<ChatEntry[]> {
-  const found = await SessionManager.list(directory, options.chatDirectory);
-  return found.map((session) => ({
+  const [found, notebookSessions] = await Promise.all([
+    SessionManager.list(directory, options.chatDirectory),
+    servedNotebookSessions(directory),
+  ]);
+  return found
+    .filter((session) => !notebookSessions.has(resolve(session.path)))
+    .map((session) => ({
+      id: session.id,
+      ...(session.name !== undefined ? { name: session.name } : {}),
+      firstMessage: session.firstMessage,
+      messages: session.messageCount,
+      created: session.created.toISOString(),
+      modified: session.modified.toISOString(),
+    }));
+}
+
+/** One executed bash command in a Chat. */
+export interface ChatCommandDetail {
+  readonly type: "bash";
+  readonly command: string;
+  readonly output: string;
+  readonly exitCode: number | null;
+  readonly cancelled: boolean;
+}
+
+/** One prompt turn in a Chat, including executed tool calls and results. */
+export interface ChatPromptDetail {
+  readonly type: "prompt";
+  readonly prompt: string;
+  readonly text: string;
+  readonly thinking?: string;
+  readonly toolCalls: readonly ToolCall[];
+}
+
+export type ChatEntryDetail = ChatCommandDetail | ChatPromptDetail;
+
+/** Full details of a Chat, including executed commands and their results. */
+export interface ChatDetails {
+  readonly id: string;
+  readonly name?: string;
+  readonly firstMessage: string;
+  readonly messages: number;
+  readonly created: string;
+  readonly modified: string;
+  readonly details: readonly ChatEntryDetail[];
+}
+
+/**
+ * The details of the Chat pi lists under `id`: its executed commands, results,
+ * prompt turns, thoughts and tool calls, as recorded in pi's session file.
+ */
+export async function getChat(
+  directory: string,
+  id: string,
+  options: ChatsOptions = {},
+): Promise<ChatDetails | undefined> {
+  const [found, notebookSessions] = await Promise.all([
+    SessionManager.list(directory, options.chatDirectory),
+    servedNotebookSessions(directory),
+  ]);
+  const session = found
+    .filter((candidate) => !notebookSessions.has(resolve(candidate.path)))
+    .find((candidate) => candidate.id === id);
+  if (session === undefined) return undefined;
+
+  let manager: SessionManager;
+  try {
+    manager = SessionManager.open(session.path);
+  } catch {
+    return undefined;
+  }
+
+  const path = manager.getBranch();
+  const sources = cellSourcesOf(path);
+  const details: ChatEntryDetail[] = [];
+
+  for (const source of sources) {
+    if (source.kind === "bash") {
+      details.push({
+        type: "bash",
+        command: source.command,
+        output: source.output,
+        exitCode: source.exitCode,
+        cancelled: source.cancelled,
+      });
+    } else {
+      const messages = messagesOf(source);
+      const summary = summariseTurn(messages);
+      const thinking = thoughtIn(messages);
+      const text = saidIn(messages);
+      const asked = source.asked;
+      const prompt =
+        asked.type === "message" && asked.message.role === "user"
+          ? textBlocksOf(asked.message.content)
+          : "";
+      details.push({
+        type: "prompt",
+        prompt,
+        text,
+        ...(thinking !== "" ? { thinking } : {}),
+        toolCalls: summary.toolCalls,
+      });
+    }
+  }
+
+  return {
     id: session.id,
     ...(session.name !== undefined ? { name: session.name } : {}),
     firstMessage: session.firstMessage,
     messages: session.messageCount,
     created: session.created.toISOString(),
     modified: session.modified.toISOString(),
-  }));
+    details,
+  };
 }
 
 /** How promoting a Chat went. */
@@ -87,8 +213,13 @@ export async function promoteChat(
   to: string,
   options: ChatsOptions = {},
 ): Promise<Promoted> {
-  const found = await SessionManager.list(directory, options.chatDirectory);
-  const session = found.find((candidate) => candidate.id === id);
+  const [found, notebookSessions] = await Promise.all([
+    SessionManager.list(directory, options.chatDirectory),
+    servedNotebookSessions(directory),
+  ]);
+  const session = found
+    .filter((candidate) => !notebookSessions.has(resolve(candidate.path)))
+    .find((candidate) => candidate.id === id);
   if (session === undefined) return { kind: "absent" };
 
   const named = notebookTarget(directory, to);
@@ -124,8 +255,9 @@ export type Removed =
  * place and cannot tell the two apart: a Chat is work done once at the
  * terminal, and a Notebook Session's Agent Session is what its Runs' Anchors
  * address (ADR-0014), so deleting it would take every Anchor the Notebook has
- * with it and leave its Cells' rounds unreadable. What the Run Records name is
- * therefore refused, with the reason said rather than the row quietly hidden.
+ * with it and leave its Cells' rounds unreadable. What belongs to a Notebook
+ * is therefore omitted from the chats listing, and any attempt to delete it
+ * is refused.
  */
 export async function deleteChat(
   directory: string,
@@ -146,7 +278,7 @@ export async function deleteChat(
       problem: "The chat is not kept with the others, so it was left as it is.",
     };
   }
-  if ((await notebookAgentSessions(directory)).has(file)) {
+  if ((await servedNotebookSessions(directory)).has(file)) {
     return {
       kind: "refused",
       problem:

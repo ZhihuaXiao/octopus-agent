@@ -238,7 +238,7 @@ describe("importing a chat", () => {
           type: "prompt",
           status: "ok",
           text: "Let me look.\n\nThere are three.",
-          toolCalls: [{ name: "bash", input: { command: "ls" } }],
+          toolCalls: [{ name: "bash", input: { command: "ls" }, result: "a b c" }],
           usage: { inputTokens: 30, outputTokens: 15, cost: 0.75 },
           model: "anthropic/claude-sonnet-4-5",
           retries: [],

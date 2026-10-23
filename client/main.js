@@ -93,6 +93,28 @@ import {
  *   created: string,
  *   modified: string,
  * }} ChatEntry
+ * @typedef {{
+ *   type: "bash",
+ *   command: string,
+ *   output: string,
+ *   exitCode: number | null,
+ *   cancelled: boolean,
+ * } | {
+ *   type: "prompt",
+ *   prompt: string,
+ *   text: string,
+ *   thinking?: string,
+ *   toolCalls: ToolCall[],
+ * }} ChatEntryDetail
+ * @typedef {{
+ *   id: string,
+ *   name?: string,
+ *   firstMessage: string,
+ *   messages: number,
+ *   created: string,
+ *   modified: string,
+ *   details: ChatEntryDetail[],
+ * }} ChatDetails
  * @typedef {{ chats: ChatEntry[] }} ChatList
  * @typedef {{ name: string, input: unknown, result?: string, isError?: boolean }} ToolCall
  * @typedef {"system" | "tools" | "rules" | "skills" | "conversation"} ContextPartName
@@ -1184,10 +1206,17 @@ function renderChat(chat) {
   const item = document.createElement("li");
   const about = document.createElement("div");
   const messages = chat.messages === 1 ? "1 message" : `${chat.messages} messages`;
+  const said = make("span", "said", chat.name ?? chat.firstMessage);
+  said.style.cursor = "pointer";
+  said.title = "View chat details";
+  said.addEventListener("click", () => void showChatDetails(chat));
   about.append(
-    make("span", "said", chat.name ?? chat.firstMessage),
+    said,
     make("span", "when", `${new Date(chat.modified).toLocaleString()} · ${messages}`),
   );
+  const detailsButton = make("button", "", "Details");
+  detailsButton.type = "button";
+  detailsButton.addEventListener("click", () => void showChatDetails(chat));
   const promoteButton = make("button", "", "Promote");
   promoteButton.type = "button";
   promoteButton.addEventListener("click", () => void promote(chat, promoteButton));
@@ -1195,9 +1224,104 @@ function renderChat(chat) {
   deleteButton.type = "button";
   deleteButton.addEventListener("click", () => void removeChat(chat, deleteButton));
   const actions = make("div", "chat-actions");
-  actions.append(promoteButton, deleteButton);
+  actions.append(detailsButton, promoteButton, deleteButton);
   item.append(about, actions);
   return item;
+}
+
+/**
+ * Shows the details of a chat in a modal dialog: executed commands, outputs,
+ * prompt turns, thoughts, and tool calls.
+ * @param {ChatEntry} chat
+ */
+async function showChatDetails(chat) {
+  const dialog = /** @type {HTMLDialogElement} */ (element("chat-details-dialog"));
+  element("chat-details-title").textContent = chat.name ?? chat.firstMessage;
+  const body = element("chat-details-body");
+  body.replaceChildren(make("p", "", "Loading…"));
+  if (!dialog.open) dialog.showModal();
+
+  try {
+    const response = await request(`/api/chats/${encodeURIComponent(chat.id)}`);
+    if (!response.ok) throw new Error(`The server answered ${response.status}`);
+    /** @type {ChatDetails} */
+    const found = await response.json();
+    renderChatDetails(found);
+  } catch (cause) {
+    body.replaceChildren(make("p", "status", `Could not load chat details: ${describe(cause)}`));
+  }
+}
+
+/**
+ * @param {ChatDetails} chat
+ */
+function renderChatDetails(chat) {
+  const body = element("chat-details-body");
+  if (chat.details.length === 0) {
+    body.replaceChildren(make("p", "", "(no commands or messages)"));
+    return;
+  }
+  /** @type {Node[]} */
+  const nodes = [];
+  for (const item of chat.details) {
+    if (item.type === "bash") {
+      const block = make("section", "round");
+      const heading = make("h3", "", "! " + item.command);
+      if (item.cancelled) heading.append(make("span", "round-tool-name", " (interrupted)"));
+      else if (item.exitCode !== null && item.exitCode !== 0) {
+        heading.append(make("span", "round-tool-name", ` (exit ${item.exitCode})`));
+      }
+      block.append(heading);
+      if (item.output !== "") {
+        block.append(make("pre", "round-result", item.output));
+      } else {
+        block.append(make("p", "", "(no output)"));
+      }
+      nodes.push(block);
+    } else {
+      const block = make("section", "round");
+      block.append(make("h3", "", "You"), make("p", "", item.prompt === "" ? "(empty)" : item.prompt));
+      if (item.thinking !== undefined && item.thinking !== "") {
+        const thought = document.createElement("details");
+        thought.className = "cell-thinking";
+        thought.open = true;
+        thought.append(
+          make("summary", "", "Thinking"),
+          make("pre", "round-thinking", item.thinking),
+        );
+        block.append(thought);
+      }
+      for (const call of item.toolCalls) {
+        const tool = make("div", "round-tool");
+        tool.append(
+          make("p", "round-tool-name", call.isError === true ? `${call.name} failed` : call.name),
+        );
+        tool.append(make("pre", "", roundText(call.input)));
+        if (call.result !== undefined) tool.append(make("pre", "round-result", call.result));
+        block.append(tool);
+      }
+      if (item.text !== "") {
+        const said = make("div", "cell-output markdown");
+        said.append(...markdownBlocks(item.text));
+        block.append(said);
+      }
+      nodes.push(block);
+    }
+  }
+
+  const footer = make("div", "chat-actions");
+  footer.style.marginTop = "1rem";
+  footer.style.justifyContent = "flex-end";
+  const promoteBtn = make("button", "", "Promote to notebook");
+  promoteBtn.type = "button";
+  promoteBtn.addEventListener("click", () => {
+    /** @type {HTMLDialogElement} */ (element("chat-details-dialog")).close();
+    void promote(chat, promoteBtn);
+  });
+  footer.append(promoteBtn);
+  nodes.push(footer);
+
+  body.replaceChildren(...nodes);
 }
 
 /**
@@ -6717,6 +6841,9 @@ element("notebook-model").addEventListener("click", () => {
 });
 element("cell-rounds-close").addEventListener("click", () => {
   /** @type {HTMLDialogElement} */ (element("cell-rounds-dialog")).close();
+});
+element("chat-details-close").addEventListener("click", () => {
+  /** @type {HTMLDialogElement} */ (element("chat-details-dialog")).close();
 });
 element("notebook-model-cancel").addEventListener("click", () => {
   /** @type {HTMLDialogElement} */ (element("notebook-model-dialog")).close();
