@@ -98,7 +98,7 @@ The Graph says what must finish before what. The scheduler adds one more constra
 
 A Cell that errors, times out, or is interrupted halts the Run. Cells already in flight are waited for. Cells not yet started are left out of the record. Retries are not the Run's: pi retries a transient provider or transport error inside one turn, and the Run records the attempts.
 
-A Prompt Cell is one `agent.prompt`. Text and tool calls are observed as they happen. A Bash Cell is a shell command in the Workspace, spawned directly, with no agent. Its stdout and stderr arrive whole with the Cell's record.
+A Prompt Cell is one `agent.prompt`. Thinking, tool calls, and reply text are observed as they happen. A Bash Cell is a shell command in the Workspace, spawned directly, with no agent. Its stdout and stderr arrive whole with the Cell's record.
 
 Each Cell gets a directory, `{{artifacts}}` in its body. Whatever it leaves there is listed by path on the record. The bytes stay on disk.
 
@@ -125,7 +125,7 @@ The server binds `127.0.0.1:8008` unless told otherwise. It serves `client/` and
 
 One process owns every Notebook Session. Each session runs its own Runs, so one long Run does not hold up another Notebook. The session outlives the browser that opened it.
 
-Commands are HTTP, each with one answer: list, open, run, interrupt, save, duplicate, promote, export, and fetch a Run's file. What a Run produces is a stream, over a WebSocket at `/api/sessions/<id>/events`. Events are the runner's own (`run-started`, `cell-started`, `cell-text`, `cell-tool-call`, `cell-ended`) plus the session's (`run-ended`, `run-refused`, and the Notebook changing).
+Commands are HTTP, each with one answer: list, open, run, interrupt, save, duplicate, promote, export, and fetch a Run's file. What a Run produces is a stream, over a WebSocket at `/api/sessions/<id>/events`. Events are the runner's own (`run-started`, `cell-started`, `cell-text`, `cell-thinking`, `cell-tool-call`, `cell-ended`) plus the session's (`run-ended`, `run-refused`, and the Notebook changing).
 
 There is one account. It is proved by the token generated at startup, or by the password stored as a scrypt hash in `~/.octo/password`. Proving it opens a Connection. The browser carries the Connection id as a cookie. A wrong password waits, doubling up to a minute. The shell HTML is served without a Connection, because that is where the browser authenticates. Everything else under `/api/` requires one.
 
@@ -139,7 +139,7 @@ Every event a Notebook Session emits is numbered and appended, synchronously, to
 
 `client/main.js` is the page. The Notebook in view is the URL fragment, with `#run/` selecting Run View. The served directory is drawn beside it, and a small arrow between the columns folds that column away; the choice stays in the browser.
 
-Author View draws the Notebook as written: Prose, each Cell, streaming text, tool calls, and artifacts. It can run one Cell or all of them, interrupt, edit, duplicate, and export. Edit mode is a form of the whole Notebook — frontmatter, Prose, and Cells — saved in one request.
+Author View draws the Notebook as written: Prose, each Cell, an interleaved stream of thoughts, tool calls, reply text, and artifacts. Thoughts and tool calls are collapsed by default with click-to-expand, showing tool arguments and execution results. It can run one Cell or all of them, interrupt, edit, duplicate, and export. Edit mode is a form of the whole Notebook — frontmatter, Prose, and Cells — saved in one request.
 
 Run View hides the Cells. It draws the declared Inputs as a form and one button, then how far the Run has got. It is the same Connection as Author View. A value typed into the form reaches a Cell as typed.
 
