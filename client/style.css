@@ -1472,6 +1472,7 @@ button:disabled {
 .cell-turn,
 .cell-branch,
 .cell-stop,
+.cell-add,
 .fold {
   font-size: 0.8rem;
   padding: 0.1rem 0.6rem;
@@ -1504,6 +1505,50 @@ button.symbol-button path {
 button.symbol-button path.symbol-fill {
   fill: currentColor;
   stroke: none;
+}
+
+/* Dropdown menu to add a cell below an existing cell */
+.cell-add-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.cell-add-list {
+  position: absolute;
+  top: calc(100% + 0.2rem);
+  left: 0;
+  z-index: 20;
+  min-width: 7.5rem;
+  margin: 0;
+  padding: 0.2rem;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.35rem;
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 0.35rem 0.8rem color-mix(in srgb, black 18%, transparent);
+}
+
+.cell-add-list button {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 0.25rem 0.55rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cell-add-list button:hover,
+.cell-add-list button:focus {
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 /* Expand and collapse. A filled triangle on a gray button, so it is not a
@@ -1910,8 +1955,11 @@ button.context-ring svg {
 }
 
 .editor textarea,
+.cell-inline-editor textarea,
 .editor input[type="text"],
-.editor select {
+.cell-inline-editor input[type="text"],
+.editor select,
+.cell-inline-editor select {
   font: inherit;
   color: inherit;
   background: color-mix(in srgb, currentColor 6%, transparent);
@@ -1931,8 +1979,12 @@ button.context-ring svg {
   resize: vertical;
 }
 
+.cell.editing > .cell-header {
+  display: none;
+}
+
 .cell-inline-editor {
-  margin: 0.5rem 0 0;
+  margin: 0;
 }
 
 .cell-inline-editor textarea {

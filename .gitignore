@@ -20,3 +20,12 @@ test.md
 test1.md
 
 .DS_Store
+
+assets/
+learning-records/
+lessons/
+reference/
+
+MISSION.md
+NOTES.md
+RESOURCES.md
