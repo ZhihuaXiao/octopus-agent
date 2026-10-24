@@ -269,6 +269,8 @@ function askToConnect(method) {
     watching = undefined;
   }
   draft = undefined;
+  pendingNewCell = undefined;
+  editingDraftCell = undefined;
   editingCellId = undefined;
   cellDrafts.clear();
   element("session-status").textContent = "";
@@ -1461,6 +1463,14 @@ const fileDrafts = new Map();
 /** @type {string | undefined} */
 let editingCellId;
 
+/** The draft of the cell currently being edited in-place in author view, when one is. */
+/** @type {DraftCell | undefined} */
+let editingDraftCell;
+
+/** A newly added cell being edited in-place before it is saved, when one is. */
+/** @type {{ id: string, type: "prompt" | "bash", afterCellId: string } | undefined} */
+let pendingNewCell;
+
 /** Unsaved text of a cell being edited in-place, by cell id. */
 /** @type {Map<string, string>} */
 const cellDrafts = new Map();
@@ -2405,6 +2415,11 @@ function editIcon() {
   ]);
 }
 
+/** A plus sign: add. */
+function plusIcon() {
+  return symbolIcon(["M8 3v10", "M3 8h10"]);
+}
+
 /**
  * Puts `text` on the clipboard and says so on the button for a moment.
  * @param {string} text
@@ -2475,6 +2490,58 @@ function cellEditButton(cell) {
   button.disabled = cell.status === "running";
   button.addEventListener("click", () => editCell(cell.id));
   return button;
+}
+
+/**
+ * A "+" button with a dropdown menu to add a prompt or bash cell below `cell`.
+ * @param {CellView} cell
+ * @param {boolean} running
+ */
+function cellAddMenu(cell, running) {
+  const menu = make("div", "cell-add-menu");
+  const button = symbolButton("cell-add", `Add cell below ${cell.id}`, plusIcon());
+  button.disabled = cell.status === "running" || running;
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+
+  const list = make("div", "cell-add-list");
+  list.setAttribute("role", "menu");
+  list.hidden = true;
+
+  const promptOption = make("button", "", "Prompt cell");
+  promptOption.type = "button";
+  promptOption.setAttribute("role", "menuitem");
+  promptOption.addEventListener("click", (event) => {
+    event.stopPropagation();
+    list.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    void insertCellBelow(cell.id, "prompt");
+  });
+
+  const bashOption = make("button", "", "Bash cell");
+  bashOption.type = "button";
+  bashOption.setAttribute("role", "menuitem");
+  bashOption.addEventListener("click", (event) => {
+    event.stopPropagation();
+    list.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    void insertCellBelow(cell.id, "bash");
+  });
+
+  list.append(promptOption, bashOption);
+
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const opening = list.hidden;
+    closeCellAddMenus();
+    if (opening) {
+      list.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+    }
+  });
+
+  menu.append(button, list);
+  return menu;
 }
 
 /**
@@ -3219,8 +3286,12 @@ function renderCell(cell, session, running) {
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
   const editBtn = cellEditButton(cell);
-  if (isEditing) editBtn.hidden = true;
-  heading.append(editBtn, runOne);
+  const addBtn = cellAddMenu(cell, running);
+  if (isEditing) {
+    editBtn.hidden = true;
+    addBtn.hidden = true;
+  }
+  heading.append(editBtn, addBtn, runOne);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
@@ -3247,25 +3318,12 @@ function renderCell(cell, session, running) {
 }
 
 /**
- * An inline editor for this cell's body in author view.
  * @param {CellView} cell
- * @returns {HTMLDivElement}
+ * @returns {DraftCell}
  */
-function renderInlineCellEditor(cell) {
-  const editor = make("div", "cell-inline-editor");
+function draftCellOf(cell) {
   const draftText = cellDrafts.get(cell.id) ?? cell.body.replace(/\r?\n$/, "");
-  const field = textarea(
-    draftText,
-    (value) => {
-      cellDrafts.set(cell.id, value);
-    },
-    cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER,
-  );
-  const wrap = make("div", "skill-field");
-  wrap.append(field);
-
-  /** @type {DraftCell} */
-  const fakeDraftCell = {
+  return {
     kind: "cell",
     id: cell.id,
     type: cell.type,
@@ -3277,12 +3335,48 @@ function renderInlineCellEditor(cell) {
     timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
     folded: false,
   };
+}
+
+/**
+ * An inline editor for this cell's declaration and body in author view.
+ * @param {CellView} cell
+ * @returns {HTMLDivElement}
+ */
+function renderInlineCellEditor(cell) {
+  const editor = make("div", "cell-inline-editor");
+  if (
+    editingDraftCell === undefined ||
+    (editingDraftCell.id !== cell.id && pendingNewCell?.id !== editingDraftCell.id)
+  ) {
+    editingDraftCell = draftCellOf(cell);
+  }
+  const draftCell = editingDraftCell;
+
+  const field = textarea(
+    draftCell.body,
+    (value) => {
+      draftCell.body = value;
+      cellDrafts.set(cell.id, value);
+    },
+    draftCell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER,
+  );
+  const wrap = make("div", "skill-field");
+  wrap.append(field);
+
   field.addEventListener("input", () => {
-    fakeDraftCell.body = field.value;
+    draftCell.body = field.value;
     cellDrafts.set(cell.id, field.value);
   });
-  attachSkillMenu(field, fakeDraftCell);
-  attachFileMenu(field, fakeDraftCell);
+  attachSkillMenu(field, draftCell);
+  attachFileMenu(field, draftCell);
+
+  const declaration = renderCellDeclaration(draftCell, () => {
+    field.placeholder = draftCell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER;
+    const cellItem = editor.closest(".cell");
+    if (cellItem) {
+      cellItem.className = `cell ${draftCell.type} ${cell.status} editing`;
+    }
+  });
 
   const actions = make("div", "cell-inline-actions");
   const saveBtn = make("button", "cell-save", "Save");
@@ -3291,8 +3385,18 @@ function renderInlineCellEditor(cell) {
   cancelBtn.type = "button";
   const status = make("span", "cell-inline-status");
 
-  saveBtn.addEventListener("click", () => void saveCellEdit(cell, field.value, status, saveBtn));
+  saveBtn.addEventListener("click", () => void saveCellEdit(cell, status, saveBtn));
   cancelBtn.addEventListener("click", () => cancelCellEdit(cell.id));
+
+  declaration.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelCellEdit(cell.id);
+    } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void saveCellEdit(cell, status, saveBtn);
+    }
+  });
 
   field.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -3302,12 +3406,12 @@ function renderInlineCellEditor(cell) {
       cancelCellEdit(cell.id);
     } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      void saveCellEdit(cell, field.value, status, saveBtn);
+      void saveCellEdit(cell, status, saveBtn);
     }
   });
 
   actions.append(saveBtn, cancelBtn, status);
-  editor.append(wrap, actions);
+  editor.append(declaration, wrap, actions);
 
   queueMicrotask(() => {
     field.focus();
@@ -3336,36 +3440,79 @@ function cellDeclaration(cell, body) {
 }
 
 /**
- * Saves changes made to a single cell's body.
+ * Saves changes made to a cell's declaration and body in author view.
  * @param {CellView} cell
- * @param {string} newBody
  * @param {HTMLSpanElement} status
  * @param {HTMLButtonElement} button
  */
-async function saveCellEdit(cell, newBody, status, button) {
-  if (watching === undefined) return;
+async function saveCellEdit(cell, status, button) {
+  if (watching === undefined || editingDraftCell === undefined) return;
   const { state } = watching;
+  const draftCell = editingDraftCell;
+  const newId = draftCell.id.trim();
+  if (newId === "") {
+    status.textContent = "Give this cell an id before saving it.";
+    return;
+  }
   button.disabled = true;
   status.textContent = "Saving…";
   try {
-    const segments = state.segments.map((segment) => {
+    const isPending = pendingNewCell !== undefined && pendingNewCell.id === cell.id;
+    const editedCell = {
+      kind: "cell",
+      id: newId,
+      type: draftCell.type,
+      body: draftCell.body.replace(/\r?\n$/, ""),
+      uses: usesNames(draftCell.uses),
+      isolated: draftCell.isolated,
+      ...(draftCell.type === "prompt" && draftCell.approach !== "agent"
+        ? { approach: draftCell.approach }
+        : {}),
+      ...(draftCell.model !== "" ? { model: draftCell.model } : {}),
+      ...(draftCell.timeout.trim() !== "" ? { timeout: draftCell.timeout.trim() } : {}),
+    };
+
+    const segments = [];
+    for (const segment of state.segments) {
       if (segment.kind === "prose") {
-        return { kind: "prose", text: segment.text };
+        segments.push({ kind: "prose", text: segment.text });
+        continue;
       }
-      const candidate = state.cells.find((c) => c.id === segment.id);
-      if (candidate === undefined) {
-        return {
-          kind: "cell",
-          id: segment.id,
-          type: "prompt",
-          body: "",
-          uses: [],
-          isolated: false,
-        };
+      if (segment.id === cell.id) {
+        segments.push(editedCell);
+      } else {
+        const candidate = state.cells.find((c) => c.id === segment.id);
+        if (candidate !== undefined) {
+          segments.push(cellDeclaration(candidate, candidate.body));
+        } else {
+          segments.push({
+            kind: "cell",
+            id: segment.id,
+            type: "prompt",
+            body: "",
+            uses: [],
+            isolated: false,
+          });
+        }
       }
-      const body = candidate.id === cell.id ? newBody : candidate.body;
-      return cellDeclaration(candidate, body);
-    });
+      if (isPending && pendingNewCell !== undefined && segment.id === pendingNewCell.afterCellId) {
+        segments.push({ kind: "prose", text: "\n" });
+        segments.push(editedCell);
+        const currentIndex = state.segments.indexOf(segment);
+        const next = state.segments[currentIndex + 1];
+        if (next?.kind === "cell") {
+          segments.push({ kind: "prose", text: "\n" });
+        }
+      }
+    }
+    if (
+      isPending &&
+      pendingNewCell !== undefined &&
+      !segments.some((s) => s.kind === "cell" && s.id === editedCell.id)
+    ) {
+      segments.push({ kind: "prose", text: "\n" });
+      segments.push(editedCell);
+    }
     const response = await request(`/api/sessions/${state.id}/save`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -3392,6 +3539,13 @@ async function saveCellEdit(cell, newBody, status, button) {
       return;
     }
     cellDrafts.delete(cell.id);
+    if (newId !== cell.id) {
+      cellDrafts.delete(newId);
+      openedForNotebook().delete(cellFoldKey(cell.id));
+      openedForNotebook().add(cellFoldKey(newId));
+    }
+    pendingNewCell = undefined;
+    editingDraftCell = undefined;
     editingCellId = undefined;
     watching.state = /** @type {NotebookSessionState} */ (await response.json());
     renderSession();
@@ -3406,10 +3560,50 @@ async function saveCellEdit(cell, newBody, status, button) {
  */
 function cancelCellEdit(id) {
   cellDrafts.delete(id);
+  if (editingDraftCell !== undefined) {
+    cellDrafts.delete(editingDraftCell.id);
+    editingDraftCell = undefined;
+  }
+  if (pendingNewCell?.id === id) {
+    pendingNewCell = undefined;
+  }
   if (editingCellId === id) {
     editingCellId = undefined;
     renderSession();
   }
+}
+
+/**
+ * Inserts a new cell below `cellId` and puts it into in-place editing mode.
+ * @param {string} cellId
+ * @param {"prompt" | "bash"} type
+ */
+function insertCellBelow(cellId, type) {
+  if (watching === undefined) return;
+  if (editingCellId !== undefined) {
+    cancelCellEdit(editingCellId);
+  }
+  const newId = freshId();
+  pendingNewCell = { id: newId, type, afterCellId: cellId };
+  editingCellId = newId;
+  editingDraftCell = {
+    kind: "cell",
+    id: newId,
+    type,
+    body: "",
+    uses: "",
+    isolated: false,
+    approach: "agent",
+    model: "",
+    timeout: "",
+    folded: false,
+  };
+  cellDrafts.set(newId, "");
+  openedForNotebook().add(cellFoldKey(newId));
+  if (cellModels === undefined) {
+    void loadCellModels(++cellModelLoad);
+  }
+  renderSession();
 }
 
 /**
@@ -3433,11 +3627,36 @@ function renderProse(text, index) {
  * @param {NotebookSessionState} state
  */
 function renderSegments(state) {
-  return state.segments.map((segment, index) => {
-    if (segment.kind === "prose") return renderProse(segment.text, index);
+  const items = [];
+  let proseIndex = 0;
+  for (const segment of state.segments) {
+    if (segment.kind === "prose") {
+      items.push(renderProse(segment.text, proseIndex++));
+      continue;
+    }
     const cell = state.cells.find((candidate) => candidate.id === segment.id);
-    return cell === undefined ? make("li", "prose", "") : renderCell(cell, state.id, state.running);
-  });
+    if (cell !== undefined) {
+      items.push(renderCell(cell, state.id, state.running));
+    } else {
+      items.push(make("li", "prose", ""));
+    }
+    if (pendingNewCell !== undefined && segment.id === pendingNewCell.afterCellId) {
+      /** @type {CellView} */
+      const syntheticCell = {
+        id: pendingNewCell.id,
+        type: pendingNewCell.type,
+        status: "idle",
+        body: "",
+        uses: [],
+        isolated: false,
+        text: "",
+        toolCalls: [],
+        artifacts: [],
+      };
+      items.push(renderCell(syntheticCell, state.id, state.running));
+    }
+  }
+  return items;
 }
 
 /** Reviews still open on the Notebook in view. */
@@ -5073,9 +5292,13 @@ function field(label, value, set, className) {
 
 /** A Cell id no Cell of the draft has yet. */
 function freshId() {
-  const taken = new Set(
-    (draft?.segments ?? []).flatMap((segment) => (segment.kind === "cell" ? [segment.id] : [])),
-  );
+  const segments = draft?.segments ?? watching?.state.segments ?? [];
+  const cells = watching?.state.cells ?? [];
+  const taken = new Set([
+    ...segments.flatMap((segment) => (segment.kind === "cell" ? [segment.id] : [])),
+    ...cells.map((c) => c.id),
+    ...(pendingNewCell !== undefined ? [pendingNewCell.id] : []),
+  ]);
   let count = taken.size + 1;
   while (taken.has(`cell-${count}`)) count += 1;
   return `cell-${count}`;
@@ -5214,11 +5437,12 @@ function swap(from, to) {
 }
 
 /**
+ * Editable declaration controls for a cell (type, approach, id, uses, isolated, model, timeout).
  * @param {DraftCell} cell
- * @param {number} at
+ * @param {() => void} [onTypeChange]
+ * @returns {HTMLDivElement}
  */
-function renderDraftCell(cell, at) {
-  const card = make("li", `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`);
+function renderCellDeclaration(cell, onTypeChange) {
   const declaration = make("div", "draft-declaration");
 
   const type = document.createElement("select");
@@ -5256,18 +5480,8 @@ function renderDraftCell(cell, at) {
 
   type.addEventListener("change", () => {
     cell.type = type.value === "bash" ? "bash" : "prompt";
-    card.className = `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`;
     modeLabel.hidden = cell.type !== "prompt";
-    const fold = card.querySelector("button.fold");
-    if (fold instanceof HTMLButtonElement) {
-      fold.title = `${cell.folded ? "Expand" : "Collapse"} this ${cell.type} cell`;
-      fold.setAttribute("aria-label", fold.title);
-    }
-    const body = card.querySelector("textarea");
-    if (body instanceof HTMLTextAreaElement) {
-      body.placeholder = cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER;
-      body.dispatchEvent(new Event("input"));
-    }
+    if (onTypeChange) onTypeChange();
   });
 
   const isolated = document.createElement("label");
@@ -5294,6 +5508,28 @@ function renderDraftCell(cell, at) {
     modelSelect(cell.model, (value) => (cell.model = value)),
     field("timeout", cell.timeout, (value) => (cell.timeout = value)),
   );
+  return declaration;
+}
+
+/**
+ * @param {DraftCell} cell
+ * @param {number} at
+ */
+function renderDraftCell(cell, at) {
+  const card = make("li", `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`);
+  const declaration = renderCellDeclaration(cell, () => {
+    card.className = `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`;
+    const fold = card.querySelector("button.fold");
+    if (fold instanceof HTMLButtonElement) {
+      fold.title = `${cell.folded ? "Expand" : "Collapse"} this ${cell.type} cell`;
+      fold.setAttribute("aria-label", fold.title);
+    }
+    const body = card.querySelector("textarea");
+    if (body instanceof HTMLTextAreaElement) {
+      body.placeholder = cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER;
+      body.dispatchEvent(new Event("input"));
+    }
+  });
   card.append(
     declaration,
     make("p", "fold-preview", foldPreview(cell.body)),
@@ -5344,6 +5580,8 @@ function renderEditor() {
 
 function beginEditing() {
   if (watching === undefined || draft !== undefined) return;
+  pendingNewCell = undefined;
+  editingDraftCell = undefined;
   editingCellId = undefined;
   cellDrafts.clear();
   openPane = "notebook";
@@ -5372,11 +5610,26 @@ function editCell(id) {
     }
     return;
   }
+  if (pendingNewCell !== undefined) {
+    cellDrafts.delete(pendingNewCell.id);
+    pendingNewCell = undefined;
+  }
   if (editingCellId !== undefined && editingCellId !== id) {
     cellDrafts.delete(editingCellId);
+    if (editingDraftCell !== undefined) {
+      cellDrafts.delete(editingDraftCell.id);
+      editingDraftCell = undefined;
+    }
+  }
+  const cell = watching.state.cells.find((c) => c.id === id);
+  if (cell !== undefined) {
+    editingDraftCell = draftCellOf(cell);
   }
   editingCellId = id;
   openedForNotebook().add(cellFoldKey(id));
+  if (cellModels === undefined) {
+    void loadCellModels(++cellModelLoad);
+  }
   renderSession();
 }
 
@@ -5390,7 +5643,8 @@ function usesNames(value) {
 
 /** Ids of the cells in the draft, in the order they are written. */
 function draftCellIds() {
-  return (draft?.segments ?? []).flatMap((segment) =>
+  const segments = draft?.segments ?? watching?.state.segments ?? [];
+  return segments.flatMap((segment) =>
     segment.kind === "cell" && segment.id.trim() !== "" ? [segment.id.trim()] : [],
   );
 }
@@ -5457,16 +5711,23 @@ function fillUsesSelect(select, self, value) {
 
 /** Refills every uses list from the cells as they stand, keeping each choice. */
 function fillUsesSelects() {
-  const cells = (draft?.segments ?? []).flatMap((segment) =>
-    segment.kind === "cell" ? [segment] : [],
-  );
-  const selects = [...element("draft").querySelectorAll("select.draft-uses")];
-  selects.forEach((select, at) => {
-    if (!(select instanceof HTMLSelectElement)) return;
-    const cell = cells[at];
-    if (cell === undefined) return;
-    fillUsesSelect(select, cell.id, cell.uses);
-  });
+  if (draft !== undefined) {
+    const cells = (draft?.segments ?? []).flatMap((segment) =>
+      segment.kind === "cell" ? [segment] : [],
+    );
+    const selects = [...element("draft").querySelectorAll("select.draft-uses")];
+    selects.forEach((select, at) => {
+      if (!(select instanceof HTMLSelectElement)) return;
+      const cell = cells[at];
+      if (cell === undefined) return;
+      fillUsesSelect(select, cell.id, cell.uses);
+    });
+  } else if (editingDraftCell !== undefined) {
+    const select = document.querySelector(".cell-inline-editor select.draft-uses");
+    if (select instanceof HTMLSelectElement) {
+      fillUsesSelect(select, editingDraftCell.id, editingDraftCell.uses);
+    }
+  }
 }
 
 /**
@@ -5511,7 +5772,7 @@ function fillModelSelect(select, value) {
 
 /** Fills every cell's model list from `cellModels`, keeping the choice already made. */
 function fillModelSelects() {
-  for (const select of element("draft").querySelectorAll("select.draft-model")) {
+  for (const select of document.querySelectorAll("select.draft-model")) {
     if (!(select instanceof HTMLSelectElement)) continue;
     fillModelSelect(select, select.value);
   }
@@ -5525,11 +5786,11 @@ function fillModelSelects() {
 async function loadCellModels(load) {
   try {
     const page = await fetchModels();
-    if (draft === undefined || load !== cellModelLoad) return;
+    if ((draft === undefined && editingCellId === undefined) || load !== cellModelLoad) return;
     cellModels = configuredModelsOf(page).map((model) => `${model.provider}/${model.id}`);
     fillModelSelects();
   } catch (cause) {
-    if (draft === undefined || load !== cellModelLoad) return;
+    if ((draft === undefined && editingCellId === undefined) || load !== cellModelLoad) return;
     const status = element("editor-status");
     if (status.textContent === "")
       status.textContent = `Could not load the models: ${describe(cause)}`;
@@ -5538,6 +5799,8 @@ async function loadCellModels(load) {
 
 function stopEditing() {
   draft = undefined;
+  pendingNewCell = undefined;
+  editingDraftCell = undefined;
   editingCellId = undefined;
   cellDrafts.clear();
   element("draft").replaceChildren();
@@ -6131,6 +6394,8 @@ async function showSession(notebook) {
   }
   watching?.socket.close();
   watching = undefined;
+  pendingNewCell = undefined;
+  editingDraftCell = undefined;
   editingCellId = undefined;
   cellDrafts.clear();
   status.textContent = `Opening ${notebook}…`;
@@ -6257,6 +6522,8 @@ function route() {
   if (asked === "") {
     watching?.socket.close();
     watching = undefined;
+    pendingNewCell = undefined;
+    editingDraftCell = undefined;
     editingCellId = undefined;
     cellDrafts.clear();
     void showList();
@@ -7170,12 +7437,31 @@ document.addEventListener("click", (event) => {
   if (list.contains(target) || element("export").contains(target)) return;
   closeExportMenu();
 });
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  for (const list of document.querySelectorAll(".cell-add-list:not([hidden])")) {
+    if (list.contains(target) || list.parentElement?.contains(target)) continue;
+    /** @type {HTMLElement} */ (list).hidden = true;
+    list.parentElement?.querySelector(".cell-add")?.setAttribute("aria-expanded", "false");
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeTreeMenu();
     closeExportMenu();
+    closeCellAddMenus();
   }
 });
+
+/** Closes any cell add dropdown menus that are open. */
+function closeCellAddMenus() {
+  for (const menu of document.querySelectorAll(".cell-add-list:not([hidden])")) {
+    /** @type {HTMLElement} */ (menu).hidden = true;
+    const btn = menu.parentElement?.querySelector(".cell-add");
+    btn?.setAttribute("aria-expanded", "false");
+  }
+}
 
 /** Closes the Export list, when it is open. */
 function closeExportMenu() {
