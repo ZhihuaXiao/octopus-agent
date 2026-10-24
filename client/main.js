@@ -2420,6 +2420,11 @@ function plusIcon() {
   return symbolIcon(["M8 3v10", "M3 8h10"]);
 }
 
+/** An "x" mark: remove. */
+function removeIcon() {
+  return symbolIcon(["M4 4L12 12", "M12 4L4 12"]);
+}
+
 /**
  * Puts `text` on the clipboard and says so on the button for a moment.
  * @param {string} text
@@ -2542,6 +2547,20 @@ function cellAddMenu(cell, running) {
 
   menu.append(button, list);
   return menu;
+}
+
+/**
+ * A remove ("x") button to delete `cell` from the notebook.
+ * @param {CellView} cell
+ * @param {boolean} running
+ */
+function cellRemoveButton(cell, running) {
+  const button = symbolButton("cell-remove cell-delete", `Remove ${cell.id}`, removeIcon());
+  button.disabled = cell.status === "running" || running;
+  button.dataset.cell = cell.id;
+  button.dataset.action = "remove";
+  button.addEventListener("click", () => void removeNotebookCell(cell.id));
+  return button;
 }
 
 /**
@@ -3287,11 +3306,13 @@ function renderCell(cell, session, running) {
   runOne.addEventListener("click", () => void startRun([cell.id]));
   const editBtn = cellEditButton(cell);
   const addBtn = cellAddMenu(cell, running);
+  const removeBtn = cellRemoveButton(cell, running);
   if (isEditing) {
     editBtn.hidden = true;
     addBtn.hidden = true;
+    removeBtn.hidden = true;
   }
-  heading.append(editBtn, addBtn, runOne);
+  heading.append(editBtn, addBtn, removeBtn, runOne);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
@@ -3604,6 +3625,148 @@ function insertCellBelow(cellId, type) {
     void loadCellModels(++cellModelLoad);
   }
   renderSession();
+}
+
+/**
+ * Prompts the user to confirm deleting a cell via a modal dialog centered on the webpage.
+ * @param {string} cellId
+ * @returns {Promise<boolean>}
+ */
+function confirmCellDeletion(cellId) {
+  const dialog = /** @type {HTMLDialogElement} */ (element("cell-delete-dialog"));
+  element("cell-delete-message").textContent = `Delete cell “${cellId}”?`;
+  return new Promise((resolve) => {
+    let settled = false;
+    const confirmBtn = element("cell-delete-confirm");
+    const cancelBtn = element("cell-delete-cancel");
+    const closeBtn = element("cell-delete-close");
+
+    const cleanup = () => {
+      dialog.removeEventListener("close", onClose);
+      dialog.removeEventListener("click", onBackdrop);
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      closeBtn.removeEventListener("click", onCancel);
+    };
+
+    /** @param {boolean} confirmed */
+    const finish = (confirmed) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (dialog.open) dialog.close();
+      resolve(confirmed);
+    };
+
+    const onConfirm = () => finish(true);
+    const onCancel = () => finish(false);
+    const onClose = () => finish(false);
+    /** @param {MouseEvent} event */
+    const onBackdrop = (event) => {
+      if (event.target === dialog) finish(false);
+    };
+
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    closeBtn.addEventListener("click", onCancel);
+    dialog.addEventListener("close", onClose);
+    dialog.addEventListener("click", onBackdrop);
+
+    if (!dialog.open) dialog.showModal();
+    confirmBtn.focus();
+  });
+}
+
+/**
+ * Removes a cell from the notebook and saves the notebook.
+ * @param {string} cellId
+ */
+async function removeNotebookCell(cellId) {
+  if (watching === undefined) return;
+  const { state } = watching;
+  if (state.running) return;
+
+  const remainingCells = state.cells.filter((c) => c.id !== cellId);
+  const status = element("session-status");
+  if (remainingCells.length === 0) {
+    status.textContent = "A notebook must have at least one cell.";
+    return;
+  }
+
+  const confirmed = await confirmCellDeletion(cellId);
+  if (!confirmed) return;
+
+  if (editingCellId !== undefined) {
+    cancelCellEdit(editingCellId);
+  }
+  if (pendingNewCell !== undefined) {
+    cancelCellEdit(pendingNewCell.id);
+  }
+
+  const keptCellIds = new Set(remainingCells.map((c) => c.id));
+  const segments = [];
+  for (const segment of state.segments) {
+    if (segment.kind === "prose") {
+      segments.push({ kind: "prose", text: segment.text });
+      continue;
+    }
+    if (segment.id === cellId) {
+      continue;
+    }
+    const candidate = state.cells.find((c) => c.id === segment.id);
+    if (candidate !== undefined) {
+      const uses = candidate.uses.filter((name) => keptCellIds.has(name));
+      segments.push({
+        ...cellDeclaration(candidate, candidate.body),
+        uses,
+      });
+    } else {
+      segments.push({
+        kind: "cell",
+        id: segment.id,
+        type: "prompt",
+        body: "",
+        uses: [],
+        isolated: false,
+      });
+    }
+  }
+
+  status.textContent = "Saving…";
+  try {
+    const response = await request(`/api/sessions/${state.id}/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        base: state.revision,
+        segments,
+        ...(state.mode !== undefined ? { mode: state.mode } : {}),
+        ...(state.model !== undefined ? { model: state.model } : {}),
+        frontmatter: state.frontmatter,
+      }),
+    });
+    if (response.status === 409) {
+      const now = await request(`/api/sessions/${state.id}`);
+      if (now.ok) {
+        watching.state = /** @type {NotebookSessionState} */ (await now.json());
+      }
+      status.textContent = "The notebook changed on disk. Remove again to save over it.";
+      renderSession();
+      return;
+    }
+    if (!response.ok) {
+      const problem = (await response.text()).trim() || `The server answered ${response.status}`;
+      status.textContent = `Could not remove cell: ${problem}`;
+      return;
+    }
+    cellDrafts.delete(cellId);
+    openedForNotebook().delete(cellFoldKey(cellId));
+    status.textContent = "";
+    watching.state = /** @type {NotebookSessionState} */ (await response.json());
+    renderSession();
+  } catch (cause) {
+    status.textContent = `Could not remove cell: ${describe(cause)}`;
+  }
 }
 
 /**
@@ -6144,8 +6307,9 @@ const STATE_WORDS = {
  * the agent invoked to do it, are what this view is for hiding.
  * @param {CellView} cell
  * @param {string} session
+ * @param {boolean} running
  */
-function renderStep(cell, session) {
+function renderStep(cell, session, running) {
   const item = make("li", `run-step ${cell.status}`);
   item.dataset.cell = cell.id;
   const heading = make("div", "run-step-header");
@@ -6155,6 +6319,7 @@ function renderStep(cell, session) {
   );
   heading.append(...turnButtons(cell));
   if (cell.service === true) heading.append(serviceStopButton(cell.id));
+  heading.append(cellRemoveButton(cell, running));
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
@@ -6354,7 +6519,9 @@ function renderRunView(state) {
     panel.append(make("p", "run-outcome-advice", outcome.advice));
   }
 
-  element("run-steps").replaceChildren(...state.cells.map((cell) => renderStep(cell, state.id)));
+  element("run-steps").replaceChildren(
+    ...state.cells.map((cell) => renderStep(cell, state.id, state.running)),
+  );
 }
 
 /**

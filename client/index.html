@@ -352,11 +352,12 @@
       </div>
       <div id="notebook-model-body">
         <p class="hint">
-          Models whose provider has a stored API key, and models from custom providers you added. The
-          one you pick is written into this notebook. A cell that names its own model still uses that.
+          Models whose provider has a stored API key, and models from custom providers you added.
+          The one you pick is written into this notebook. A cell that names its own model still uses
+          that.
           <strong>Use the default</strong> clears it. <strong>Test</strong> asks that model for one
-          token and does not change the notebook. The line that appears stays short; click it to read
-          the full answer.
+          token and does not change the notebook. The line that appears stays short; click it to
+          read the full answer.
         </p>
         <label
           >Search
@@ -366,6 +367,19 @@
         <ul id="notebook-model-list" class="models-matches"></ul>
         <p id="notebook-model-status" class="status"></p>
         <button id="notebook-model-cancel" type="button">Cancel</button>
+      </div>
+    </dialog>
+    <dialog id="cell-delete-dialog">
+      <div class="rounds-heading">
+        <h2 id="cell-delete-title">Delete cell</h2>
+        <button id="cell-delete-close" type="button" aria-label="Close" title="Close">×</button>
+      </div>
+      <div id="cell-delete-body" class="cell-delete-body">
+        <p id="cell-delete-message">Delete cell?</p>
+        <div class="cell-delete-actions">
+          <button id="cell-delete-cancel" type="button">Cancel</button>
+          <button id="cell-delete-confirm" type="button" class="danger">Delete</button>
+        </div>
       </div>
     </dialog>
     <div id="model-test-popup" class="model-test-popup" popover="auto"></div>

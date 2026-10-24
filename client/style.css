@@ -836,7 +836,8 @@ header #tree-new {
 
 #cell-rounds-dialog,
 #notebook-model-dialog,
-#chat-details-dialog {
+#chat-details-dialog,
+#cell-delete-dialog {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 0.4rem;
   padding: 1rem 1.2rem;
@@ -848,13 +849,15 @@ header #tree-new {
 
 #cell-rounds-dialog:not([open]),
 #notebook-model-dialog:not([open]),
-#chat-details-dialog:not([open]) {
+#chat-details-dialog:not([open]),
+#cell-delete-dialog:not([open]) {
   display: none;
 }
 
 #cell-rounds-dialog[open],
 #notebook-model-dialog[open],
-#chat-details-dialog[open] {
+#chat-details-dialog[open],
+#cell-delete-dialog[open] {
   display: flex;
   flex-direction: column;
   max-height: 85vh;
@@ -862,7 +865,8 @@ header #tree-new {
 
 #cell-rounds-dialog::backdrop,
 #notebook-model-dialog::backdrop,
-#chat-details-dialog::backdrop {
+#chat-details-dialog::backdrop,
+#cell-delete-dialog::backdrop {
   background: color-mix(in srgb, canvastext 40%, transparent);
 }
 
@@ -874,6 +878,44 @@ header #tree-new {
 
 #notebook-model-dialog {
   width: min(32rem, calc(100vw - 2rem));
+}
+
+#cell-delete-dialog {
+  width: min(26rem, calc(100vw - 2rem));
+}
+
+.cell-delete-body {
+  margin-top: 0.8rem;
+}
+
+#cell-delete-message {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.cell-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.cell-delete-actions button {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.85rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+}
+
+.cell-delete-actions button.danger {
+  background: #ef4444;
+  color: white;
+  border: 1px solid #dc2626;
+}
+
+.cell-delete-actions button.danger:hover,
+.cell-delete-actions button.danger:focus-visible {
+  background: #dc2626;
 }
 
 #cell-rounds-body,
@@ -1473,9 +1515,15 @@ button:disabled {
 .cell-branch,
 .cell-stop,
 .cell-add,
+.cell-remove,
 .fold {
   font-size: 0.8rem;
   padding: 0.1rem 0.6rem;
+}
+
+.cell-remove:hover:not(:disabled),
+.cell-delete:hover:not(:disabled) {
+  color: #ef4444;
 }
 
 /* Header actions drawn as symbols. The name stays on the button for hover. */

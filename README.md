@@ -207,7 +207,7 @@ npm run octo -- --web
 
 The server binds `127.0.0.1` and port `8008` unless told otherwise, and serves the notebooks under the current directory. It prints a URL with a token generated for this start. Opening that URL starts a connection; the token then leaves the address bar and the browser keeps a cookie.
 
-The page has two views of the same notebook. **Author view** shows the cells, for writing and running them, including editing cells and inserting prompt or bash cells in place. **Run view** shows the inputs as a form and a single button, with the cells hidden. There is one account and no sandbox: anyone who can authenticate can run code as the user who started the server. To reach it from another machine, use an SSH tunnel and leave the server on loopback. See [docs/remote.md](docs/remote.md) before using `--host` or a password.
+The page has two views of the same notebook. **Author view** shows the cells, for writing and running them, including editing cells, inserting prompt or bash cells, and removing cells in place. **Run view** shows the inputs as a form and a single button, with the cells hidden and steps that can be removed. There is one account and no sandbox: anyone who can authenticate can run code as the user who started the server. To reach it from another machine, use an SSH tunnel and leave the server on loopback. See [docs/remote.md](docs/remote.md) before using `--host` or a password.
 
 ```sh
 npm run octo -- password
