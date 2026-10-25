@@ -1633,6 +1633,7 @@ button.symbol-button:active:not(:disabled) {
 button.symbol-button svg {
   width: 0.95rem;
   height: 0.95rem;
+  pointer-events: none;
 }
 
 button.symbol-button path {
@@ -2766,4 +2767,41 @@ button.context-ring svg {
   color: color-mix(in srgb, currentColor 65%, transparent);
   background: color-mix(in srgb, currentColor 4%, transparent);
   border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* Fast custom tooltips for interactive controls */
+.app-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: 22rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  border-radius: 0.3rem;
+  white-space: normal;
+  overflow-wrap: break-word;
+  background: #1c2430;
+  color: #f8fafc;
+  border: 1px solid color-mix(in srgb, #ffffff 15%, transparent);
+  box-shadow: 0 0.35rem 0.85rem color-mix(in srgb, black 30%, transparent);
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity 0.1s ease,
+    transform 0.1s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-tooltip {
+    background: #0d1117;
+    color: #e6edf3;
+    border-color: #30363d;
+    box-shadow: 0 0.45rem 1rem rgba(0, 0, 0, 0.5);
+  }
+}
+
+.app-tooltip.visible {
+  opacity: 1;
+  transform: translateY(0);
 }

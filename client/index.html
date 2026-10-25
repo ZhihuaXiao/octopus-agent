@@ -15,9 +15,13 @@
       </button>
     </header>
     <nav class="tabs" aria-label="Pages">
-      <button id="tab-notebook" type="button" aria-current="page">Notebook</button>
-      <button id="tab-modes" type="button">Modes</button>
-      <button id="tab-models" type="button">Models</button>
+      <button id="tab-notebook" type="button" aria-current="page" title="View the notebook">
+        Notebook
+      </button>
+      <button id="tab-modes" type="button" title="Manage execution modes">Modes</button>
+      <button id="tab-models" type="button" title="Configure model providers and defaults">
+        Models
+      </button>
     </nav>
     <section id="connect" class="connect" hidden>
       <form id="connect-form">
@@ -64,7 +68,9 @@
       <main id="list">
         <div class="list-header">
           <h2>Notebooks</h2>
-          <button id="list-new" type="button">New notebook</button>
+          <button id="list-new" type="button" title="Make a new notebook in this directory">
+            New notebook
+          </button>
         </div>
         <p id="status" class="status">Looking for notebooks…</p>
         <ul id="notebooks" class="notebooks"></ul>
@@ -87,8 +93,22 @@
             <p id="notebook" class="path"></p>
           </div>
           <div class="output-format" role="group" aria-label="How a cell's reply is shown">
-            <button id="format-plain" type="button" aria-pressed="true">Plain</button>
-            <button id="format-markdown" type="button" aria-pressed="false">Markdown</button>
+            <button
+              id="format-plain"
+              type="button"
+              aria-pressed="true"
+              title="Show replies as plain text"
+            >
+              Plain
+            </button>
+            <button
+              id="format-markdown"
+              type="button"
+              aria-pressed="false"
+              title="Render replies as Markdown"
+            >
+              Markdown
+            </button>
           </div>
           <div class="session-actions">
             <div id="author-controls" class="controls">
@@ -118,12 +138,20 @@
                 >
                   Expand all
                 </button>
-                <button id="run-all" type="button">Run all</button>
-                <button id="interrupt" type="button" disabled>Interrupt</button>
+                <button id="run-all" type="button" title="Run all cells in this notebook">
+                  Run all
+                </button>
+                <button id="interrupt" type="button" disabled title="Interrupt the running cell">
+                  Interrupt
+                </button>
               </div>
               <div class="control-group">
-                <button id="edit" type="button">Edit</button>
-                <button id="duplicate" type="button">Duplicate</button>
+                <button id="edit" type="button" title="Edit the whole notebook in full editor">
+                  Edit
+                </button>
+                <button id="duplicate" type="button" title="Duplicate this notebook">
+                  Duplicate
+                </button>
                 <div class="export-menu">
                   <button
                     id="export"
@@ -136,17 +164,33 @@
                     Export
                   </button>
                   <div id="export-list" class="export-list" role="menu" hidden>
-                    <button id="export-html" type="button" role="menuitem">HTML</button>
-                    <button id="export-markdown" type="button" role="menuitem">Markdown</button>
+                    <button
+                      id="export-html"
+                      type="button"
+                      role="menuitem"
+                      title="Export as standalone HTML page"
+                    >
+                      HTML
+                    </button>
+                    <button
+                      id="export-markdown"
+                      type="button"
+                      role="menuitem"
+                      title="Export as Markdown document"
+                    >
+                      Markdown
+                    </button>
                   </div>
                 </div>
               </div>
               <div class="control-group">
-                <a id="to-run-view" class="button" href="#">Run view</a>
+                <a id="to-run-view" class="button" href="#" title="Switch to Run view">Run view</a>
               </div>
             </div>
             <div id="run-controls" class="controls" hidden>
-              <a id="to-author-view" class="button" href="#">Author view</a>
+              <a id="to-author-view" class="button" href="#" title="Switch to Author view"
+                >Author view</a
+              >
             </div>
           </div>
         </div>
@@ -156,7 +200,7 @@
           <div class="file-toolbar">
             <p id="file-path" class="path"></p>
             <span id="file-kind" class="file-kind"></span>
-            <button id="file-edit" type="button" hidden>Edit</button>
+            <button id="file-edit" type="button" hidden title="Edit this file">Edit</button>
             <button id="file-rename" type="button" title="Give this file a new name">Rename</button>
             <button
               id="file-wrap"
@@ -167,8 +211,12 @@
             >
               Wrap
             </button>
-            <button id="file-save" type="button" hidden>Save</button>
-            <button id="file-cancel-edit" type="button" hidden>Cancel</button>
+            <button id="file-save" type="button" hidden title="Save changes to this file">
+              Save
+            </button>
+            <button id="file-cancel-edit" type="button" hidden title="Cancel editing">
+              Cancel
+            </button>
             <button id="file-accept" type="button" hidden title="Keep this file as it is now">
               Accept
             </button>
@@ -180,7 +228,7 @@
             >
               Reject
             </button>
-            <button id="file-close" type="button">Close</button>
+            <button id="file-close" type="button" title="Close this file view">Close</button>
           </div>
           <p id="file-status" class="status"></p>
           <div id="file-body" class="file-body"></div>
@@ -189,22 +237,34 @@
         <ol id="segments" class="segments"></ol>
         <form id="editor" class="editor" hidden>
           <div class="editor-controls">
-            <button id="save" type="submit">Save</button>
-            <button id="cancel" type="button">Cancel</button>
+            <button id="save" type="submit" title="Save changes to this notebook">Save</button>
+            <button id="cancel" type="button" title="Cancel editing without saving">Cancel</button>
             <p id="editor-status" class="status"></p>
           </div>
           <div id="draft"></div>
         </form>
         <div id="add-cells" class="add-cells" hidden>
-          <button id="add-prompt" type="button">+ Prompt cell</button>
-          <button id="add-bash" type="button">+ Bash cell</button>
+          <button
+            id="add-prompt"
+            type="button"
+            title="Add a prompt cell at the end of the notebook"
+          >
+            + Prompt cell
+          </button>
+          <button id="add-bash" type="button" title="Add a bash cell at the end of the notebook">
+            + Bash cell
+          </button>
         </div>
         <section id="run-view" class="run-view" hidden>
           <form id="run-form" class="run-form">
             <div id="run-inputs" class="run-inputs"></div>
             <div class="run-actions">
-              <button id="run-start" type="submit">Run</button>
-              <button id="run-stop" type="button" hidden>Stop</button>
+              <button id="run-start" type="submit" title="Run all cells in this notebook">
+                Run
+              </button>
+              <button id="run-stop" type="button" hidden title="Stop the running notebook">
+                Stop
+              </button>
               <span id="run-progress" class="run-progress"></span>
             </div>
           </form>
@@ -366,7 +426,7 @@
         <p id="notebook-model-chosen" class="models-chosen">No model chosen yet.</p>
         <ul id="notebook-model-list" class="models-matches"></ul>
         <p id="notebook-model-status" class="status"></p>
-        <button id="notebook-model-cancel" type="button">Cancel</button>
+        <button id="notebook-model-cancel" type="button" title="Close model picker">Cancel</button>
       </div>
     </dialog>
     <dialog id="cell-delete-dialog">
@@ -377,8 +437,15 @@
       <div id="cell-delete-body" class="cell-delete-body">
         <p id="cell-delete-message">Delete cell?</p>
         <div class="cell-delete-actions">
-          <button id="cell-delete-cancel" type="button">Cancel</button>
-          <button id="cell-delete-confirm" type="button" class="danger">Delete</button>
+          <button id="cell-delete-cancel" type="button" title="Cancel cell deletion">Cancel</button>
+          <button
+            id="cell-delete-confirm"
+            type="button"
+            class="danger"
+            title="Permanently delete this cell"
+          >
+            Delete
+          </button>
         </div>
       </div>
     </dialog>

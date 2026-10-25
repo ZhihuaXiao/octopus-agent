@@ -7,6 +7,9 @@ import {
   showProbePending,
   showProbeReport,
 } from "./model-probe.js";
+import { initTooltips, updateTooltip } from "./tooltip.js";
+
+initTooltips();
 
 /**
  * The client: lists the Notebooks the server can see, opens one into its
@@ -2348,6 +2351,7 @@ function symbolButton(className, title, icon) {
   button.type = "button";
   button.className = `symbol-button ${className}`;
   button.title = title;
+  button.dataset.tooltip = title;
   button.setAttribute("aria-label", title);
   button.append(icon);
   return button;
@@ -2445,12 +2449,12 @@ async function copyText(text, button) {
     document.execCommand("copy");
     area.remove();
   }
-  const title = button.title;
+  const title = button.dataset.tooltip || button.title;
   const label = button.querySelector("svg") === null ? button.textContent : undefined;
-  button.title = "Copied";
+  updateTooltip(button, "Copied");
   if (label !== undefined && label !== "") button.textContent = "Copied";
   window.setTimeout(() => {
-    button.title = title;
+    updateTooltip(button, title);
     if (label !== undefined && label !== "") button.textContent = label;
   }, 1200);
 }
@@ -2481,6 +2485,7 @@ function copyButton(text, symbol) {
   if (!symbol) {
     button.type = "button";
     button.title = "Copy this cell and its reply";
+    button.dataset.tooltip = "Copy this cell and its reply";
   }
   button.addEventListener("click", () => void copyText(text(), button));
   return button;
