@@ -32,6 +32,7 @@ import {
   type TurnOptions,
 } from "./agent.js";
 import type { Environment } from "./environment.js";
+import { extractPromptImages } from "./prompt-images.js";
 
 // Derived from pi's own signature rather than imported: the model type lives in
 // @earendil-works/pi-ai, which is pi's dependency and not ours to pin.
@@ -295,7 +296,17 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
     },
 
     async prompt(body: string, turnOptions: TurnOptions = {}): Promise<CellResult> {
-      const { signal, model, approach, onText, onThinking, onToolCall } = turnOptions;
+      const {
+        signal,
+        model,
+        approach,
+        onText,
+        onThinking,
+        onToolCall,
+        images: directImages,
+      } = turnOptions;
+      const { text: cleanBody, images: extractedImages } = extractPromptImages(body);
+      const allImages = [...extractedImages, ...(directImages ?? [])];
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
       if (model !== undefined) await takeOn(model);
@@ -374,7 +385,9 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
         );
       }
       try {
-        await session.prompt(body);
+        await session.prompt(cleanBody, {
+          ...(allImages.length > 0 ? { images: allImages } : {}),
+        });
       } finally {
         unsubscribe();
         signal?.removeEventListener("abort", stop);

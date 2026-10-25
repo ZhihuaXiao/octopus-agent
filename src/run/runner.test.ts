@@ -87,6 +87,36 @@ describe("runNotebook", () => {
     expect(cell.toolCalls).toEqual([{ name: "bash", input: { command: "ls" } }]);
   });
 
+  it("extracts pasted images from a prompt cell and passes them to the agent", async () => {
+    const rawData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk";
+    const notebook = `\`\`\`prompt id=vision
+Explain this graph:
+
+![Sales Graph](data:image/png;base64,${rawData})
+\`\`\`
+`;
+    const path = await notebookFile(notebook);
+    const agent = createScriptedAgent([{ text: "The graph shows an upward sales trend." }]);
+
+    const record = await runNotebook(path, { agent: agent.create });
+
+    expect(agent.prompts[0]).toBe("Explain this graph:\n\n[Image: Sales Graph]");
+    expect(agent.turns[0]?.images).toEqual([
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: rawData,
+      },
+    ]);
+    expect(record.cells[0]).toEqual(
+      expect.objectContaining({
+        id: "vision",
+        status: "ok",
+        text: "The graph shows an upward sales trend.",
+      }),
+    );
+  });
+
   it("tells a plan cell to plan and an ask cell only to answer", async () => {
     const path = await notebookFile(
       "```prompt id=plan approach=plan\nLook.\n```\n\n```prompt id=ask approach=ask\nWhy?\n```\n\n```prompt id=act\nDo it.\n```\n",

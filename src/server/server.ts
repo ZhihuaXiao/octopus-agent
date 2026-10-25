@@ -246,8 +246,8 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
 const READS: readonly string[] = ["GET", "HEAD"];
 const WRITES: readonly string[] = ["POST"];
 
-/** As much as a request's body may be: a Notebook being saved, which is Markdown, not its Artifacts. */
-const LONGEST_BODY = 1024 * 1024;
+/** As much as a request's body may be: a Notebook being saved, which is Markdown (including pasted images), not its Artifacts. */
+const LONGEST_BODY = 10 * 1024 * 1024;
 
 export interface ServerOptions {
   /**

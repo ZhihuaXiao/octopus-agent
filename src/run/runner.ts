@@ -11,6 +11,7 @@ import {
   noUsage,
 } from "../agent/agent.js";
 import { checkEnvironment } from "../agent/environment.js";
+import { extractPromptImages } from "../agent/prompt-images.js";
 import { type Mode, resolveMode, userModesDirectory } from "../mode/mode.js";
 import {
   ARTIFACTS_REFERENCE,
@@ -268,8 +269,9 @@ async function runPromptCell(
   agent: Agent,
 ): Promise<Outcome<PromptCellRecord>> {
   const stops = stopsFor(turn.timeout, turn.interrupt);
+  const { text: cleanBody, images: extractedImages } = extractPromptImages(turn.body);
   try {
-    const result = await agent.prompt(turn.body, {
+    const result = await agent.prompt(cleanBody, {
       onText: turn.onText,
       onThinking: turn.onThinking,
       onToolCall: turn.onToolCall,
@@ -278,6 +280,7 @@ async function runPromptCell(
         ? { approach: turn.approach }
         : {}),
       ...(stops.signal !== undefined ? { signal: stops.signal } : {}),
+      ...(extractedImages.length > 0 ? { images: extractedImages } : {}),
     });
     return { id: cell.id, type: "prompt", status: "ok", ...result };
   } catch (cause) {

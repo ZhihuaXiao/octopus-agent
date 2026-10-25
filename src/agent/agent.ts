@@ -234,6 +234,16 @@ export interface TurnOptions {
    * did. The same calls are on the result once the turn is over.
    */
   readonly onToolCall?: (call: ToolCall) => void;
+  /**
+   * Optional image attachments (screenshots, graphs, slides) for multimodal models.
+   */
+  readonly images?: readonly ImageAttachment[];
+}
+
+export interface ImageAttachment {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: string;
 }
 
 export interface Agent {

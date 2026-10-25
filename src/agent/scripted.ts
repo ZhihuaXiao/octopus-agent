@@ -8,6 +8,7 @@ import {
   TurnFailure,
   type TurnOptions,
   type Usage,
+  type ImageAttachment,
   noUsage,
 } from "./agent.js";
 import type { Environment } from "./environment.js";
@@ -51,6 +52,8 @@ export interface ScriptedTurnRecord {
   readonly context: readonly string[];
   /** The model the Run asked for, when it asked for one. */
   readonly model?: string;
+  /** Images attached to the turn. */
+  readonly images?: readonly ImageAttachment[];
 }
 
 /**
@@ -195,6 +198,7 @@ export function createScriptedAgent(
           session,
           context: held.map((turn) => turn.body),
           ...(model !== undefined ? { model } : {}),
+          ...(options.images !== undefined ? { images: options.images } : {}),
         });
 
         inFlight += 1;
