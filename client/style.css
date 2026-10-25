@@ -1624,17 +1624,42 @@ button.symbol-button path.symbol-fill {
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
-/* Expand and collapse. A filled triangle on a gray button, so it is not a
-   blank white square. Right means the piece is folded; down means it is open. */
+/* Expand and collapse. An open chevron. Right means the piece is folded; down means it is open. */
 button.symbol-button.fold {
-  background: #e7edf3;
-  border-color: #8e9aab;
-  color: #2c3542;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border-color: color-mix(in srgb, currentColor 20%, transparent);
+  color: inherit;
+}
+
+button.symbol-button.fold:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
 button.symbol-button.fold svg {
-  width: 0.72rem;
-  height: 0.72rem;
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+button.symbol-button.fold path {
+  stroke-width: 1.8;
+}
+
+/* Run button: distinct green accent to clearly signal execution */
+button.symbol-button.cell-run {
+  color: color-mix(in srgb, #15803d 85%, CanvasText);
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  border-color: color-mix(in srgb, #22c55e 45%, transparent);
+}
+
+button.symbol-button.cell-run:hover:not(:disabled) {
+  background: #16a34a;
+  border-color: #15803d;
+  color: #ffffff;
+}
+
+button.symbol-button.cell-run:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* A folded cell keeps its header — id, type, status, and the ways to run it —

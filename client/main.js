@@ -2384,16 +2384,16 @@ function branchIcon() {
 
 /** A triangle pointing right: run. */
 function runIcon() {
-  return symbolIcon(["M6 3.2 12.6 8 6 12.8z"], true);
+  return symbolIcon(["M6 3.5 12.5 8 6 12.5z"], true);
 }
 
 /**
- * A filled triangle: pointing right when the piece is folded, so the click
+ * An open chevron: pointing right when the piece is folded, so the click
  * expands it, and pointing down when it is open, so the click collapses it.
  * @param {boolean} folded
  */
 function foldIcon(folded) {
-  return symbolIcon(folded ? ["M5.2 2.8 12.4 8 5.2 13.2z"] : ["M2.8 5.2 8 12.4 13.2 5.2z"], true);
+  return symbolIcon(folded ? ["M6 4.5 9.5 8 6 11.5"] : ["M4.5 6 8 9.5 11.5 6"], false);
 }
 
 /** A small square: stop. */
@@ -3318,11 +3318,7 @@ function renderCell(cell, session, running) {
   if (cell.service === true && cell.status !== "running")
     heading.append(make("span", "cell-attribute", "service"));
   if (cell.service === true) heading.append(serviceStopButton(cell.id));
-  const runOne = symbolButton(
-    "cell-run",
-    `Run ${cell.id} alone, carrying on from the last run`,
-    runIcon(),
-  );
+  const runOne = symbolButton("cell-run", `Run ${cell.id} (execute cell alone)`, runIcon());
   runOne.disabled = running;
   runOne.addEventListener("click", () => void startRun([cell.id]));
   const editBtn = cellEditButton(cell);
