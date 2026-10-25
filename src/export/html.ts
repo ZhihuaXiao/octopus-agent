@@ -19,6 +19,7 @@ import { readFile } from "node:fs/promises";
 import type { ToolCall } from "../agent/agent.js";
 import {
   type Cell,
+  cellsOf,
   formatDiagnostics,
   formatDuration,
   isCellSegment,
@@ -26,6 +27,7 @@ import {
   titleOf,
 } from "../notebook/notebook.js";
 import type { CellRecord, CellStatus, PromptCellRecord, RunRecord } from "../run/record.js";
+import { readCellRounds } from "../run/rounds.js";
 import { isImage, isText, latestRunId, readRunRecord, runFile, runFileType } from "../run/store.js";
 import { isRecord } from "../util/guards.js";
 import {
@@ -87,20 +89,32 @@ pre { font-family: ui-monospace, monospace; font-size: 0.9rem; white-space: pre-
 .cell { border: 1px solid #8884; border-left: 4px solid #8888; border-radius: 4px; padding: 0.75rem 1rem; margin: 1rem 0; }
 .cell.ok { border-left-color: #22c55e; } .cell.error, .cell.timeout { border-left-color: #ef4444; }
 .cell.interrupted { border-left-color: #f59e0b; } .cell.stale { border-left-color: #a855f7; }
-.cell header { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; font-size: 0.85rem; margin-bottom: 0.5rem; }
+.cell > summary { cursor: pointer; user-select: none; }
+.cell > summary header { display: inline-flex; width: calc(100% - 1.5rem); flex-wrap: wrap; gap: 0.5rem; align-items: baseline; font-size: 0.85rem; vertical-align: middle; }
+.cell[open] > summary { margin-bottom: 0.6rem; }
 .cell-id { font-family: ui-monospace, monospace; font-weight: 600; }
-.cell-type, .cell-attribute, .cell-from { font-family: ui-monospace, monospace; opacity: 0.7; }
+.cell-type, .cell-attribute, .cell-from, .cell-duration { font-family: ui-monospace, monospace; opacity: 0.7; }
 .cell-status { margin-left: auto; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
 .cell.error .cell-status, .cell.timeout .cell-status, .cell-error { opacity: 1; color: #ef4444; }
 .cell.stale .cell-status { opacity: 1; color: #a855f7; } .cell.interrupted .cell-status { opacity: 1; color: #f59e0b; }
 .body { padding: 0.5rem; background: #8881; border-radius: 3px; }
-.output, .stderr, .thinking { margin-top: 0.75rem; } .output:empty { display: none; } .stderr { color: #ef4444; }
-.thinking summary { cursor: pointer; }
+.cell-stream { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
+.cell-part { margin: 0; }
+.tool-call { border: 1px solid #8884; border-radius: 3px; font-size: 0.85rem; }
+.tool-call summary { cursor: pointer; display: flex; gap: 0.5rem; align-items: baseline; padding: 0.25rem 0.5rem; }
+.tool-name { font-family: ui-monospace, monospace; font-weight: 600; }
+.tool-gist { font-family: ui-monospace, monospace; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool-input { margin: 0; padding: 0.4rem 0.5rem; background: #8881; font-size: 0.8rem; }
+.tool-result { margin: 0; padding: 0.4rem 0.5rem; font-family: ui-monospace, monospace; font-size: 0.8rem; border-top: 1px solid #8882; background: #88808; }
+.tool-call.failed { border-color: #ef444466; }
+.cell-thinking { font-size: 0.85rem; }
+.cell-thinking summary { cursor: pointer; opacity: 0.7; }
+.cell-thinking pre { padding: 0.4rem 0.6rem; border-left: 2px solid #8884; margin: 0.25rem 0 0; }
+.output, .stderr { margin-top: 0.4rem; } .output:empty { display: none; } .stderr { color: #ef4444; }
 .usage { font-size: 0.8rem; opacity: 0.7; font-family: ui-monospace, monospace; margin: 0.5rem 0 0; }
-.tool-calls { list-style: none; padding: 0; margin: 0.75rem 0 0; font-size: 0.85rem; }
-.tool-calls summary { cursor: pointer; } .tool-name { font-family: ui-monospace, monospace; font-weight: 600; }
-.tool-gist { font-family: ui-monospace, monospace; opacity: 0.7; } .tool-calls pre { padding: 0.5rem; background: #8881; }
-.artifacts { list-style: none; padding: 0; margin: 0.75rem 0 0; display: flex; flex-wrap: wrap; gap: 1rem; }
+.tool-calls { list-style: none; padding: 0; margin: 0.4rem 0 0; font-size: 0.85rem; }
+.tool-calls summary { cursor: pointer; } .tool-calls pre { padding: 0.5rem; background: #8881; }
+.artifacts { list-style: none; padding: 0; margin: 0.4rem 0 0; display: flex; flex-wrap: wrap; gap: 1rem; }
 .artifact { font-size: 0.85rem; } .artifact.text { flex-basis: 100%; }
 .artifact img { max-width: 100%; display: block; border: 1px solid #8884; }
 .artifact-name { display: block; font-family: ui-monospace, monospace; opacity: 0.7; }
@@ -190,7 +204,13 @@ const STANDING_WORDS: Readonly<Record<Standing, string>> = {
 interface Recorded {
   readonly record: CellRecord;
   readonly run: string;
+  readonly runRecord: RunRecord;
 }
+
+export type CellPart =
+  | { kind: "thinking"; text: string }
+  | { kind: "tool"; name: string; input: unknown; result?: string; isError?: boolean }
+  | { kind: "text"; text: string };
 
 /** What the document shows of one Cell beside its declaration. */
 interface Shown {
@@ -200,6 +220,7 @@ interface Shown {
   /** The Run that recorded it, when that is not the Run exported. */
   readonly from?: string;
   readonly artifacts: readonly Artifact[];
+  readonly parts: readonly CellPart[];
 }
 
 /**
@@ -218,8 +239,16 @@ function redactingRenderer(credentials: readonly string[]) {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
 
-  const toolCall = (call: ToolCall) =>
-    `<li><details><summary><span class="tool-name">${show(call.name)}</span> <span class="tool-gist">${show(gistOf(call.input, hide))}</span></summary><pre>${show(abridged(call.input, hide))}</pre>${call.result !== undefined && call.name !== "read" && call.name !== "write" ? `<pre class="tool-result">${show(call.result)}</pre>` : ""}</details></li>`;
+  const toolCall = (call: { name: string; input: unknown; result?: string; isError?: boolean }) => {
+    const resultPre =
+      call.result !== undefined &&
+      call.result !== "" &&
+      call.name !== "read" &&
+      call.name !== "write"
+        ? `<pre class="tool-result">${show(call.result)}</pre>`
+        : "";
+    return `<details class="cell-part tool-call${call.isError ? " failed" : ""}"><summary><span class="tool-name">${show(call.name)}</span> <span class="tool-gist">${show(gistOf(call.input, hide))}</span></summary><pre class="tool-input">${show(abridged(call.input, hide))}</pre>${resultPre}</details>`;
+  };
 
   /**
    * An Artifact embedded: an image drawn, a text file shown and offered under
@@ -262,32 +291,42 @@ function redactingRenderer(credentials: readonly string[]) {
       .map((attribute) => `<span class="cell-attribute">${show(attribute)}</span>`);
     const origin =
       from === undefined ? "" : ` <span class="cell-from">from run ${show(from)}</span>`;
-    const parts = [
-      `<header><span class="cell-id">${show(declared.id)}</span> <span class="cell-type">${declared.type}</span> ${attributes.join(" ")}${origin} <span class="cell-status">${STANDING_WORDS[standing]}</span></header>`,
-      `<pre class="body">${show(declared.body)}</pre>`,
-    ];
-    if (record?.type === "prompt") {
-      if (record.toolCalls.length > 0) {
-        parts.push(`<ol class="tool-calls">${record.toolCalls.map(toolCall).join("")}</ol>`);
-      }
-      if (record.thinking !== undefined && record.thinking !== "") {
-        parts.push(
-          `<details class="thinking" open><summary>Thinking</summary>` +
-            `<pre>${show(record.thinking)}</pre></details>`,
+    const duration =
+      record?.startedAt && record?.endedAt
+        ? Math.max(0, new Date(record.endedAt).getTime() - new Date(record.startedAt).getTime())
+        : undefined;
+    const durationSpan =
+      duration !== undefined
+        ? ` <span class="cell-duration">${formatDuration(duration)}</span>`
+        : "";
+    const header = `<header><span class="cell-id">${show(declared.id)}</span> <span class="cell-type">${declared.type}</span> ${attributes.join(" ")}${origin} <span class="cell-status">${STANDING_WORDS[standing]}</span>${durationSpan}</header>`;
+    const parts = [`<pre class="body">${show(declared.body)}</pre>`];
+    const streamParts: string[] = [];
+    for (const part of shown.parts) {
+      if (part.kind === "thinking") {
+        streamParts.push(
+          `<details class="cell-part cell-thinking"><summary>Thinking</summary><pre>${show(part.text)}</pre></details>`,
         );
+      } else if (part.kind === "tool") {
+        streamParts.push(toolCall(part));
+      } else if (part.kind === "text") {
+        streamParts.push(`<pre class="output">${show(part.text)}</pre>`);
       }
-      parts.push(`<pre class="output">${show(record.text)}</pre>`);
+    }
+    if (streamParts.length > 0) {
+      parts.push(`<div class="cell-stream">\n${streamParts.join("\n")}\n</div>`);
+    }
+    if (record?.type === "prompt") {
       parts.push(`<p class="usage">${show(usageOf(record))}</p>`);
     }
-    if (record?.type === "bash") {
-      parts.push(`<pre class="output">${show(record.stdout)}</pre>`);
-      if (record.stderr !== "") parts.push(`<pre class="stderr">${show(record.stderr)}</pre>`);
+    if (record?.type === "bash" && record.stderr !== "") {
+      parts.push(`<pre class="stderr">${show(record.stderr)}</pre>`);
     }
     if (record?.error !== undefined) parts.push(`<p class="cell-error">${show(record.error)}</p>`);
     if (artifacts.length > 0) {
       parts.push(`<ul class="artifacts">${artifacts.map(artifact).join("\n")}</ul>`);
     }
-    return `<section class="cell ${standing.replace(" ", "-")}">\n${parts.join("\n")}\n</section>`;
+    return `<details class="cell ${standing.replace(" ", "-")}">\n<summary>${header}</summary>\n${parts.join("\n")}\n</details>`;
   };
 
   /**
@@ -353,7 +392,9 @@ async function recordedAsOf(notebook: string, record: RunRecord): Promise<Map<st
   while (current !== undefined && !walked.has(current.id)) {
     walked.add(current.id);
     for (const cell of current.cells) {
-      if (!recorded.has(cell.id)) recorded.set(cell.id, { record: cell, run: current.id });
+      if (!recorded.has(cell.id)) {
+        recorded.set(cell.id, { record: cell, run: current.id, runRecord: current });
+      }
     }
     current =
       current.continues === undefined
@@ -361,6 +402,62 @@ async function recordedAsOf(notebook: string, record: RunRecord): Promise<Map<st
         : await readRunRecord(notebook, current.continues);
   }
   return recorded;
+}
+
+/**
+ * The pieces of a cell's turn in the order they happened: thoughts, tool calls,
+ * and text replies interleaved as the agent produced them.
+ */
+function partsForCell(
+  cell: Cell,
+  record: CellRecord,
+  runRecord: RunRecord,
+  allCells: readonly Cell[],
+): CellPart[] {
+  if (record.type !== "prompt") {
+    return record.stdout === "" ? [] : [{ kind: "text", text: record.stdout }];
+  }
+  const parts: CellPart[] = [];
+  if (runRecord.agentSession !== undefined) {
+    const cellRounds = readCellRounds(runRecord.agentSession, runRecord.anchors, cell.id, allCells);
+    if (cellRounds.ok) {
+      for (const round of cellRounds.value.rounds) {
+        if (round.thinking !== undefined && round.thinking !== "") {
+          parts.push({ kind: "thinking", text: round.thinking });
+        }
+        for (const call of round.toolCalls) {
+          parts.push({
+            kind: "tool",
+            name: call.name,
+            input: call.input,
+            ...(call.result !== undefined ? { result: call.result } : {}),
+            ...(call.isError ? { isError: true } : {}),
+          });
+        }
+        if (round.text !== "") {
+          parts.push({ kind: "text", text: round.text });
+        }
+      }
+    }
+  }
+  if (parts.length === 0) {
+    for (const call of record.toolCalls) {
+      parts.push({
+        kind: "tool",
+        name: call.name,
+        input: call.input,
+        ...(call.result !== undefined ? { result: call.result } : {}),
+        ...(call.isError ? { isError: true } : {}),
+      });
+    }
+    if (record.thinking !== undefined && record.thinking !== "") {
+      parts.push({ kind: "thinking", text: record.thinking });
+    }
+    if (record.text !== "") {
+      parts.push({ kind: "text", text: record.text });
+    }
+  }
+  return parts;
 }
 
 /**
@@ -426,29 +523,22 @@ function markdownRenderer(credentials: readonly string[]) {
       "",
       fenced(declared.type, hide(declared.body)),
     ];
+    for (const part of shown.parts) {
+      if (part.kind === "thinking") {
+        parts.push("", "**Thinking**", "", fenced("", hide(part.text)));
+      } else if (part.kind === "tool") {
+        const gist = gistOf(part.input, hide);
+        const summary = gist === "" ? `**${hide(part.name)}**` : `**${hide(part.name)}** ${gist}`;
+        parts.push("", `- ${summary}\n\n${fenced("json", abridged(part.input, hide))}`);
+      } else if (part.kind === "text") {
+        parts.push("", fenced("", hide(part.text)));
+      }
+    }
     if (record?.type === "prompt") {
-      if (record.toolCalls.length > 0) {
-        parts.push(
-          "",
-          record.toolCalls
-            .map((call) => {
-              const gist = gistOf(call.input, hide);
-              const summary =
-                gist === "" ? `**${hide(call.name)}**` : `**${hide(call.name)}** ${gist}`;
-              return `- ${summary}\n\n${fenced("json", abridged(call.input, hide))}`;
-            })
-            .join("\n\n"),
-        );
-      }
-      if (record.thinking !== undefined && record.thinking !== "") {
-        parts.push("", "**Thinking**", "", fenced("", hide(record.thinking)));
-      }
-      parts.push("", fenced("", hide(record.text)));
       parts.push("", hide(usageOf(record)));
     }
-    if (record?.type === "bash") {
-      parts.push("", fenced("", hide(record.stdout)));
-      if (record.stderr !== "") parts.push("", fenced("", hide(record.stderr)));
+    if (record?.type === "bash" && record.stderr !== "") {
+      parts.push("", fenced("", hide(record.stderr)));
     }
     if (record?.error !== undefined) parts.push("", hide(record.error));
     if (artifacts.length > 0) parts.push("", artifacts.map(artifact).join("\n\n"));
@@ -515,6 +605,9 @@ export async function exportNotebook(request: ExportRequest): Promise<Exported> 
     const { cell } = segment;
     const found = recorded.get(cell.id);
     if (found !== undefined) shownRecords.push(found);
+    const allCells = cellsOf(parsed.notebook);
+    const parts =
+      found !== undefined ? partsForCell(cell, found.record, found.runRecord, allCells) : [];
     body.push(
       render.cell(cell, {
         standing:
@@ -522,6 +615,7 @@ export async function exportNotebook(request: ExportRequest): Promise<Exported> 
         ...(found !== undefined ? { record: found.record } : {}),
         ...(found !== undefined && found.run !== record.id ? { from: found.run } : {}),
         artifacts: found === undefined ? [] : await artifactsOf(notebook, found),
+        parts,
       }),
     );
   }
