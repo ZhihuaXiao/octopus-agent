@@ -642,7 +642,6 @@ function renderNodes(nodes) {
       const link = document.createElement("a");
       link.append(octoName(node.name));
       link.href = hashFor(node.path, "author");
-      link.title = node.title;
       if (node.path === asked) link.setAttribute("aria-current", "page");
       item.append(treeRow(link, node.path, "notebook"));
       return item;
@@ -651,7 +650,6 @@ function renderNodes(nodes) {
       const item = make("li", "tree-text");
       const button = make("button", "tree-open", node.name);
       button.type = "button";
-      button.title = node.path;
       if (node.path === openPane) button.setAttribute("aria-current", "page");
       if (reviewsOf().some((review) => review.path === node.path)) button.classList.add("pending");
       button.addEventListener("click", () => openText(node.path));
@@ -659,7 +657,6 @@ function renderNodes(nodes) {
       return item;
     }
     const name = make("span", "tree-file-name", node.name);
-    name.title = node.path;
     const item = make("li", "tree-file");
     item.append(treeRow(name, node.path, "file"));
     return item;

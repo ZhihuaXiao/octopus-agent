@@ -60,7 +60,10 @@ export function initTooltips() {
  * @param {boolean} immediate
  */
 function showForTarget(target, immediate) {
-  if (target.matches(".tree-menu-button, .tree-menu-button *")) {
+  if (
+    target.matches(".tree-menu-button, .tree-menu-button *") ||
+    target.closest("#sidebar .tree") !== null
+  ) {
     return;
   }
 
@@ -163,7 +166,11 @@ function onPointerOver(event) {
   const target = /** @type {HTMLElement | null} */ (
     event.target.closest("[data-tooltip], [title]")
   );
-  if (target === null || target.matches(".tree-menu-button, .tree-menu-button *")) {
+  if (
+    target === null ||
+    target.matches(".tree-menu-button, .tree-menu-button *") ||
+    target.closest("#sidebar .tree") !== null
+  ) {
     if (activeTarget !== null) hideTooltip();
     return;
   }
