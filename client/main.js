@@ -639,6 +639,7 @@ function renderNodes(nodes) {
       line.append(make("span", "tree-folder-name", `${node.name}/`), folderMenu(node.path));
       summary.append(line);
       details.append(summary, contents);
+      attachFolderDrop(details, node.path, details);
       item.append(details);
       return item;
     }
@@ -892,6 +893,71 @@ async function uploadTreeFiles(folder, files) {
   if (!listedAgain) return;
   const savedText = saved === 1 ? "Uploaded 1 file." : `Uploaded ${saved} files.`;
   status.textContent = problems.length === 0 ? savedText : `${savedText} ${problems.join(" ")}`;
+}
+
+/**
+ * Whether a drag event carries files from the host file manager.
+ * @param {DragEvent} event
+ * @returns {boolean}
+ */
+function isFilesDrag(event) {
+  if (event.dataTransfer === null) return false;
+  const types = event.dataTransfer.types;
+  return types !== undefined && Array.from(types).includes("Files");
+}
+
+/**
+ * Enables dropping files from the host onto `element` to upload into `folder`.
+ * @param {HTMLElement} element
+ * @param {string} folder
+ * @param {HTMLDetailsElement} [details]
+ */
+function attachFolderDrop(element, folder, details) {
+  let depth = 0;
+  const targetHeader = element.querySelector("summary") ?? element;
+
+  element.addEventListener("dragenter", (event) => {
+    if (!isFilesDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    depth += 1;
+    targetHeader.classList.add("tree-drop-target");
+  });
+
+  element.addEventListener("dragover", (event) => {
+    if (!isFilesDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+
+  element.addEventListener("dragleave", (event) => {
+    if (!isFilesDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    depth -= 1;
+    if (depth <= 0) {
+      depth = 0;
+      targetHeader.classList.remove("tree-drop-target");
+    }
+  });
+
+  element.addEventListener("drop", (event) => {
+    if (!isFilesDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    depth = 0;
+    targetHeader.classList.remove("tree-drop-target");
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    if (details !== undefined && !details.open) {
+      details.open = true;
+      openFolders.add(`${folder}/`);
+    }
+    void uploadTreeFiles(folder, files);
+  });
 }
 
 /**
@@ -8083,6 +8149,21 @@ element("tree-upload").addEventListener("click", (event) => {
   ]);
 });
 element("sidebar").addEventListener("scroll", closeTreeMenu);
+attachFolderDrop(element("sidebar"), "");
+window.addEventListener("dragover", (event) => {
+  if (isFilesDrag(event)) event.preventDefault();
+});
+window.addEventListener("drop", (event) => {
+  if (isFilesDrag(event)) event.preventDefault();
+  document.querySelectorAll(".tree-drop-target").forEach((el) => {
+    el.classList.remove("tree-drop-target");
+  });
+});
+window.addEventListener("dragend", () => {
+  document.querySelectorAll(".tree-drop-target").forEach((el) => {
+    el.classList.remove("tree-drop-target");
+  });
+});
 document.addEventListener("click", (event) => {
   const menu = element("tree-menu");
   if (menu.hidden) return;

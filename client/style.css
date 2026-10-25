@@ -117,6 +117,23 @@ body {
   padding: 0.15rem 0;
 }
 
+.tree summary.tree-drop-target,
+.tree summary.tree-drop-target .tree-summary-line {
+  background: color-mix(in srgb, #3b82f6 20%, transparent);
+  border-radius: 0.3rem;
+}
+
+.tree summary.tree-drop-target {
+  outline: 2px dashed #3b82f6;
+  outline-offset: -1px;
+}
+
+.sidebar.tree-drop-target {
+  background: color-mix(in srgb, #3b82f6 8%, transparent);
+  outline: 2px dashed #3b82f6;
+  outline-offset: -4px;
+}
+
 /* A flex row inside the summary, not on it: a summary set to flex no longer hides its folder. */
 .tree-summary-line {
   display: inline-flex;
