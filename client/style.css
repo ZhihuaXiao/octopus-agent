@@ -1547,12 +1547,14 @@ button:disabled {
 
 .cell-type,
 .cell-attribute,
-.cell-status {
+.cell-status,
+.cell-duration {
   font-size: 0.8rem;
   opacity: 0.7;
 }
 
-.cell-attribute {
+.cell-attribute,
+.cell-duration {
   font-family: ui-monospace, monospace;
 }
 
@@ -1560,7 +1562,8 @@ button:disabled {
   margin-left: auto;
 }
 
-.cell.running .cell-status {
+.cell.running .cell-status,
+.cell.running .cell-duration {
   opacity: 1;
   color: #3b82f6;
 }
@@ -1572,6 +1575,9 @@ button:disabled {
 .cell.stale .cell-status {
   opacity: 1;
   color: #a855f7;
+}
+.cell.stale .cell-duration {
+  opacity: 0.5;
 }
 /* Somebody stopped it; nothing went wrong that wants putting right. */
 .cell.interrupted .cell-status,
@@ -2195,8 +2201,27 @@ button.context-ring svg {
   padding: 0.15rem 0.6rem;
 }
 
-.cell-inline-actions button.cell-save {
+.cell-inline-actions button.cell-save,
+.cell-inline-actions button.cell-run {
   font-weight: 600;
+}
+
+.cell-inline-actions button.cell-run {
+  color: color-mix(in srgb, #15803d 85%, CanvasText);
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  border-color: color-mix(in srgb, #22c55e 45%, transparent);
+}
+
+.cell-inline-actions button.cell-run:hover:not(:disabled),
+.cell-inline-actions button.cell-run:focus-visible:not(:disabled) {
+  background: #16a34a;
+  border-color: #15803d;
+  color: #ffffff;
+}
+
+.cell-inline-actions button.cell-run:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .cell-inline-status {
@@ -2549,7 +2574,14 @@ button.context-ring svg {
   opacity: 0.7;
 }
 
-.run-step.running .run-step-state {
+.run-step-duration {
+  font-size: 0.85rem;
+  font-family: ui-monospace, monospace;
+  opacity: 0.7;
+}
+
+.run-step.running .run-step-state,
+.run-step.running .run-step-duration {
   opacity: 1;
   color: #3b82f6;
 }
@@ -2565,6 +2597,9 @@ button.context-ring svg {
 .run-step.stale .run-step-state {
   opacity: 1;
   color: #a855f7;
+}
+.run-step.stale .run-step-duration {
+  opacity: 0.5;
 }
 
 .cell-output.markdown {

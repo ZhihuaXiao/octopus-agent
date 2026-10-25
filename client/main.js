@@ -148,6 +148,9 @@ initTooltips();
  *   error?: string,
  *   context?: ContextUsage,
  *   service?: boolean,
+ *   startedAt?: string,
+ *   endedAt?: string,
+ *   duration?: number,
  * }} CellView
  * @typedef {{ kind: "prose", text: string } | { kind: "cell", id: string }} SegmentView
  * @typedef {"string" | "number" | "boolean"} InputType
@@ -187,6 +190,8 @@ initTooltips();
  *   error?: string,
  *   context?: ContextUsage,
  *   servicePids?: number[],
+ *   startedAt?: string,
+ *   endedAt?: string,
  * }} CellRecord
  * @typedef {{ sequence: number } & (
  *   | { type: "run-started", run: string, cells: string[] }
@@ -1544,6 +1549,65 @@ const hashFor = (notebook, shown) =>
 /** @param {number} ms */
 const formatDuration = (ms) =>
   ms % 60_000 === 0 ? `${ms / 60_000}m` : ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
+
+/**
+ * Formats an execution time duration in milliseconds into a concise readable string.
+ * @param {number} ms
+ * @returns {string}
+ */
+function formatCellDuration(ms) {
+  if (ms < 0) return "0ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const seconds = Math.round((ms % 60_000) / 1000);
+  const minutes = Math.floor(ms / 60_000);
+  if (ms < 3_600_000) {
+    return `${minutes}m ${seconds}s`;
+  }
+  const hours = Math.floor(ms / 3_600_000);
+  const remMinutes = Math.floor((ms % 3_600_000) / 60_000);
+  return `${hours}h ${remMinutes}m`;
+}
+
+/**
+ * Returns the running time text and tooltip for a cell, or undefined if it has not run.
+ * @param {CellView} cell
+ * @returns {{ text: string, title: string } | undefined}
+ */
+function cellRunningTime(cell) {
+  if (cell.status === "running") {
+    const started = cell.startedAt !== undefined ? Date.parse(cell.startedAt) : NaN;
+    if (!isNaN(started)) {
+      const elapsed = Math.max(0, Date.now() - started);
+      const text = formatCellDuration(elapsed);
+      const title = `Running for ${text} (started at ${new Date(started).toLocaleTimeString()})`;
+      return { text, title };
+    }
+    return { text: "running…", title: "Running" };
+  }
+  if (cell.duration !== undefined) {
+    const text = formatCellDuration(cell.duration);
+    let title = `Ran in ${text}`;
+    if (cell.startedAt !== undefined && cell.endedAt !== undefined) {
+      const startStr = new Date(cell.startedAt).toLocaleTimeString();
+      const endStr = new Date(cell.endedAt).toLocaleTimeString();
+      title = `Ran in ${text} (${startStr} – ${endStr})`;
+    }
+    return { text, title };
+  }
+  if (cell.startedAt !== undefined && cell.endedAt !== undefined) {
+    const start = Date.parse(cell.startedAt);
+    const end = Date.parse(cell.endedAt);
+    if (!isNaN(start) && !isNaN(end)) {
+      const ms = Math.max(0, end - start);
+      const text = formatCellDuration(ms);
+      const startStr = new Date(cell.startedAt).toLocaleTimeString();
+      const endStr = new Date(cell.endedAt).toLocaleTimeString();
+      return { text, title: `Ran in ${text} (${startStr} – ${endStr})` };
+    }
+  }
+  return undefined;
+}
 
 /** The keys a tool's input is best summed up by, in order of preference. */
 const GIST_KEYS = ["command", "path", "file_path", "filePath", "pattern", "query", "url"];
@@ -3314,6 +3378,12 @@ function renderCell(cell, session, running) {
   if (cell.timeout !== undefined)
     heading.append(make("span", "cell-attribute", `timeout ${formatDuration(cell.timeout)}`));
   heading.append(make("span", "cell-status", cell.status));
+  const time = cellRunningTime(cell);
+  if (time !== undefined) {
+    const durationSpan = make("span", "cell-duration", time.text);
+    durationSpan.title = time.title;
+    heading.append(durationSpan);
+  }
   heading.append(...turnButtons(cell));
   heading.append(branchButton(cell));
   if (cell.service === true && cell.status !== "running")
@@ -3329,6 +3399,7 @@ function renderCell(cell, session, running) {
     editBtn.hidden = true;
     addBtn.hidden = true;
     removeBtn.hidden = true;
+    runOne.hidden = true;
   }
   heading.append(editBtn, addBtn, removeBtn, runOne);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
@@ -3704,12 +3775,29 @@ function renderInlineCellEditor(cell) {
   const actions = make("div", "cell-inline-actions");
   const saveBtn = make("button", "cell-save", "Save");
   saveBtn.type = "button";
+  saveBtn.title = "Save changes to this cell";
+  const runBtn = make("button", "cell-run", "Run");
+  runBtn.type = "button";
+  runBtn.title = "Save changes and run this cell";
+  if (cell.status === "running" || watching?.state.running === true) runBtn.disabled = true;
   const cancelBtn = make("button", "cell-cancel", "Cancel");
   cancelBtn.type = "button";
+  cancelBtn.title = "Cancel editing without saving";
   const status = make("span", "cell-inline-status");
 
-  saveBtn.addEventListener("click", () => void saveCellEdit(cell, status, saveBtn));
+  const actionButtons = [saveBtn, cancelBtn, runBtn];
+  const onSave = () => saveCellEdit(cell, status, actionButtons);
+  const onRun = async () => {
+    if (watching?.state.running === true) return;
+    const savedId = await onSave();
+    if (savedId !== undefined) {
+      void startRun([savedId]);
+    }
+  };
+
+  saveBtn.addEventListener("click", () => void onSave());
   cancelBtn.addEventListener("click", () => cancelCellEdit(cell.id));
+  runBtn.addEventListener("click", () => void onRun());
 
   declaration.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -3717,7 +3805,7 @@ function renderInlineCellEditor(cell) {
       cancelCellEdit(cell.id);
     } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      void saveCellEdit(cell, status, saveBtn);
+      void onSave();
     }
   });
 
@@ -3729,11 +3817,11 @@ function renderInlineCellEditor(cell) {
       cancelCellEdit(cell.id);
     } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      void saveCellEdit(cell, status, saveBtn);
+      void onSave();
     }
   });
 
-  actions.append(saveBtn, cancelBtn, status);
+  actions.append(saveBtn, cancelBtn, runBtn, status);
   editor.append(declaration, wrap, actions);
 
   queueMicrotask(() => {
@@ -3766,9 +3854,10 @@ function cellDeclaration(cell, body) {
  * Saves changes made to a cell's declaration and body in author view.
  * @param {CellView} cell
  * @param {HTMLSpanElement} status
- * @param {HTMLButtonElement} button
+ * @param {HTMLButtonElement | HTMLButtonElement[]} [buttons]
+ * @returns {Promise<string | undefined>}
  */
-async function saveCellEdit(cell, status, button) {
+async function saveCellEdit(cell, status, buttons) {
   if (watching === undefined || editingDraftCell === undefined) return;
   const { state } = watching;
   const draftCell = editingDraftCell;
@@ -3777,7 +3866,8 @@ async function saveCellEdit(cell, status, button) {
     status.textContent = "Give this cell an id before saving it.";
     return;
   }
-  button.disabled = true;
+  const btnList = buttons === undefined ? [] : Array.isArray(buttons) ? buttons : [buttons];
+  for (const b of btnList) b.disabled = true;
   status.textContent = "Saving…";
   try {
     const isPending = pendingNewCell !== undefined && pendingNewCell.id === cell.id;
@@ -3858,7 +3948,7 @@ async function saveCellEdit(cell, status, button) {
       } else {
         status.textContent = problem;
       }
-      button.disabled = false;
+      for (const b of btnList) b.disabled = false;
       return;
     }
     cellDrafts.delete(cell.id);
@@ -3872,9 +3962,11 @@ async function saveCellEdit(cell, status, button) {
     editingCellId = undefined;
     watching.state = /** @type {NotebookSessionState} */ (await response.json());
     renderSession();
+    return newId;
   } catch (cause) {
     status.textContent = `Could not save: ${describe(cause)}`;
-    button.disabled = false;
+    for (const b of btnList) b.disabled = false;
+    return;
   }
 }
 
@@ -4645,6 +4737,67 @@ function octoName(name) {
   return shown;
 }
 
+/** Timer updating running cell durations in real time. */
+/** @type {ReturnType<typeof setInterval> | undefined} */
+let runningCellTimer;
+
+function syncRunningTimer() {
+  const hasRunning = watching?.state.cells.some((c) => c.status === "running") ?? false;
+  if (hasRunning && runningCellTimer === undefined) {
+    runningCellTimer = setInterval(updateRunningDurations, 500);
+  } else if (!hasRunning && runningCellTimer !== undefined) {
+    clearInterval(runningCellTimer);
+    runningCellTimer = undefined;
+  }
+}
+
+function stopRunningTimer() {
+  if (runningCellTimer !== undefined) {
+    clearInterval(runningCellTimer);
+    runningCellTimer = undefined;
+  }
+}
+
+function updateRunningDurations() {
+  if (watching === undefined) {
+    stopRunningTimer();
+    return;
+  }
+  for (const cell of watching.state.cells) {
+    if (cell.status !== "running") continue;
+    const time = cellRunningTime(cell);
+    if (time === undefined) continue;
+
+    // Update in author view
+    const item = element("segments")?.querySelector(`[data-cell="${cell.id}"]`);
+    if (item instanceof HTMLElement) {
+      let durationSpan = item.querySelector(".cell-duration");
+      if (durationSpan === null) {
+        durationSpan = make("span", "cell-duration", time.text);
+        const statusSpan = item.querySelector(".cell-status");
+        if (statusSpan !== null) statusSpan.after(durationSpan);
+      } else {
+        durationSpan.textContent = time.text;
+      }
+      if (durationSpan instanceof HTMLElement) durationSpan.title = time.title;
+    }
+
+    // Update in run view
+    const step = element("run-steps")?.querySelector(`[data-cell="${cell.id}"]`);
+    if (step instanceof HTMLElement) {
+      let durationSpan = step.querySelector(".run-step-duration");
+      if (durationSpan === null) {
+        durationSpan = make("span", "run-step-duration", time.text);
+        const stateSpan = step.querySelector(".run-step-state");
+        if (stateSpan !== null) stateSpan.after(durationSpan);
+      } else {
+        durationSpan.textContent = time.text;
+      }
+      if (durationSpan instanceof HTMLElement) durationSpan.title = time.title;
+    }
+  }
+}
+
 function renderSession() {
   if (watching === undefined) return;
   rememberReviews();
@@ -4700,6 +4853,7 @@ function renderSession() {
   // While the Notebook is being edited the draft is what is on the page; the
   // Cells are drawn again from the state once the editing is over.
   if (draft === undefined) element("segments").replaceChildren(...renderSegments(state));
+  syncRunningTimer();
 }
 
 /**
@@ -4834,10 +4988,13 @@ function apply(event) {
           toolCalls: [],
           parts: [],
           artifacts: [],
+          startedAt: new Date().toISOString(),
         });
         delete cell.thinking;
         delete cell.error;
         delete cell.context;
+        delete cell.duration;
+        delete cell.endedAt;
         if (cell.type === "bash") cell.service = true;
         else delete cell.service;
         if (watching.run !== undefined) cell.run = watching.run;
@@ -4882,6 +5039,18 @@ function apply(event) {
       const cell = cellNamed(event.record.id);
       if (cell !== undefined) {
         cell.status = event.record.status;
+        if (event.record.startedAt !== undefined) cell.startedAt = event.record.startedAt;
+        else delete cell.startedAt;
+        if (event.record.endedAt !== undefined) cell.endedAt = event.record.endedAt;
+        else delete cell.endedAt;
+        if (event.record.startedAt !== undefined && event.record.endedAt !== undefined) {
+          cell.duration = Math.max(
+            0,
+            new Date(event.record.endedAt).getTime() - new Date(event.record.startedAt).getTime(),
+          );
+        } else {
+          delete cell.duration;
+        }
         cell.text = event.record.text ?? event.record.stdout ?? "";
         if (event.record.thinking !== undefined && event.record.thinking !== "")
           cell.thinking = event.record.thinking;
@@ -6626,6 +6795,12 @@ function renderStep(cell, session, running) {
     make("span", "run-step-name", cell.id),
     make("span", "run-step-state", STATE_WORDS[cell.status]),
   );
+  const time = cellRunningTime(cell);
+  if (time !== undefined) {
+    const durationSpan = make("span", "run-step-duration", time.text);
+    durationSpan.title = time.title;
+    heading.append(durationSpan);
+  }
   heading.append(...turnButtons(cell));
   if (cell.service === true) heading.append(serviceStopButton(cell.id));
   heading.append(cellRemoveButton(cell, running));
@@ -6831,6 +7006,7 @@ function renderRunView(state) {
   element("run-steps").replaceChildren(
     ...state.cells.map((cell) => renderStep(cell, state.id, state.running)),
   );
+  syncRunningTimer();
 }
 
 /**
@@ -6842,6 +7018,7 @@ let asked = "";
 
 /** @param {string} notebook */
 async function showSession(notebook) {
+  stopRunningTimer();
   if (watching?.state.notebook !== notebook) openPane = "notebook";
   const editing = editOnOpen === notebook && view === "author";
   editOnOpen = undefined;
@@ -6996,6 +7173,7 @@ function route() {
   view = hash.startsWith(RUN_VIEW_PREFIX) ? "run" : "author";
   asked = decodeURIComponent(view === "run" ? hash.slice(RUN_VIEW_PREFIX.length) : hash);
   if (asked === "") {
+    stopRunningTimer();
     watching?.socket.close();
     watching = undefined;
     pendingNewCell = undefined;
