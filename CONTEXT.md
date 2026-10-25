@@ -178,7 +178,7 @@ _Avoid_: share, publish, snapshot, archive
 ### The interfaces
 
 **Author View**:
-The Notebook shown as Cells, for writing and running them, including editing cells, adding cells, and removing cells in place.
+The Notebook shown as Cells, for writing and running them, including editing cells, adding cells, removing cells in place, and pasting screenshots, graphs, or presentation slides into prompt cells.
 _Avoid_: edit mode, editor, developer mode
 
 **Run View**:
