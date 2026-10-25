@@ -185,6 +185,12 @@ export interface CellView {
    * after the shell exited. The way to end it is to stop that Cell.
    */
   readonly service?: boolean;
+  /** When this Cell began running, when it has run or is running. */
+  readonly startedAt?: string;
+  /** When this Cell ended running, when it has finished running. */
+  readonly endedAt?: string;
+  /** How long the Cell took to run in milliseconds, when it has run. */
+  readonly duration?: number;
 }
 
 /**
@@ -728,6 +734,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         artifacts: [],
         ...(inProgress !== undefined ? { run: inProgress.run } : {}),
         ...(cell.type === "bash" ? { service: true } : {}),
+        ...(inFlight.startedAt !== undefined ? { startedAt: inFlight.startedAt } : {}),
       };
     }
 
@@ -746,6 +753,10 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
           ? undefined
           : [{ kind: "text" as const, text: record.stdout }]
         : turns.get(cell.id);
+    const duration =
+      record.startedAt && record.endedAt
+        ? Math.max(0, new Date(record.endedAt).getTime() - new Date(record.startedAt).getTime())
+        : undefined;
     return {
       ...declared,
       status: stale.has(cell.id) ? "stale" : record.status,
@@ -766,6 +777,9 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       serviceAlive(record.servicePids)
         ? { service: true }
         : {}),
+      ...(record.startedAt !== undefined ? { startedAt: record.startedAt } : {}),
+      ...(record.endedAt !== undefined ? { endedAt: record.endedAt } : {}),
+      ...(duration !== undefined ? { duration } : {}),
     };
   };
 
