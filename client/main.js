@@ -2689,7 +2689,24 @@ function toolCallsOf(value) {
 /** @param {string} text */
 function promptBlock(text) {
   const block = make("section", "round");
-  block.append(make("pre", "prompt-text", text === "" ? "(empty)" : text));
+  const { text: cleanText, images } = parsePromptAndImages(text);
+  block.append(make("pre", "prompt-text", cleanText === "" ? "(empty)" : cleanText));
+  if (images.length > 0) {
+    const gallery = make("div", "cell-prompt-images");
+    for (const img of images) {
+      const card = make("div", "cell-prompt-image-card");
+      const imgEl = document.createElement("img");
+      imgEl.src = img.dataUrl;
+      imgEl.alt = img.alt || "Graph";
+      imgEl.className = "cell-prompt-image";
+      imgEl.loading = "lazy";
+      imgEl.title = "Click to enlarge";
+      imgEl.addEventListener("click", () => showImagePreview(img.dataUrl, img.alt || "Graph"));
+      card.append(imgEl, make("span", "cell-prompt-image-caption", img.alt || "Graph"));
+      gallery.append(card);
+    }
+    block.append(gallery);
+  }
   return block;
 }
 
@@ -3202,6 +3219,10 @@ function foldPreview(text) {
     .map((part) => part.trim())
     .find((part) => part !== "");
   if (line === undefined) return "";
+  if (line.startsWith("![") && line.includes("data:image/")) {
+    const match = /!\[([^\]]*)\]/.exec(line);
+    return match?.[1] ? `[${match[1]}]` : "[Graph]";
+  }
   return line.length > 96 ? `${line.slice(0, 95)}…` : line;
 }
 
@@ -3318,9 +3339,7 @@ function renderCell(cell, session, running) {
   if (usageButton !== undefined) heading.append(usageButton);
   heading.append(make("span", "cell-preview", foldPreview(cell.body)));
 
-  const body = isEditing
-    ? renderInlineCellEditor(cell)
-    : make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
+  const body = isEditing ? renderInlineCellEditor(cell) : renderCellBodyView(cell);
   // The turn as it happened: each thought, call and piece of the reply where
   // it sits, as the Rounds dialog reads it. A Cell that has not run has none.
   const stream = make("div", "cell-stream");
@@ -3336,6 +3355,279 @@ function renderCell(cell, session, running) {
     item.append(artifacts);
   }
   return item;
+}
+
+/**
+ * @typedef {{ alt: string, dataUrl: string }} PromptImage
+ */
+
+/** Matches Markdown image syntax with data:image/... URIs */
+const MARKDOWN_IMAGE_URI =
+  /!\[([^\]]*)\]\((data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+))\)/g;
+
+/**
+ * Splits a prompt cell body into text and embedded image attachments.
+ * @param {string} body
+ * @returns {{ text: string, images: PromptImage[] }}
+ */
+function parsePromptAndImages(body) {
+  /** @type {PromptImage[]} */
+  const images = [];
+  const text = body.replace(MARKDOWN_IMAGE_URI, (_match, alt, fullDataUri) => {
+    images.push({
+      alt: (alt || "").trim() || "Graph",
+      dataUrl: fullDataUri.replace(/\s+/g, ""),
+    });
+    return "";
+  });
+  return {
+    text: text.replace(/\n{3,}/g, "\n\n").trim(),
+    images,
+  };
+}
+
+/**
+ * Combines prompt text and image attachments back into Markdown format.
+ * @param {string} text
+ * @param {PromptImage[]} images
+ * @returns {string}
+ */
+function combinePromptAndImages(text, images) {
+  const clean = text.trim();
+  if (images.length === 0) return clean;
+  const imageTags = images
+    .map((img) => `![${img.alt.trim() || "Graph"}](${img.dataUrl})`)
+    .join("\n\n");
+  return clean ? `${clean}\n\n${imageTags}` : imageTags;
+}
+
+/**
+ * Opens the image preview dialog showing the full image.
+ * @param {string} src
+ * @param {string} title
+ */
+function showImagePreview(src, title) {
+  const dialog = /** @type {HTMLDialogElement} */ (element("image-preview-dialog"));
+  /** @type {HTMLImageElement} */ (element("image-preview-img")).src = src;
+  element("image-preview-title").textContent = title || "Image preview";
+  if (!dialog.open) dialog.showModal();
+}
+
+/**
+ * Reads a File/Blob as a data URL.
+ * @param {Blob} blob
+ * @returns {Promise<string>}
+ */
+function readFileAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Failed to read image as data URL"));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Read error"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Scales down large screenshots or slides if they exceed maxDimension or size.
+ * Keeps quality sharp while ensuring fast saves and reasonable file sizes.
+ * @param {string} dataUrl
+ * @param {number} [maxDimension]
+ * @returns {Promise<string>}
+ */
+function optimizeImageDataUrl(dataUrl, maxDimension = 1920) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width <= maxDimension && height <= maxDimension && dataUrl.length <= 1.5 * 1024 * 1024) {
+        resolve(dataUrl);
+        return;
+      }
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      const pngUrl = canvas.toDataURL("image/png");
+      if (pngUrl.length <= 1.5 * 1024 * 1024) {
+        resolve(pngUrl);
+      } else {
+        resolve(canvas.toDataURL("image/jpeg", 0.88));
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Attaches image paste handling and an image thumbnail strip to a prompt cell's field.
+ * Allows pasting screenshots, graphs, or PPT slides directly into the prompt area.
+ * @param {HTMLTextAreaElement} field
+ * @param {DraftCell} cell
+ * @param {HTMLElement} wrap
+ * @param {PromptImage[]} initialImages
+ * @param {(images: PromptImage[]) => void} onImagesChange
+ * @returns {{ updateImages: (newImages: PromptImage[]) => void }}
+ */
+function attachImagePaste(field, cell, wrap, initialImages, onImagesChange) {
+  let images = [...initialImages];
+
+  const strip = make("div", "prompt-images-strip");
+  strip.hidden = images.length === 0;
+
+  const renderStrip = () => {
+    strip.replaceChildren();
+    if (images.length === 0) {
+      strip.hidden = true;
+      return;
+    }
+    strip.hidden = false;
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      if (img === undefined) continue;
+      const card = make("div", "prompt-image-card");
+
+      const thumb = document.createElement("img");
+      thumb.className = "prompt-image-thumb";
+      thumb.src = img.dataUrl;
+      thumb.alt = img.alt || "Graph";
+      thumb.title = "Click to enlarge";
+      thumb.addEventListener("click", () => showImagePreview(img.dataUrl, img.alt || "Graph"));
+
+      const badge = make("span", "prompt-image-badge", img.alt || "Graph");
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "prompt-image-remove";
+      removeBtn.title = "Remove this image";
+      removeBtn.setAttribute("aria-label", "Remove image");
+      removeBtn.textContent = "×";
+      removeBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        images.splice(i, 1);
+        renderStrip();
+        onImagesChange(images);
+      });
+
+      card.append(thumb, badge, removeBtn);
+      strip.append(card);
+    }
+  };
+
+  renderStrip();
+  wrap.append(strip);
+
+  field.addEventListener("paste", async (event) => {
+    if (cell.type !== "prompt") return;
+    const clipboardData = event.clipboardData;
+    if (!clipboardData) return;
+
+    /** @type {File[]} */
+    const imageFiles = [];
+    if (clipboardData.items) {
+      for (let i = 0; i < clipboardData.items.length; i++) {
+        const item = clipboardData.items[i];
+        if (item && item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) imageFiles.push(file);
+        }
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      event.preventDefault();
+      for (const file of imageFiles) {
+        try {
+          const rawDataUrl = await readFileAsDataUrl(file);
+          const dataUrl = await optimizeImageDataUrl(rawDataUrl);
+          const label = "Graph";
+          images.push({ alt: label, dataUrl });
+        } catch {
+          // ignore failed read
+        }
+      }
+      renderStrip();
+      onImagesChange(images);
+      return;
+    }
+
+    // Fallback: Check if HTML contains an image tag (e.g. from Web PPT / Google Slides)
+    const html = clipboardData.getData("text/html");
+    if (html && html.includes("<img")) {
+      const match = /<img[^>]+src=["'](data:image\/[^"']+)["']/i.exec(html);
+      if (match && match[1]) {
+        event.preventDefault();
+        try {
+          const dataUrl = await optimizeImageDataUrl(match[1]);
+          images.push({ alt: "Graph", dataUrl });
+          renderStrip();
+          onImagesChange(images);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  });
+
+  return {
+    updateImages: (newImages) => {
+      images = [...newImages];
+      renderStrip();
+    },
+  };
+}
+
+/**
+ * Renders a cell's body when not editing.
+ * For prompt cells with images, shows the clean text and image preview cards.
+ * @param {CellView} cell
+ * @returns {HTMLElement}
+ */
+function renderCellBodyView(cell) {
+  if (cell.type !== "prompt") {
+    return make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
+  }
+  const { text, images } = parsePromptAndImages(cell.body);
+  if (images.length === 0) {
+    return make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
+  }
+  const container = make("div", "cell-body-with-images");
+  if (text !== "") {
+    container.append(make("pre", "cell-body", text));
+  }
+  const gallery = make("div", "cell-prompt-images");
+  for (const img of images) {
+    const card = make("div", "cell-prompt-image-card");
+    const imgEl = document.createElement("img");
+    imgEl.src = img.dataUrl;
+    imgEl.alt = img.alt || "Graph";
+    imgEl.className = "cell-prompt-image";
+    imgEl.loading = "lazy";
+    imgEl.title = "Click to enlarge";
+    imgEl.addEventListener("click", () => showImagePreview(img.dataUrl, img.alt || "Graph"));
+    const caption = make("span", "cell-prompt-image-caption", img.alt || "Graph");
+    card.append(imgEl, caption);
+    gallery.append(card);
+  }
+  container.append(gallery);
+  return container;
 }
 
 /**
@@ -3373,11 +3665,15 @@ function renderInlineCellEditor(cell) {
   }
   const draftCell = editingDraftCell;
 
+  const { text: initialText, images: initialImages } = parsePromptAndImages(draftCell.body);
+  let currentImages = [...initialImages];
+
   const field = textarea(
-    draftCell.body,
+    draftCell.type === "bash" ? draftCell.body : initialText,
     (value) => {
-      draftCell.body = value;
-      cellDrafts.set(cell.id, value);
+      draftCell.body =
+        draftCell.type === "prompt" ? combinePromptAndImages(value, currentImages) : value;
+      cellDrafts.set(cell.id, draftCell.body);
     },
     draftCell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER,
   );
@@ -3385,11 +3681,19 @@ function renderInlineCellEditor(cell) {
   wrap.append(field);
 
   field.addEventListener("input", () => {
-    draftCell.body = field.value;
-    cellDrafts.set(cell.id, field.value);
+    draftCell.body =
+      draftCell.type === "prompt"
+        ? combinePromptAndImages(field.value, currentImages)
+        : field.value;
+    cellDrafts.set(cell.id, draftCell.body);
   });
   attachSkillMenu(field, draftCell);
   attachFileMenu(field, draftCell);
+  const imagePaste = attachImagePaste(field, draftCell, wrap, currentImages, (newImages) => {
+    currentImages = newImages;
+    draftCell.body = combinePromptAndImages(field.value, currentImages);
+    cellDrafts.set(cell.id, draftCell.body);
+  });
 
   const declaration = renderCellDeclaration(draftCell, () => {
     field.placeholder = draftCell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER;
@@ -3397,6 +3701,7 @@ function renderInlineCellEditor(cell) {
     if (cellItem) {
       cellItem.className = `cell ${draftCell.type} ${cell.status} editing`;
     }
+    imagePaste.updateImages(draftCell.type === "prompt" ? currentImages : []);
   });
 
   const actions = make("div", "cell-inline-actions");
@@ -5190,7 +5495,7 @@ function attachSkillMenu(field, cell) {
 }
 
 /** What an empty prompt says before anything is typed. */
-const PROMPT_PLACEHOLDER = "/ for a skill, @ for a file.";
+const PROMPT_PLACEHOLDER = "/ for a skill, @ for a file, or paste a graph/screenshot/slide.";
 
 /**
  * The `@file` the caret is inside, when one is being typed. The token begins
@@ -5421,10 +5726,13 @@ function attachFileMenu(field, cell) {
  * @param {DraftCell} cell
  */
 function cellBody(cell) {
+  const { text: initialText, images: initialImages } = parsePromptAndImages(cell.body);
+  let currentImages = [...initialImages];
+
   const field = textarea(
-    cell.body,
+    cell.type === "bash" ? cell.body : initialText,
     (value) => {
-      cell.body = value;
+      cell.body = cell.type === "prompt" ? combinePromptAndImages(value, currentImages) : value;
     },
     cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER,
   );
@@ -5432,6 +5740,10 @@ function cellBody(cell) {
   wrap.append(field);
   attachSkillMenu(field, cell);
   attachFileMenu(field, cell);
+  attachImagePaste(field, cell, wrap, currentImages, (newImages) => {
+    currentImages = newImages;
+    cell.body = combinePromptAndImages(field.value, currentImages);
+  });
   return wrap;
 }
 
@@ -7510,6 +7822,14 @@ element("notebook-model-cancel").addEventListener("click", () => {
 });
 element("notebook-model-close").addEventListener("click", () => {
   /** @type {HTMLDialogElement} */ (element("notebook-model-dialog")).close();
+});
+element("image-preview-close").addEventListener("click", () => {
+  /** @type {HTMLDialogElement} */ (element("image-preview-dialog")).close();
+});
+element("image-preview-dialog").addEventListener("click", (event) => {
+  if (event.target === element("image-preview-dialog")) {
+    /** @type {HTMLDialogElement} */ (element("image-preview-dialog")).close();
+  }
 });
 element("notebook-model-search").addEventListener("input", () => {
   if (notebookModels === undefined) return;

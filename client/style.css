@@ -837,7 +837,8 @@ header #tree-new {
 #cell-rounds-dialog,
 #notebook-model-dialog,
 #chat-details-dialog,
-#cell-delete-dialog {
+#cell-delete-dialog,
+#image-preview-dialog {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   border-radius: 0.4rem;
   padding: 1rem 1.2rem;
@@ -850,14 +851,16 @@ header #tree-new {
 #cell-rounds-dialog:not([open]),
 #notebook-model-dialog:not([open]),
 #chat-details-dialog:not([open]),
-#cell-delete-dialog:not([open]) {
+#cell-delete-dialog:not([open]),
+#image-preview-dialog:not([open]) {
   display: none;
 }
 
 #cell-rounds-dialog[open],
 #notebook-model-dialog[open],
 #chat-details-dialog[open],
-#cell-delete-dialog[open] {
+#cell-delete-dialog[open],
+#image-preview-dialog[open] {
   display: flex;
   flex-direction: column;
   max-height: 85vh;
@@ -866,7 +869,8 @@ header #tree-new {
 #cell-rounds-dialog::backdrop,
 #notebook-model-dialog::backdrop,
 #chat-details-dialog::backdrop,
-#cell-delete-dialog::backdrop {
+#cell-delete-dialog::backdrop,
+#image-preview-dialog::backdrop {
   background: color-mix(in srgb, canvastext 40%, transparent);
 }
 
@@ -882,6 +886,27 @@ header #tree-new {
 
 #cell-delete-dialog {
   width: min(26rem, calc(100vw - 2rem));
+}
+
+#image-preview-dialog {
+  max-width: min(56rem, calc(100vw - 2rem));
+  width: auto;
+}
+
+.image-preview-body {
+  margin-top: 0.8rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: auto;
+  max-height: calc(85vh - 4rem);
+}
+
+#image-preview-img {
+  max-width: 100%;
+  max-height: calc(85vh - 5rem);
+  object-fit: contain;
+  border-radius: 0.25rem;
 }
 
 .cell-delete-body {
@@ -2508,4 +2533,124 @@ button.context-ring svg {
   margin-left: 0;
   padding-left: 0.8rem;
   border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+}
+
+/* Attached images strip when editing prompt cells */
+.prompt-images-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  border: 1px dashed color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.35rem;
+}
+
+.prompt-image-card {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  background: canvas;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.3rem;
+  box-shadow: 0 1px 3px color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.prompt-image-thumb {
+  width: 5.5rem;
+  height: 3.8rem;
+  object-fit: cover;
+  border-radius: 0.2rem;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.prompt-image-thumb:hover {
+  transform: scale(1.04);
+}
+
+.prompt-image-badge {
+  font-size: 0.72rem;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  margin-top: 0.25rem;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-image-remove {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  font-size: 0.75rem;
+  line-height: 1.15rem;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.prompt-image-remove:hover {
+  background: #b91c1c;
+}
+
+/* Prompt cell image view in Author view / rendered cells */
+.cell-body-with-images {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cell-prompt-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.cell-prompt-image-card {
+  display: inline-flex;
+  flex-direction: column;
+  background: canvas;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 0.35rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px color-mix(in srgb, currentColor 8%, transparent);
+  max-width: 18rem;
+}
+
+.cell-prompt-image {
+  max-width: 18rem;
+  max-height: 12rem;
+  object-fit: contain;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.cell-prompt-image:hover {
+  opacity: 0.9;
+}
+
+.cell-prompt-image-caption {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
 }
