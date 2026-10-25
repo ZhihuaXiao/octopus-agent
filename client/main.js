@@ -746,7 +746,6 @@ function openTreeMenu(anchor, actions) {
 function treeMenuButton(label, actions) {
   const button = make("button", "tree-menu-button", "⋯");
   button.type = "button";
-  button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-haspopup", "menu");
   button.setAttribute("aria-expanded", "false");
