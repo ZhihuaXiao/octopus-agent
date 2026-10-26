@@ -226,7 +226,7 @@ const CHAT_ROUTE = /^\/api\/chats\/([^/]+)$/;
 const SESSION_ROUTE = /^\/api\/sessions\/([^/]+)(?:\/(run|interrupt|save|events|export|text))?$/;
 /** The model rounds of one Cell that has run, read from the Agent Session. */
 const ROUNDS_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/rounds$/;
-/** Stops one Bash Cell's command, or the service that command left running. */
+/** Stops one Cell's turn or command, or the service that command left running. */
 const STOP_ROUTE = /^\/api\/sessions\/([^/]+)\/cells\/([^/]+)\/stop$/;
 /** The query naming which Run an export is of, when not the latest. */
 const RUN_QUERY = "run";
@@ -1501,7 +1501,7 @@ async function serveRounds(
   json(response, 200, read.value);
 }
 
-/** Stops a Bash Cell's command, or a service that command left running. */
+/** Stops a Cell's turn or command, or a service that command left running. */
 async function serveStop(
   sessions: NotebookSessions,
   matched: RegExpExecArray,

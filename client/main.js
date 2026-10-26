@@ -3454,10 +3454,21 @@ function renderCell(cell, session, running) {
   heading.append(branchButton(cell));
   if (cell.service === true && cell.status !== "running")
     heading.append(make("span", "cell-attribute", "service"));
-  if (cell.service === true) heading.append(serviceStopButton(cell.id));
-  const runOne = symbolButton("cell-run", `Run ${cell.id} (execute cell alone)`, runIcon());
-  runOne.disabled = running;
-  runOne.addEventListener("click", () => void startRun([cell.id]));
+  if (cell.service === true && cell.status !== "running")
+    heading.append(serviceStopButton(cell.id));
+  const isThisCellRunning = cell.status === "running";
+  const runOrStop = isThisCellRunning
+    ? symbolButton("cell-stop", `Stop ${cell.id}`, stopIcon())
+    : symbolButton("cell-run", `Run ${cell.id} (execute cell alone)`, runIcon());
+  if (isThisCellRunning) {
+    runOrStop.addEventListener("click", () => {
+      runOrStop.disabled = true;
+      void stopCell(cell.id);
+    });
+  } else {
+    runOrStop.disabled = running;
+    runOrStop.addEventListener("click", () => void startRun([cell.id]));
+  }
   const editBtn = cellEditButton(cell);
   const addBtn = cellAddMenu(cell, running);
   const removeBtn = cellRemoveButton(cell, running);
@@ -3465,9 +3476,9 @@ function renderCell(cell, session, running) {
     editBtn.hidden = true;
     addBtn.hidden = true;
     removeBtn.hidden = true;
-    runOne.hidden = true;
+    runOrStop.hidden = true;
   }
-  heading.append(editBtn, addBtn, removeBtn, runOne);
+  heading.append(editBtn, addBtn, removeBtn, runOrStop);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
@@ -5215,17 +5226,22 @@ async function stopCell(cell) {
 }
 
 /**
- * The button that stops a Bash Cell's service. `id` is the Cell's id.
+ * The button that stops a Cell's turn or a Bash Cell's service. `id` is the Cell's id.
  * @param {string} id
  * @returns {HTMLButtonElement}
  */
 function serviceStopButton(id) {
-  const button = symbolButton("cell-stop", `Stop the service ${id} is running`, stopIcon());
+  const cell = cellNamed(id);
+  const isRunning = cell?.status === "running";
+  const title = isRunning ? `Stop ${id}` : `Stop the service ${id} is running`;
+  const button = symbolButton("cell-stop", title, stopIcon());
   button.addEventListener("click", () => {
+    button.disabled = true;
     void stopCell(id).then((stopped) => {
       // The notebook view is drawn again from the session. The editor is not,
       // so the button leaves once the stop has been accepted.
       if (stopped) button.remove();
+      else button.disabled = false;
     });
   });
   return button;
@@ -6099,7 +6115,7 @@ function actionsFor(at) {
     if (segment?.kind === "cell") {
       const cell = segment;
       const live = watching?.state.cells.find((item) => item.id === cell.id.trim());
-      if (live?.service === true) actions.append(serviceStopButton(live.id));
+      if (live?.service === true || live?.status === "running") actions.append(serviceStopButton(live.id));
       actions.append(
         button(
           "Run",
@@ -6868,7 +6884,7 @@ function renderStep(cell, session, running) {
     heading.append(durationSpan);
   }
   heading.append(...turnButtons(cell));
-  if (cell.service === true) heading.append(serviceStopButton(cell.id));
+  if (cell.service === true || cell.status === "running") heading.append(serviceStopButton(cell.id));
   heading.append(cellRemoveButton(cell, running));
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);

@@ -1610,6 +1610,32 @@ describe("interrupting a running cell", () => {
     }
   });
 
+  it("stops a prompt cell that is still running its turn", async () => {
+    const agent = createScriptedAgent([{ hangs: true }]);
+    const server = await serve({ "slow.md": "```prompt id=wait\nSay something\n```\n" }, agent);
+    const session = await open(server, "slow.md");
+    const browser = await watch(server, session.id);
+    await run(server, session.id);
+    await browser.next("cell-started");
+
+    expect((await stateOf(server, session.id)).cells[0]).toMatchObject({
+      id: "wait",
+      status: "running",
+    });
+    const began = Date.now();
+    const response = await post(server, `/api/sessions/${session.id}/cells/wait/stop`);
+    await browser.next("run-ended");
+
+    expect(response.status).toBe(204);
+    expect(Date.now() - began).toBeLessThan(3000);
+    expect((await stateOf(server, session.id)).cells[0]).toMatchObject({
+      id: "wait",
+      status: "interrupted",
+    });
+    expect(agent.aborted).toEqual(["Say something"]);
+    await browser.close();
+  });
+
   it("refuses to stop a prompt cell, which has no service", async () => {
     const server = await serve({ "hello.md": hello });
     const session = await open(server, "hello.md");

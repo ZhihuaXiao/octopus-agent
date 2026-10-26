@@ -342,9 +342,8 @@ export interface NotebookSession {
    */
   interrupt(): Promise<void>;
   /**
-   * Stops a Bash Cell's command, or the service that command left running.
-   * A Prompt Cell has nothing of the kind. Resolves once a command that was
-   * still running has stopped.
+   * Stops a Cell's turn or command, or the service that command left running.
+   * Resolves once a turn or command that was still running has stopped.
    */
   stop(cellId: string): Promise<{ ok: true } | { ok: false; status: 404 | 422; problem: string }>;
   /**
@@ -598,8 +597,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   let ended: CellRecord[] = [];
   /** The Run in progress: the way to interrupt it, and when it is over. */
   let current: { readonly controller: AbortController; readonly over: Promise<void> } | undefined;
-  /** While a Bash Cell's command runs, the way to stop that command alone. */
-  const bashStops = new Map<string, () => void>();
+  /** While a Cell runs, the way to stop that Cell alone. */
+  const cellStops = new Map<string, () => void>();
   /**
    * Text files as they were when the open reviews were taken. A review still
    * waiting keeps its original bytes here, so the next look does not treat
@@ -1070,7 +1069,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   };
 
   /**
-   * Stops one Bash Cell: the command, when it is still running, and any
+   * Stops one Cell: the turn or command, when it is still running, and any
    * service that command left behind. A service stopped after the Cell has
    * finished does not change what the Cell recorded; the processes are simply
    * gone, and the Cell no longer offers to stop them.
@@ -1084,12 +1083,29 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     if (cell === undefined) {
       return { ok: false, status: 404, problem: `No cell named "${cellId}" in this notebook.` };
     }
+
+    const halt = cellStops.get(cellId);
+    if (halt !== undefined) {
+      halt();
+      if (cell.type === "bash") {
+        const found = results.get(cellId);
+        if (found?.record.type === "bash" && found.record.servicePids !== undefined) {
+          const pids = found.record.servicePids;
+          stopService(pids);
+          const started = Date.now();
+          while (serviceAlive(pids) && Date.now() - started < 1000) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+        }
+      }
+      if (current !== undefined) await current.over;
+      return { ok: true };
+    }
+
     if (cell.type !== "bash") {
       return { ok: false, status: 422, problem: "A prompt cell has no service to stop." };
     }
 
-    const halt = bashStops.get(cellId);
-    if (halt !== undefined) halt();
     const found = results.get(cellId);
     if (found?.record.type === "bash" && found.record.servicePids !== undefined) {
       const pids = found.record.servicePids;
@@ -1099,8 +1115,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
-    if (halt !== undefined && current !== undefined) await current.over;
-    else if (!emit(() => ({ type: "notebook-changed", session: state() }))) {
+    if (!emit(() => ({ type: "notebook-changed", session: state() }))) {
       return { ok: false, status: 422, problem: JOURNAL_PROBLEM };
     }
     return { ok: true };
@@ -1412,7 +1427,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
             agent,
             observe: observeRun,
             signal: controller.signal,
-            bashStops,
+            cellStops,
+            bashStops: cellStops,
             access,
             servedDirectory: directory,
             ...(request.cells !== undefined ? { cells: request.cells } : {}),

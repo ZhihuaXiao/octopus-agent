@@ -95,9 +95,13 @@ export interface RunOptions {
    */
   signal?: AbortSignal;
   /**
-   * Filled, while a Bash Cell runs, with the way to stop that Cell's command
-   * and the processes it started. The session removes nothing itself: the Cell
-   * deletes its entry when the command has ended.
+   * Filled, while a Cell runs, with the way to stop that Cell's command or
+   * turn. The session removes nothing itself: the Cell deletes its entry when
+   * it has ended.
+   */
+  cellStops?: Map<string, () => void>;
+  /**
+   * Backward compatibility alias for cellStops.
    */
   bashStops?: Map<string, () => void>;
   /**
@@ -403,6 +407,8 @@ interface Cleared {
   readonly observe: (event: RunEvent) => void;
   /** Fires when the Run is interrupted, when it can be. */
   readonly interrupt?: AbortSignal;
+  /** Where a running Cell registers the way to stop its command or turn. */
+  readonly cellStops?: Map<string, () => void>;
   /** Where a running Bash Cell registers the way to stop its command. */
   readonly bashStops?: Map<string, () => void>;
 }
@@ -455,6 +461,8 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     }
     const timeout = cleared.timeoutOf(cell);
 
+    const activeStops = cleared.cellStops ?? cleared.bashStops;
+
     // A command's work begins here, with no context to make first. Its own
     // signal, so this Cell's service can be stopped without stopping a Cell
     // running beside it; the Run's signal stops it too.
@@ -463,14 +471,20 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       const fromRun = () => cellStop.abort();
       if (interrupt?.aborted) cellStop.abort();
       else interrupt?.addEventListener("abort", fromRun, { once: true });
-      cleared.bashStops?.set(cell.id, () => cellStop.abort());
+      activeStops?.set(cell.id, () => cellStop.abort());
       try {
         return await runBashCell(cell, body, workspace, stopsFor(timeout, cellStop.signal));
       } finally {
-        cleared.bashStops?.delete(cell.id);
+        activeStops?.delete(cell.id);
         interrupt?.removeEventListener("abort", fromRun);
       }
     }
+
+    const cellStop = new AbortController();
+    const fromRun = () => cellStop.abort();
+    if (interrupt?.aborted) cellStop.abort();
+    else interrupt?.addEventListener("abort", fromRun, { once: true });
+    activeStops?.set(cell.id, () => cellStop.abort());
 
     const model = cleared.modelOf(cell);
     const approach = cell.approach ?? "agent";
@@ -479,26 +493,31 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
       ...(model !== undefined ? { model } : {}),
       ...(approach !== "agent" ? { approach } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
-      ...(interrupt !== undefined ? { interrupt } : {}),
+      interrupt: cellStop.signal,
       onText: (text) => observe({ type: "cell-text", cell: cell.id, text }),
       onThinking: (thinking) => observe({ type: "cell-thinking", cell: cell.id, thinking }),
       onToolCall: (call) => observe({ type: "cell-tool-call", cell: cell.id, call }),
     };
-    if (cell.isolated) return runIsolatedCell(cell, turn, cleared.isolate);
+    try {
+      if (cell.isolated) return await runIsolatedCell(cell, turn, cleared.isolate);
 
-    // Once, before the first Cell that speaks into the shared context, and only
-    // when this Run carries on from another — an Agent Session of its own
-    // already sits where a first Cell begins. Every Cell after it follows the
-    // one before, which is where the session now is; forking each of them back
-    // to where it began last time would throw away the turn just taken. An
-    // Isolated Cell is not one of them: it never enters this session, so it is
-    // passed over here as it is passed over when an Anchor is looked for.
-    if (continues !== undefined && !forked) {
-      forked = true;
-      await shared.resumeFrom(anchorBefore(continues.anchors, cleared.allCells, cell.id));
+      // Once, before the first Cell that speaks into the shared context, and only
+      // when this Run carries on from another — an Agent Session of its own
+      // already sits where a first Cell begins. Every Cell after it follows the
+      // one before, which is where the session now is; forking each of them back
+      // to where it began last time would throw away the turn just taken. An
+      // Isolated Cell is not one of them: it never enters this session, so it is
+      // passed over here as it is passed over when an Anchor is looked for.
+      if (continues !== undefined && !forked) {
+        forked = true;
+        await shared.resumeFrom(anchorBefore(continues.anchors, cleared.allCells, cell.id));
+      }
+
+      return await runPromptCell(cell, turn, shared);
+    } finally {
+      activeStops?.delete(cell.id);
+      interrupt?.removeEventListener("abort", fromRun);
     }
-
-    return runPromptCell(cell, turn, shared);
   };
 
   /** Runs one Cell and adds the Run's own bookkeeping to what it produced. */
@@ -802,6 +821,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       ...(continues !== undefined ? { continues } : {}),
       observe: options.observe ?? (() => undefined),
       ...(options.signal !== undefined ? { interrupt: options.signal } : {}),
+      ...(options.cellStops !== undefined ? { cellStops: options.cellStops } : {}),
       ...(options.bashStops !== undefined ? { bashStops: options.bashStops } : {}),
     });
   } finally {
