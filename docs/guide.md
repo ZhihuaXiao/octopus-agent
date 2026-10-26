@@ -125,6 +125,24 @@ Double-click the filename at the top of the notebook to give it a new name. The 
 
 **Run view** hides the cells. See below.
 
+### Reviewing file changes
+
+When a prompt cell runs in Agent mode, or a bash cell executes commands that modify or create files in the workspace, the session tracks those files as open reviews. In the directory tree and subtabs, files with pending changes are flagged with an amber review indicator.
+
+Clicking a reviewed file opens it in the file viewer:
+
+- **Created files** display the new content. Click **Accept** to keep the file, or **Reject** to remove it.
+- **Modified files** open in an interactive diff viewer comparing the new content with the file as it was before the run. Changes are highlighted with green for additions (`+`) and red for deletions (`-`).
+
+You can decide changes at whatever granularity you need:
+
+- **By line**: Click the **✓** (Accept) or **✕** (Reject) button beside any added or deleted line.
+- **By several lines**: Check the selection checkboxes beside multiple lines, then click **Accept Selected** or **Reject Selected** in the file toolbar.
+- **By hunk**: Click **Accept Hunk** or **Reject Hunk** on any change group's header to decide all lines in that change block at once.
+- **Whole file**: Click **Accept All** or **Reject All** in the toolbar to decide every remaining change in the file.
+
+Accepting a change incorporates it into the baseline without modifying disk. Rejecting a change reverts those lines on disk back to their previous state. When all changes in a file have been decided, the review resolves automatically and the pending indicator clears.
+
 ### Run view
 
 Run view is for someone who fills in the blanks and presses one button. The cells' prompts are hidden. Declared inputs are a form: text, a number, or yes/no. A field with no default must be filled in. A notebook with no inputs says so. Each step has a **×** button in its header to delete that cell from the notebook, after you confirm.

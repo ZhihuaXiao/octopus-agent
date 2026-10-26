@@ -60,7 +60,7 @@ TypeScript on Node 22.19 or newer, ESM. `tsc` compiles `src/` to `dist/`. The br
 | `src/run/` | One Run: order, schedule, bash, anchors, staleness, the Run Record, and where it is stored. |
 | `src/agent/` | The agent boundary, the pi implementation, a scripted implementation for tests, and the Declared Environment check. |
 | `src/pi/` | The parts of pi this program reads: streaming text, one turn's summary, Workspace Trust, the version pin, and handing the terminal to pi. |
-| `src/server/` | HTTP, the WebSocket, auth, Notebook Sessions, the Journal, the notebook list, and Promote. |
+| `src/server/` | HTTP, the WebSocket, auth, Notebook Sessions, the Journal, line diffing and text reviews, the notebook list, and Promote. |
 | `src/import/` | A Chat copied into a Notebook and a Run Record. |
 | `src/export/` | A Notebook and one Run written as a single HTML or Markdown document, with credentials struck out. |
 | `client/` | Author View and Run View. |

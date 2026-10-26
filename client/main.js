@@ -1,4 +1,5 @@
 // @ts-check
+import { diffHunks, diffLines } from "./diff.js";
 import {
   closeProbePopup,
   noteProbePopupClosed,
@@ -4420,65 +4421,29 @@ function closeText(path) {
 }
 
 /**
- * Lines a change is best read as: the shared start and end, and the middle
- * that differs. A long unchanged stretch is one skipped line.
- * @param {string} before
- * @param {string} after
- * @returns {{ kind: "same" | "add" | "del" | "skip", text: string }[]}
+ * Diff line indices currently selected by the reader for partial accept or reject.
+ * @type {Set<number>}
  */
-function lineDiff(before, after) {
-  const older = before.split("\n");
-  const newer = after.split("\n");
-  let start = 0;
-  while (start < older.length && start < newer.length && older[start] === newer[start]) start += 1;
-  let endOlder = older.length - 1;
-  let endNewer = newer.length - 1;
-  while (endOlder >= start && endNewer >= start && older[endOlder] === newer[endNewer]) {
-    endOlder -= 1;
-    endNewer -= 1;
+const selectedDiffLines = new Set();
+
+/** Updates the toolbar buttons that operate on selected diff lines. */
+function updateDiffSelectionControls() {
+  const count = selectedDiffLines.size;
+  const acceptSelected = element("file-accept-selected");
+  const rejectSelected = element("file-reject-selected");
+  const hasSelection = count > 0;
+  acceptSelected.hidden = !hasSelection;
+  rejectSelected.hidden = !hasSelection;
+  if (hasSelection) {
+    const label = count === 1 ? "1 line" : `${count} lines`;
+    acceptSelected.textContent = `Accept (${label})`;
+    rejectSelected.textContent = `Reject (${label})`;
   }
-  /** @type {{ kind: "same" | "add" | "del", text: string }[]} */
-  const rows = [];
-  for (let index = 0; index < start; index += 1) {
-    const text = older[index];
-    if (text !== undefined) rows.push({ kind: "same", text });
-  }
-  for (let index = start; index <= endOlder; index += 1) {
-    const text = older[index];
-    if (text !== undefined) rows.push({ kind: "del", text });
-  }
-  for (let index = start; index <= endNewer; index += 1) {
-    const text = newer[index];
-    if (text !== undefined) rows.push({ kind: "add", text });
-  }
-  for (let index = endOlder + 1; index < older.length; index += 1) {
-    const text = older[index];
-    if (text !== undefined) rows.push({ kind: "same", text });
-  }
-  if (rows.length <= 400) return rows;
-  const keep = new Set();
-  rows.forEach((row, index) => {
-    if (row.kind === "same") return;
-    for (let at = Math.max(0, index - 3); at <= Math.min(rows.length - 1, index + 3); at += 1) {
-      keep.add(at);
-    }
-  });
-  /** @type {{ kind: "same" | "add" | "del" | "skip", text: string }[]} */
-  const shown = [];
-  let skipped = false;
-  rows.forEach((row, index) => {
-    if (keep.has(index)) {
-      skipped = false;
-      shown.push(row);
-    } else if (!skipped) {
-      skipped = true;
-      shown.push({ kind: "skip", text: "…" });
-    }
-  });
-  return shown;
 }
 
 /**
+ * Draws the interactive diff view for a modified file review, allowing accept
+ * or reject per line, per hunk, or across selected lines.
  * @param {string} text
  * @param {TextReview | undefined} review
  */
@@ -4487,15 +4452,177 @@ function renderFileBody(text, review) {
   if (review === undefined || review.kind !== "modified" || review.before === undefined) {
     body.classList.remove("diff");
     body.textContent = text;
+    selectedDiffLines.clear();
+    updateDiffSelectionControls();
     return;
   }
   body.classList.add("diff");
-  const mark = { same: "  ", add: "+ ", del: "- ", skip: "" };
-  body.replaceChildren(
-    ...lineDiff(review.before, text).map((row) =>
-      make("div", `diff-line ${row.kind}`, `${mark[row.kind]}${row.text === "" ? " " : row.text}`),
-    ),
-  );
+  const rows = diffLines(review.before, text);
+  const hunks = diffHunks(rows);
+
+  const keep = new Set();
+  if (rows.length > 400) {
+    rows.forEach((row, index) => {
+      if (row.kind === "same") return;
+      for (let at = Math.max(0, index - 3); at <= Math.min(rows.length - 1, index + 3); at += 1) {
+        keep.add(at);
+      }
+    });
+  }
+
+  /** @type {Map<number, import("./diff.js").DiffHunk>} */
+  const hunkByFirstLine = new Map();
+  for (const hunk of hunks) {
+    const first = hunk.lineIndices[0];
+    if (first !== undefined) hunkByFirstLine.set(first, hunk);
+  }
+
+  /** @type {HTMLElement[]} */
+  const children = [];
+  let skipped = false;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row === undefined) continue;
+
+    if (rows.length > 400 && !keep.has(i)) {
+      if (!skipped) {
+        skipped = true;
+        children.push(make("div", "diff-line skip", "…"));
+      }
+      continue;
+    }
+    skipped = false;
+
+    const hunk = hunkByFirstLine.get(row.index);
+    if (hunk !== undefined && hunks.length > 0) {
+      const hunkHeader = make("div", "diff-hunk-header");
+      const hunkTitle = make(
+        "span",
+        "diff-hunk-title",
+        `Lines ${hunk.newStart}–${hunk.newStart + Math.max(0, hunk.newCount - 1)}`,
+      );
+      const hunkActions = make("span", "diff-hunk-actions");
+      const hunkAccept = make("button", "diff-hunk-btn diff-hunk-accept", "Accept Hunk");
+      hunkAccept.type = "button";
+      hunkAccept.title = "Accept this group of changes";
+      hunkAccept.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void decideOpenFile("accept", hunk.lineIndices);
+      });
+
+      const hunkReject = make("button", "diff-hunk-btn diff-hunk-reject", "Reject Hunk");
+      hunkReject.type = "button";
+      hunkReject.title = "Reject this group of changes";
+      hunkReject.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void decideOpenFile("reject", hunk.lineIndices);
+      });
+
+      hunkActions.append(hunkAccept, hunkReject);
+      hunkHeader.append(hunkTitle, hunkActions);
+      children.push(hunkHeader);
+    }
+
+    if (row.kind === "same") {
+      const lineDiv = make("div", "diff-line same");
+      const gutter = make("span", "diff-gutter");
+      const lineNum = make("span", "diff-num", String(row.newLine ?? row.oldLine ?? ""));
+      gutter.append(lineNum);
+      const textSpan = make("span", "diff-text", `  ${row.text}`);
+      lineDiv.append(gutter, textSpan);
+      children.push(lineDiv);
+    } else if (row.kind === "add") {
+      const lineDiv = make("div", "diff-line add");
+      const gutter = make("span", "diff-gutter");
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "diff-select";
+      checkbox.title = "Select line for accept or reject";
+      checkbox.checked = selectedDiffLines.has(row.index);
+      checkbox.addEventListener("change", (e) => {
+        e.stopPropagation();
+        if (checkbox.checked) {
+          selectedDiffLines.add(row.index);
+        } else {
+          selectedDiffLines.delete(row.index);
+        }
+        updateDiffSelectionControls();
+      });
+
+      const lineNum = make("span", "diff-num", String(row.newLine ?? ""));
+
+      const actions = make("span", "diff-actions");
+      const acceptBtn = make("button", "diff-btn diff-btn-accept", "✓");
+      acceptBtn.type = "button";
+      acceptBtn.title = "Accept this line";
+      acceptBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void decideOpenFile("accept", [row.index]);
+      });
+
+      const rejectBtn = make("button", "diff-btn diff-btn-reject", "✕");
+      rejectBtn.type = "button";
+      rejectBtn.title = "Reject this line";
+      rejectBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void decideOpenFile("reject", [row.index]);
+      });
+
+      actions.append(acceptBtn, rejectBtn);
+      gutter.append(checkbox, lineNum, actions);
+      const textSpan = make("span", "diff-text", `+ ${row.text}`);
+      lineDiv.append(gutter, textSpan);
+      children.push(lineDiv);
+    } else if (row.kind === "del") {
+      const lineDiv = make("div", "diff-line del");
+      const gutter = make("span", "diff-gutter");
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "diff-select";
+      checkbox.title = "Select line for accept or reject";
+      checkbox.checked = selectedDiffLines.has(row.index);
+      checkbox.addEventListener("change", (e) => {
+        e.stopPropagation();
+        if (checkbox.checked) {
+          selectedDiffLines.add(row.index);
+        } else {
+          selectedDiffLines.delete(row.index);
+        }
+        updateDiffSelectionControls();
+      });
+
+      const lineNum = make("span", "diff-num", String(row.oldLine ?? ""));
+
+      const actions = make("span", "diff-actions");
+      const acceptBtn = make("button", "diff-btn diff-btn-accept", "✓");
+      acceptBtn.type = "button";
+      acceptBtn.title = "Accept this deletion";
+      acceptBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void decideOpenFile("accept", [row.index]);
+      });
+
+      const rejectBtn = make("button", "diff-btn diff-btn-reject", "✕");
+      rejectBtn.type = "button";
+      rejectBtn.title = "Reject this deletion (restore line)";
+      rejectBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void decideOpenFile("reject", [row.index]);
+      });
+
+      actions.append(acceptBtn, rejectBtn);
+      gutter.append(checkbox, lineNum, actions);
+      const textSpan = make("span", "diff-text", `- ${row.text}`);
+      lineDiv.append(gutter, textSpan);
+      children.push(lineDiv);
+    }
+  }
+
+  body.replaceChildren(...children);
+  updateDiffSelectionControls();
 }
 
 /** @returns {HTMLTextAreaElement} */
@@ -4540,6 +4667,9 @@ function showFileChrome(path, editing, review) {
   const reviewing = !editing && review !== undefined && watching !== undefined;
   element("file-accept").hidden = !reviewing;
   element("file-reject").hidden = !reviewing;
+  element("file-accept").textContent = review?.kind === "modified" ? "Accept All" : "Accept";
+  element("file-reject").textContent = review?.kind === "modified" ? "Reject All" : "Reject";
+  updateDiffSelectionControls();
   element("file-body").hidden = editing;
   element("file-editor").hidden = !editing;
 }
@@ -4640,6 +4770,10 @@ async function showFile(path) {
     review === undefined ? textLabel(path) : review.kind === "created" ? "New file" : "Modified";
   element("file-accept").hidden = review === undefined || watching === undefined;
   element("file-reject").hidden = review === undefined || watching === undefined;
+  element("file-accept").textContent = review?.kind === "modified" ? "Accept All" : "Accept";
+  element("file-reject").textContent = review?.kind === "modified" ? "Reject All" : "Reject";
+  selectedDiffLines.clear();
+  updateDiffSelectionControls();
   status.textContent = "Loading…";
   try {
     const response = await request(`/api/text?${new URLSearchParams({ path })}`);
@@ -4672,24 +4806,34 @@ async function showFile(path) {
 }
 
 /**
- * Keeps or puts back the text file on show.
+ * Keeps or puts back the text file on show, wholly or for specific lines.
  * @param {"accept" | "reject"} decision
+ * @param {readonly number[]} [lines]
  */
-async function decideOpenFile(decision) {
+async function decideOpenFile(decision, lines) {
   if (watching === undefined || openPane === "notebook") return;
   const path = openPane;
   const review = reviewsOf().find((item) => item.path === path);
   const status = element("file-status");
   status.textContent = "";
   try {
-    const response = await post(`/api/sessions/${watching.state.id}/text`, { path, decision });
+    const payload = lines !== undefined ? { path, decision, lines } : { path, decision };
+    const response = await post(`/api/sessions/${watching.state.id}/text`, payload);
     const state = /** @type {NotebookSessionState} */ (await response.json());
     if (watching !== undefined && state.sequence >= watching.sequence) {
       watching.state = state;
       watching.sequence = state.sequence;
     }
-    if (decision === "reject" && review?.kind === "created") closeText(path);
-    else renderSession();
+    selectedDiffLines.clear();
+    updateDiffSelectionControls();
+    if (decision === "reject" && review?.kind === "created" && lines === undefined) {
+      closeText(path);
+    } else {
+      renderSession();
+      if (openPane === path) {
+        void showFile(path);
+      }
+    }
     void refreshTree();
   } catch (cause) {
     status.textContent = `Could not ${decision} this file: ${describe(cause)}`;
@@ -6115,7 +6259,8 @@ function actionsFor(at) {
     if (segment?.kind === "cell") {
       const cell = segment;
       const live = watching?.state.cells.find((item) => item.id === cell.id.trim());
-      if (live?.service === true || live?.status === "running") actions.append(serviceStopButton(live.id));
+      if (live?.service === true || live?.status === "running")
+        actions.append(serviceStopButton(live.id));
       actions.append(
         button(
           "Run",
@@ -6884,7 +7029,8 @@ function renderStep(cell, session, running) {
     heading.append(durationSpan);
   }
   heading.append(...turnButtons(cell));
-  if (cell.service === true || cell.status === "running") heading.append(serviceStopButton(cell.id));
+  if (cell.service === true || cell.status === "running")
+    heading.append(serviceStopButton(cell.id));
   heading.append(cellRemoveButton(cell, running));
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
   const usageButton = contextButton(cell);
@@ -8122,6 +8268,16 @@ element("run-stop").addEventListener("click", () => void interrupt());
 element("edit").addEventListener("click", () => beginEditing());
 element("file-accept").addEventListener("click", () => void decideOpenFile("accept"));
 element("file-reject").addEventListener("click", () => void decideOpenFile("reject"));
+element("file-accept-selected").addEventListener("click", () => {
+  if (selectedDiffLines.size > 0) {
+    void decideOpenFile("accept", Array.from(selectedDiffLines));
+  }
+});
+element("file-reject-selected").addEventListener("click", () => {
+  if (selectedDiffLines.size > 0) {
+    void decideOpenFile("reject", Array.from(selectedDiffLines));
+  }
+});
 element("file-edit").addEventListener("click", beginFileEdit);
 element("file-rename").addEventListener("click", () => {
   if (openPane !== "notebook" && !element("file-view").hidden) void renameOtherFile(openPane);

@@ -3177,6 +3177,73 @@ describe("text files", () => {
     expect(await stateOf(again, session.id)).not.toHaveProperty("reviews");
   });
 
+  it("accepts and rejects individual lines or several lines in a text review", async () => {
+    const server = await serve({
+      "hello.md": "```bash id=write\nprintf 'line1\\nLINE2\\nline3\\nLINE4\\n' > note.txt\n```\n",
+      "note.txt": "line1\nline2\nline3\nline4\n",
+    });
+    const session = await open(server, "hello.md");
+    await run(server, session.id);
+    const reviewed = await settled(server, session.id);
+    expect(reviewed.reviews).toEqual([
+      { path: "note.txt", kind: "modified", before: "line1\nline2\nline3\nline4\n" },
+    ]);
+
+    // Reject line index 1 & 2 (the change from line2 to LINE2)
+    // 0: same line1
+    // 1: del line2
+    // 2: add LINE2
+    // 3: same line3
+    // 4: del line4
+    // 5: add LINE4
+    // 6: same ""
+    const partialReject = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "note.txt",
+      decision: "reject",
+      lines: [1, 2],
+    });
+    expect(partialReject.status).toBe(200);
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe(
+      "line1\nline2\nline3\nLINE4\n",
+    );
+
+    // Review remains active with updated before
+    const stateAfterReject = await stateOf(server, session.id);
+    expect(stateAfterReject.reviews).toEqual([
+      { path: "note.txt", kind: "modified", before: "line1\nline2\nline3\nline4\n" },
+    ]);
+
+    // Now accept the remaining change (del line4, add LINE4)
+    // In current diff:
+    // 0: same line1
+    // 1: same line2
+    // 2: same line3
+    // 3: del line4
+    // 4: add LINE4
+    // 5: same ""
+    const partialAccept = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "note.txt",
+      decision: "accept",
+      lines: [3, 4],
+    });
+    expect(partialAccept.status).toBe(200);
+    expect(await readFile(join(server.directory, "note.txt"), "utf8")).toBe(
+      "line1\nline2\nline3\nLINE4\n",
+    );
+
+    // All changes decided: review is removed
+    const finalState = await stateOf(server, session.id);
+    expect(finalState).not.toHaveProperty("reviews");
+
+    // Invalid lines parameter returns 400
+    const badLines = await post(server, `/api/sessions/${session.id}/text`, {
+      path: "note.txt",
+      decision: "accept",
+      lines: ["not-a-number"],
+    });
+    expect(badLines.status).toBe(400);
+  });
+
   it("saves a text file, and reads a notebook a session holds again", async () => {
     const server = await serve({ "hello.md": hello, "note.txt": "before\n" });
     const session = await open(server, "hello.md");

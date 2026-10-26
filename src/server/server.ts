@@ -1608,9 +1608,12 @@ async function serveSession(
       const body = await readJson(request);
       if (
         !isRecord(body) ||
-        !hasKeys(body, ["path", "decision"]) ||
+        !hasKeys(body, ["path", "decision"], ["lines"]) ||
         typeof body.path !== "string" ||
-        (body.decision !== "accept" && body.decision !== "reject")
+        (body.decision !== "accept" && body.decision !== "reject") ||
+        ("lines" in body &&
+          (!Array.isArray(body.lines) ||
+            !body.lines.every((line) => typeof line === "number" && Number.isInteger(line))))
       ) {
         reply(
           response,
@@ -1619,7 +1622,8 @@ async function serveSession(
         );
         return;
       }
-      const decided = await session.decideText(body.path, body.decision);
+      const lines = Array.isArray(body.lines) ? (body.lines as number[]) : undefined;
+      const decided = await session.decideText(body.path, body.decision, lines);
       switch (decided.kind) {
         case "invalid":
           reply(response, 400, "That is not a text file under this directory.\n");

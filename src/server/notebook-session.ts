@@ -104,7 +104,9 @@ import {
   revertText,
   reviewsBetween,
   textPath,
+  writeTextFile,
 } from "./text-files.js";
+import { applyDecision } from "./diff.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -417,10 +419,15 @@ export interface NotebookSession {
   /**
    * Keeps a text file a Run created or changed, or puts it back. Accepting
    * leaves the bytes on disk and drops the review. Rejecting writes the
-   * previous bytes, or removes a file that was new. A Notebook that does not
-   * parse after it is accepted is left under review.
+   * previous bytes, or removes a file that was new. When lines are provided,
+   * only those lines in the diff are accepted or rejected. A Notebook that does
+   * not parse after it is accepted is left under review.
    */
-  decideText(name: string, decision: "accept" | "reject"): Promise<TextDecided>;
+  decideText(
+    name: string,
+    decision: "accept" | "reject",
+    lines?: readonly number[],
+  ): Promise<TextDecided>;
   /**
    * Reads the Notebook from disk again after a text save wrote it. A file
    * that no longer parses is left as the session held it; the bytes stay on
@@ -1293,18 +1300,75 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   }
 
   /**
-   * Accepts or rejects one open review. The Notebook file, when it is the
-   * file decided, is taken up by the session once the bytes are the ones the
-   * decision left — except an acceptance that would leave a Notebook the
-   * session cannot open, which stays under review and changes nothing.
+   * Accepts or rejects one open review. When lines are specified, only those
+   * lines in the diff are accepted or rejected; the review remains open with
+   * updated before text until all changes have been decided. The Notebook file,
+   * when it is the file decided, is taken up by the session once the bytes are
+   * the ones the decision left — except an acceptance that would leave a Notebook
+   * the session cannot open, which stays under review and changes nothing.
    */
-  const decide = async (name: string, decision: "accept" | "reject"): Promise<TextDecided> => {
+  const decide = async (
+    name: string,
+    decision: "accept" | "reject",
+    lines?: readonly number[],
+  ): Promise<TextDecided> => {
     const journal = await ensureJournal();
     if (journal !== undefined) return { kind: "refused", problem: journal };
     const named = textPath(directory, name);
     if (named === undefined) return { kind: "invalid" };
     const review = reviews.get(named);
     if (review === undefined) return { kind: "absent" };
+
+    if (lines !== undefined) {
+      const read = await readTextFile(directory, named);
+      if (read.kind !== "text") return { kind: "invalid" };
+      const diskText = read.text;
+      const beforeText = review.before ?? "";
+
+      let applied;
+      try {
+        applied = applyDecision(beforeText, diskText, decision, lines);
+      } catch {
+        return { kind: "invalid" };
+      }
+
+      let adopting: { readonly bytes: string; readonly notebook: Notebook } | undefined;
+      if (named === notebook && applied.newAfter !== source) {
+        const found = readable(parseNotebook(applied.newAfter), `Cannot open ${notebook}`);
+        if (!found.ok) return { kind: "refused", problem: found.problem };
+        adopting = { bytes: applied.newAfter, notebook: found.notebook };
+      }
+
+      if (applied.newAfter !== diskText) {
+        const written = await writeTextFile(directory, named, applied.newAfter);
+        if (written.kind !== "saved") return { kind: "invalid" };
+      }
+
+      if (applied.resolved) {
+        reviews.delete(named);
+        if (baseline !== undefined) {
+          if (decision === "reject" && review.kind === "created" && applied.newAfter === "") {
+            baseline.delete(named);
+            await revertText(directory, review);
+          } else {
+            baseline.set(named, applied.newAfter);
+          }
+        }
+      } else {
+        reviews.set(named, { path: named, kind: "modified", before: applied.newBefore });
+        if (baseline !== undefined) {
+          baseline.set(named, applied.newBefore);
+        }
+      }
+
+      if (adopting !== undefined && !adopt(adopting.bytes, adopting.notebook)) {
+        return { kind: "refused", problem: JOURNAL_PROBLEM };
+      }
+      if (!observe({ type: "text-changed", reviews: listedReviews() })) {
+        return { kind: "refused", problem: JOURNAL_PROBLEM };
+      }
+      return { kind: "decided" };
+    }
 
     let adopting: { readonly bytes: string; readonly notebook: Notebook } | undefined;
     if (decision === "accept" && named === notebook) {
@@ -1455,8 +1519,8 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       return true;
     },
 
-    decideText(name, decision) {
-      return withReviews(() => decide(name, decision));
+    decideText(name, decision, lines) {
+      return withReviews(() => decide(name, decision, lines));
     },
 
     reread() {
