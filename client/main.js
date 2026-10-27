@@ -3375,7 +3375,33 @@ function setFolded(item, key, folded, button, name) {
   button.setAttribute("aria-expanded", folded ? "false" : "true");
   button.title = `${folded ? "Expand" : "Collapse"} ${name}`;
   button.setAttribute("aria-label", button.title);
+  const sidebar = item.querySelector(".cell-sidebar");
+  if (sidebar instanceof HTMLElement) {
+    sidebar.title = `Double-click to ${folded ? "expand" : "collapse"} ${name}`;
+  }
   syncFoldAllButton();
+}
+
+/**
+ * The left sidebar/column bar of a cell. Double-clicking it collapses or expands the cell.
+ * @param {HTMLElement} item
+ * @param {string} key
+ * @param {string} name
+ * @param {boolean} folded
+ */
+function cellSidebar(item, key, name, folded) {
+  const bar = make("div", "cell-sidebar");
+  bar.title = `Double-click to ${folded ? "expand" : "collapse"} ${name}`;
+  bar.setAttribute("aria-hidden", "true");
+  bar.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const button = item.querySelector("button.fold");
+    if (button instanceof HTMLButtonElement) {
+      setFolded(item, key, !item.classList.contains("folded"), button, name);
+    }
+  });
+  return bar;
 }
 
 /**
@@ -3430,6 +3456,26 @@ function renderCell(cell, session, running) {
   const key = cellFoldKey(cell.id);
   const folded = isFolded(key);
   if (folded && !isEditing) item.classList.add("folded");
+
+  const sidebar = cellSidebar(item, key, `this ${cell.type} cell`, folded);
+  item.addEventListener("dblclick", (event) => {
+    if (event.target === sidebar) return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("button, input, textarea, select, a, .artifacts, .cell-thinking")
+    ) {
+      return;
+    }
+    const rect = item.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    if (x >= -4 && x <= 16) {
+      event.preventDefault();
+      const button = item.querySelector("button.fold");
+      if (button instanceof HTMLButtonElement) {
+        setFolded(item, key, !item.classList.contains("folded"), button, `this ${cell.type} cell`);
+      }
+    }
+  });
 
   const heading = make("div", "cell-header");
   heading.append(foldButton(item, key, `this ${cell.type} cell`, folded));
@@ -3491,7 +3537,7 @@ function renderCell(cell, session, running) {
   const stream = make("div", "cell-stream");
   fillStream(stream, cell);
 
-  item.append(heading, body, stream);
+  item.append(sidebar, heading, body, stream);
   askForThinking(cell);
   if (cell.error !== undefined) item.append(make("p", "cell-error", cell.error));
   if (cell.artifacts.length > 0 && cell.run !== undefined) {
@@ -5571,6 +5617,10 @@ function draftFoldButton(segment) {
       if (preview !== null) {
         preview.textContent = foldPreview(segment.kind === "cell" ? segment.body : segment.text);
       }
+      const sidebar = card.querySelector(".cell-sidebar");
+      if (sidebar instanceof HTMLElement) {
+        sidebar.title = `Double-click to ${segment.folded ? "expand" : "collapse"} ${name()}`;
+      }
     }
     retitle();
     syncFoldAllButton();
@@ -6380,25 +6430,66 @@ function renderCellDeclaration(cell, onTypeChange) {
 }
 
 /**
+ * The left sidebar/column bar of a draft cell. Double-clicking it collapses or expands the cell.
+ * @param {HTMLElement} card
+ * @param {DraftCell} cell
+ */
+function draftCellSidebar(card, cell) {
+  const bar = make("div", "cell-sidebar");
+  bar.title = `Double-click to ${cell.folded ? "expand" : "collapse"} this ${cell.type} cell`;
+  bar.setAttribute("aria-hidden", "true");
+  bar.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const fold = card.querySelector("button.fold-toggle");
+    if (fold instanceof HTMLButtonElement) {
+      fold.click();
+    }
+  });
+  return bar;
+}
+
+/**
  * @param {DraftCell} cell
  * @param {number} at
  */
 function renderDraftCell(cell, at) {
   const card = make("li", `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`);
+  const sidebar = draftCellSidebar(card, cell);
   const declaration = renderCellDeclaration(cell, () => {
     card.className = `draft-segment cell ${cell.type}${cell.folded ? " folded" : ""}`;
-    const fold = card.querySelector("button.fold");
+    const fold = card.querySelector("button.fold, button.fold-toggle");
     if (fold instanceof HTMLButtonElement) {
       fold.title = `${cell.folded ? "Expand" : "Collapse"} this ${cell.type} cell`;
       fold.setAttribute("aria-label", fold.title);
     }
+    sidebar.title = `Double-click to ${cell.folded ? "expand" : "collapse"} this ${cell.type} cell`;
     const body = card.querySelector("textarea");
     if (body instanceof HTMLTextAreaElement) {
       body.placeholder = cell.type === "bash" ? "A shell command" : PROMPT_PLACEHOLDER;
       body.dispatchEvent(new Event("input"));
     }
   });
+  card.addEventListener("dblclick", (event) => {
+    if (event.target === sidebar) return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("button, input, textarea, select, a")
+    ) {
+      return;
+    }
+    const rect = card.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    if (x >= -4 && x <= 16) {
+      event.preventDefault();
+      const fold = card.querySelector("button.fold-toggle");
+      if (fold instanceof HTMLButtonElement) {
+        fold.click();
+      }
+    }
+  });
   card.append(
+    sidebar,
     declaration,
     make("p", "fold-preview", foldPreview(cell.body)),
     cellBody(cell),

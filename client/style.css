@@ -1648,6 +1648,7 @@ button:disabled {
 }
 
 .cell {
+  position: relative;
   border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   border-left-width: 4px;
   border-radius: 0.3rem;
@@ -1752,6 +1753,8 @@ button:disabled {
 
 /* Header actions drawn as symbols. The name stays on the button for hover. */
 button.symbol-button {
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1896,11 +1899,30 @@ button.symbol-button.cell-run:disabled {
   color: #ffffff;
 }
 
+/* The left sidebar/column bar of a cell. Double-clicking it collapses or expands the cell. */
+.cell-sidebar {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: -4px;
+  width: 14px;
+  cursor: pointer;
+  border-top-left-radius: 0.3rem;
+  border-bottom-left-radius: 0.3rem;
+  z-index: 1;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.cell-sidebar:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
 /* A folded cell keeps its header — id, type, status, and the ways to run it —
    and one line of what was written. The reply, the tools, and the files return
    when it is expanded. Scoped to the notebook view: a draft cell is also a
    `.cell`, and folding it must leave its fields and actions in place. */
-#segments > .cell.folded > :not(.cell-header) {
+#segments > .cell.folded > :not(.cell-header):not(.cell-sidebar) {
   display: none;
 }
 
@@ -2441,6 +2463,7 @@ button.context-ring svg {
 
 .draft-frontmatter,
 .draft-segment {
+  position: relative;
   border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   border-left-width: 4px;
   border-radius: 0.3rem;
