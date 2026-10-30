@@ -10,19 +10,37 @@
     <header>
       <h1><a href="#" id="home">octo</a></h1>
       <p id="directory" class="directory"></p>
-      <button id="tree-new" type="button" title="Make a new notebook in this directory">
-        New notebook
-      </button>
+      <div id="header-actions" class="header-actions">
+        <button id="tree-new" type="button" title="Make a new notebook in this directory">
+          New notebook
+        </button>
+        <div class="settings-menu">
+          <button
+            id="settings-button"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="settings-list"
+            title="Settings"
+          >
+            Settings
+          </button>
+          <div id="settings-list" class="settings-list" role="menu" hidden>
+            <button id="menu-modes" type="button" role="menuitem" title="Manage execution modes">
+              Modes
+            </button>
+            <button
+              id="menu-models"
+              type="button"
+              role="menuitem"
+              title="Configure model providers and defaults"
+            >
+              Models
+            </button>
+          </div>
+        </div>
+      </div>
     </header>
-    <nav class="tabs" aria-label="Pages">
-      <button id="tab-notebook" type="button" aria-current="page" title="View the notebook">
-        Notebook
-      </button>
-      <button id="tab-modes" type="button" title="Manage execution modes">Modes</button>
-      <button id="tab-models" type="button" title="Configure model providers and defaults">
-        Models
-      </button>
-    </nav>
     <section id="connect" class="connect" hidden>
       <form id="connect-form">
         <p id="connect-message"></p>
@@ -292,7 +310,15 @@
       <form id="modes-form">
         <div class="models-heading">
           <h2>Modes</h2>
-          <button id="modes-close" type="button">Close</button>
+          <button
+            id="modes-close"
+            class="panel-close"
+            type="button"
+            aria-label="Close"
+            title="Close"
+          >
+            ×
+          </button>
         </div>
         <p class="hint">
           A mode is a system prompt, an optional model, and which tools and skills the agent is
@@ -356,7 +382,15 @@
       <form id="models-form">
         <div class="models-heading">
           <h2>Models</h2>
-          <button id="models-close" type="button">Close</button>
+          <button
+            id="models-close"
+            class="panel-close"
+            type="button"
+            aria-label="Close"
+            title="Close"
+          >
+            ×
+          </button>
         </div>
         <p class="hint">
           Pi's model settings for this user. Search for a model and set it as the default.

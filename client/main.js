@@ -271,9 +271,7 @@ function askToConnect(method) {
   element("workspace").hidden = true;
   element("modes").hidden = true;
   element("models").hidden = true;
-  const tabs = element("tab-notebook").parentElement;
-  if (tabs) tabs.hidden = true;
-  element("tree-new").hidden = true;
+  element("header-actions").hidden = true;
   if (watching !== undefined) {
     watching.socket.close();
     watching = undefined;
@@ -313,18 +311,14 @@ function askToConnect(method) {
       if (response.ok) {
         form.removeEventListener("submit", submit);
         panel.hidden = true;
-        if (tabs) tabs.hidden = false;
-        element("tree-new").hidden = false;
+        element("header-actions").hidden = false;
         element("workspace").hidden = false;
         asking = undefined;
         connected();
         const activeTab = sessionStorage.getItem("activeTab");
-        if (activeTab === "modes" || element("tab-modes").getAttribute("aria-current") === "page") {
+        if (activeTab === "modes") {
           void openModes();
-        } else if (
-          activeTab === "models" ||
-          element("tab-models").getAttribute("aria-current") === "page"
-        ) {
+        } else if (activeTab === "models") {
           void openModels();
         } else {
           route();
@@ -8522,14 +8516,14 @@ async function fetchModels() {
 }
 
 async function openModels() {
+  closeSettingsMenu();
   sessionStorage.setItem("activeTab", "models");
   configuredOnly = false;
   element("workspace").hidden = true;
   element("modes").hidden = true;
   element("models").hidden = false;
-  element("tab-notebook").removeAttribute("aria-current");
-  element("tab-modes").removeAttribute("aria-current");
-  element("tab-models").setAttribute("aria-current", "page");
+  element("menu-modes").removeAttribute("aria-current");
+  element("menu-models").setAttribute("aria-current", "page");
   const status = element("models-status");
   status.textContent = "Loading…";
   try {
@@ -8543,27 +8537,27 @@ async function openModels() {
 
 /** The notebook page: the directory and whichever notebook or list is open. */
 function showNotebook() {
+  closeSettingsMenu();
   sessionStorage.setItem("activeTab", "notebook");
   closeProbePopup(modelTestPopup());
   element("models").hidden = true;
   element("modes").hidden = true;
   element("workspace").hidden = false;
-  element("tab-models").removeAttribute("aria-current");
-  element("tab-modes").removeAttribute("aria-current");
-  element("tab-notebook").setAttribute("aria-current", "page");
+  element("menu-models").removeAttribute("aria-current");
+  element("menu-modes").removeAttribute("aria-current");
   if (!element("list").hidden) void showList();
   else if (watching !== undefined) renderSession();
 }
 
 async function openModes() {
+  closeSettingsMenu();
   sessionStorage.setItem("activeTab", "modes");
   closeProbePopup(modelTestPopup());
   element("workspace").hidden = true;
   element("models").hidden = true;
   element("modes").hidden = false;
-  element("tab-notebook").removeAttribute("aria-current");
-  element("tab-models").removeAttribute("aria-current");
-  element("tab-modes").setAttribute("aria-current", "page");
+  element("menu-models").removeAttribute("aria-current");
+  element("menu-modes").setAttribute("aria-current", "page");
   element("mode-editor").hidden = true;
   const status = element("modes-status");
   status.textContent = "Loading…";
@@ -8777,9 +8771,19 @@ function addProvider() {
   renderProviders();
 }
 
-element("tab-notebook").addEventListener("click", showNotebook);
-element("tab-modes").addEventListener("click", () => void openModes());
-element("tab-models").addEventListener("click", () => void openModels());
+element("settings-button").addEventListener("click", () => {
+  const list = element("settings-list");
+  const opening = list.hidden;
+  list.hidden = !opening;
+  element("settings-button").setAttribute("aria-expanded", opening ? "true" : "false");
+});
+element("menu-modes").addEventListener("click", () => void openModes());
+element("menu-models").addEventListener("click", () => void openModels());
+element("home").addEventListener("click", () => {
+  if (location.hash === "" || location.hash === "#") {
+    showNotebook();
+  }
+});
 element("modes-close").addEventListener("click", showNotebook);
 element("models-close").addEventListener("click", showNotebook);
 element("modes-new").addEventListener("click", () => openModeEditor());
@@ -8939,6 +8943,14 @@ document.addEventListener("click", (event) => {
   closeExportMenu();
 });
 document.addEventListener("click", (event) => {
+  const list = element("settings-list");
+  if (list.hidden) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (list.contains(target) || element("settings-button").contains(target)) return;
+  closeSettingsMenu();
+});
+document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Node)) return;
   for (const list of document.querySelectorAll(".cell-add-list:not([hidden])")) {
@@ -8952,8 +8964,15 @@ document.addEventListener("keydown", (event) => {
     closeTreeMenu();
     closeExportMenu();
     closeCellAddMenus();
+    closeSettingsMenu();
   }
 });
+
+/** Closes the Settings menu, when it is open. */
+function closeSettingsMenu() {
+  element("settings-list").hidden = true;
+  element("settings-button").setAttribute("aria-expanded", "false");
+}
 
 /** Closes any cell add dropdown menus that are open. */
 function closeCellAddMenus() {
