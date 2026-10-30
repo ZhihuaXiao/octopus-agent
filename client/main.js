@@ -138,6 +138,7 @@ initTooltips();
  *   isolated: boolean,
  *   approach?: "plan" | "ask",
  *   model?: string,
+ *   thinkingLevel?: string,
  *   timeout?: number,
  *   status: CellState,
  *   text: string,
@@ -317,9 +318,13 @@ function askToConnect(method) {
         element("workspace").hidden = false;
         asking = undefined;
         connected();
-        if (element("tab-modes").getAttribute("aria-current") === "page") {
+        const activeTab = sessionStorage.getItem("activeTab");
+        if (activeTab === "modes" || element("tab-modes").getAttribute("aria-current") === "page") {
           void openModes();
-        } else if (element("tab-models").getAttribute("aria-current") === "page") {
+        } else if (
+          activeTab === "models" ||
+          element("tab-models").getAttribute("aria-current") === "page"
+        ) {
           void openModels();
         } else {
           route();
@@ -3488,6 +3493,8 @@ function renderCell(cell, session, running) {
   if (cell.uses.length > 0)
     heading.append(make("span", "cell-attribute", `uses ${cell.uses.join(", ")}`));
   if (cell.model !== undefined) heading.append(make("span", "cell-attribute", cell.model));
+  if (cell.thinkingLevel !== undefined && cell.thinkingLevel !== "")
+    heading.append(make("span", "cell-attribute", `thinking ${cell.thinkingLevel}`));
   if (cell.timeout !== undefined)
     heading.append(make("span", "cell-attribute", `timeout ${formatDuration(cell.timeout)}`));
   heading.append(make("span", "cell-status", cell.status));
@@ -3837,6 +3844,7 @@ function draftCellOf(cell) {
     isolated: cell.isolated,
     approach: cell.approach === "plan" || cell.approach === "ask" ? cell.approach : "agent",
     model: cell.model ?? "",
+    thinking: cell.thinkingLevel ?? "",
     timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
     folded: false,
   };
@@ -3970,6 +3978,9 @@ function cellDeclaration(cell, body) {
     isolated: cell.isolated,
     ...(cell.type === "prompt" && cell.approach !== undefined ? { approach: cell.approach } : {}),
     ...(cell.model !== undefined && cell.model !== "" ? { model: cell.model } : {}),
+    ...(cell.type === "prompt" && cell.thinkingLevel !== undefined && cell.thinkingLevel !== ""
+      ? { thinking: cell.thinkingLevel }
+      : {}),
     ...(cell.timeout !== undefined ? { timeout: formatDuration(cell.timeout) } : {}),
   };
 }
@@ -4006,6 +4017,9 @@ async function saveCellEdit(cell, status, buttons) {
         ? { approach: draftCell.approach }
         : {}),
       ...(draftCell.model !== "" ? { model: draftCell.model } : {}),
+      ...(draftCell.type === "prompt" && draftCell.thinking !== ""
+        ? { thinking: draftCell.thinking }
+        : {}),
       ...(draftCell.timeout.trim() !== "" ? { timeout: draftCell.timeout.trim() } : {}),
     };
 
@@ -4134,6 +4148,7 @@ function insertCellBelow(cellId, type) {
     isolated: false,
     approach: "agent",
     model: "",
+    thinking: "",
     timeout: "",
     folded: false,
   };
@@ -5495,6 +5510,7 @@ async function interrupt() {
  *   isolated: boolean,
  *   approach: "agent" | "plan" | "ask",
  *   model: string,
+ *   thinking: string,
  *   timeout: string,
  *   folded: boolean,
  * }} DraftCell
@@ -5565,6 +5581,7 @@ function draftSegments(state) {
       isolated: cell.isolated,
       approach: cell.approach === "plan" || cell.approach === "ask" ? cell.approach : "agent",
       model: cell.model ?? "",
+      thinking: cell.thinkingLevel ?? "",
       timeout: cell.timeout === undefined ? "" : formatDuration(cell.timeout),
       folded: isFolded(cellFoldKey(cell.id)),
     });
@@ -5656,6 +5673,9 @@ function saveRequestOf(edited) {
           ? { approach: segment.approach }
           : {}),
         ...(model === "" ? {} : { model }),
+        ...(segment.type === "prompt" && segment.thinking !== undefined && segment.thinking !== ""
+          ? { thinking: segment.thinking }
+          : {}),
         ...(timeout === "" ? {} : { timeout }),
       };
     }),
@@ -6239,6 +6259,7 @@ function blankCell(type, before) {
     isolated: false,
     approach: "agent",
     model: "",
+    thinking: "",
     timeout: "",
     folded: false,
   };
@@ -6396,9 +6417,39 @@ function renderCellDeclaration(cell, onTypeChange) {
   modeLabel.append("approach", mode);
   modeLabel.hidden = cell.type !== "prompt";
 
+  const thinkingLabel = document.createElement("label");
+  const thinking = document.createElement("select");
+  thinking.className = "draft-thinking";
+  thinking.title =
+    "The thinking level for this prompt cell. The default inherits the notebook's or pi's setting.";
+  /** @type {readonly (readonly [string, string])[]} */
+  const thinkingChoices = [
+    ["", "default"],
+    ["off", "off"],
+    ["minimal", "minimal"],
+    ["low", "low"],
+    ["medium", "medium"],
+    ["high", "high"],
+    ["xhigh", "xhigh"],
+    ["max", "max"],
+  ];
+  for (const [val, lbl] of thinkingChoices) {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    opt.selected = (cell.thinking ?? "") === val;
+    thinking.append(opt);
+  }
+  thinking.addEventListener("change", () => {
+    cell.thinking = thinking.value;
+  });
+  thinkingLabel.append("thinking", thinking);
+  thinkingLabel.hidden = cell.type !== "prompt";
+
   type.addEventListener("change", () => {
     cell.type = type.value === "bash" ? "bash" : "prompt";
     modeLabel.hidden = cell.type !== "prompt";
+    thinkingLabel.hidden = cell.type !== "prompt";
     if (onTypeChange) onTypeChange();
   });
 
@@ -6424,6 +6475,7 @@ function renderCellDeclaration(cell, onTypeChange) {
     usesSelect(cell),
     isolated,
     modelSelect(cell.model, (value) => (cell.model = value)),
+    thinkingLabel,
     field("timeout", cell.timeout, (value) => (cell.timeout = value)),
   );
   return declaration;
@@ -7488,6 +7540,15 @@ async function reconnect(lost, wait) {
 
 function route() {
   if (asking !== undefined) return;
+  const activeTab = sessionStorage.getItem("activeTab");
+  if (activeTab === "models") {
+    void openModels();
+    return;
+  }
+  if (activeTab === "modes") {
+    void openModes();
+    return;
+  }
   const hash = location.hash.slice(1);
   view = hash.startsWith(RUN_VIEW_PREFIX) ? "run" : "author";
   asked = decodeURIComponent(view === "run" ? hash.slice(RUN_VIEW_PREFIX.length) : hash);
@@ -7510,7 +7571,7 @@ function route() {
  * Pi's model settings, in a dialog: the default a Run uses when nothing names
  * a model, and the custom providers in pi's `models.json`.
  * @typedef {{ provider: string, id: string, name: string }} ModelChoice
- * @typedef {{ id: string, contextWindow?: number }} CustomModel
+ * @typedef {{ id: string, contextWindow?: number, enabled?: boolean }} CustomModel
  * @typedef {{
  *   id: string,
  *   baseUrl: string,
@@ -7520,6 +7581,8 @@ function route() {
  *   apiKey?: string,
  *   models: CustomModel[],
  *   open?: boolean,
+ *   addingModel?: boolean,
+ *   isNew?: boolean,
  * }} CustomProvider
  * @typedef {{
  *   defaultProvider?: string,
@@ -7529,6 +7592,7 @@ function route() {
  *   apis: string[],
  *   models: ModelChoice[],
  *   keyed: string[],
+ *   modelEnabled?: Record<string, boolean>,
  *   providers: CustomProvider[],
  * }} ModelPage
  */
@@ -7578,32 +7642,335 @@ function isConfiguredChoice(model, page) {
 }
 
 /**
- * One row: choosing the model calls `onChoose`. A configured model also has
- * Test, which asks it for one token and says whether it answered.
+ * Whether `model` belongs to any provider (original or custom) that has an API key configured.
  * @param {ModelChoice} model
  * @param {ModelPage | undefined} page
- * @param {{ current: boolean, onChoose: () => void }} choice
+ */
+function isModelWithApiKey(model, page) {
+  if (page?.keyed?.includes(model.provider) === true) return true;
+  const custom =
+    providerDraft.find((p) => p.id === model.provider) ??
+    page?.providers?.find((p) => p.id === model.provider);
+  if (custom) {
+    if (custom.apiKeySet === true) return true;
+    if (typeof custom.apiKey === "string" && custom.apiKey.trim() !== "") return true;
+  }
+  return false;
+}
+
+/**
+ * Whether `model` is from a custom provider.
+ * @param {ModelChoice} model
+ * @param {ModelPage | undefined} page
+ */
+function isCustomModel(model, page) {
+  if (providerDraft.some((p) => p.id !== "" && p.id === model.provider)) return true;
+  return page?.providers?.some((p) => p.id !== "" && p.id === model.provider) === true;
+}
+
+/**
+ * Priority for model list ordering:
+ * 0: Custom models with API keys (top)
+ * 1: Original models with API keys (also on top, ahead of unkeyed models)
+ * 2: Custom models without API keys
+ * 3: Original models without API keys
+ * @param {ModelChoice} model
+ * @param {ModelPage | undefined} page
+ */
+function modelSortPriority(model, page) {
+  const keyed = isModelWithApiKey(model, page);
+  const custom = isCustomModel(model, page);
+  if (custom && keyed) return 0;
+  if (keyed) return 1;
+  if (custom) return 2;
+  return 3;
+}
+
+/**
+ * Whether `model` is on in the model lists. The page's own preference wins;
+ * a custom provider's stored `enabled` is the older answer.
+ * @param {ModelChoice} model
+ * @param {ModelPage | undefined} page
+ */
+function isModelToggleEnabled(model, page) {
+  const saved = page?.modelEnabled?.[`${model.provider}/${model.id}`];
+  if (typeof saved === "boolean") return saved;
+  const draftProvider = providerDraft.find((p) => p.id === model.provider);
+  if (draftProvider) {
+    const draftModel = draftProvider.models?.find((m) => m.id === model.id);
+    if (draftModel) return draftModel.enabled !== false;
+  }
+  const provider = page?.providers?.find((p) => p.id === model.provider);
+  if (!provider) return true;
+  const customModel = provider.models?.find((m) => m.id === model.id);
+  if (!customModel) return true;
+  return customModel.enabled !== false;
+}
+
+/**
+ * One row: in the notebook picker dialog, choosing the model calls `onChoose`.
+ * On the Models page, clicking the model does not select it; only Set Default
+ * sets the default model. A configured model also has Test, and, when its
+ * provider has a key, an enable switch and a way to remove that key.
+ * @param {ModelChoice} model
+ * @param {ModelPage | undefined} page
+ * @param {{ current: boolean, onChoose?: () => void }} choice
  */
 function modelChoiceItem(model, page, choice) {
   const item = document.createElement("li");
   const label = modelLabel(model);
-  const button = make("button", "", label);
-  button.type = "button";
-  if (choice.current) button.setAttribute("aria-current", "true");
-  button.addEventListener("click", choice.onChoose);
-  item.append(button);
-  if (page !== undefined && isConfiguredChoice(model, page)) {
+  const isModelsTab = page !== undefined && page === modelPage;
+
+  let labelEl;
+  if (choice.onChoose !== undefined) {
+    const button = make("button", "", label);
+    button.type = "button";
+    if (choice.current) button.setAttribute("aria-current", "true");
+    button.addEventListener("click", choice.onChoose);
+    labelEl = button;
+  } else {
+    const nameSpan = make("span", "model-name", label);
+    if (choice.current) nameSpan.setAttribute("aria-current", "true");
+    labelEl = nameSpan;
+  }
+  item.append(labelEl);
+
+  if (isModelsTab) {
     item.className = "model-row";
-    button.title = label;
+    labelEl.title = label;
+    const actions = make("div", "model-row-actions");
+    const status = make("span", "model-test-status", "");
+    status.setAttribute("aria-live", "polite");
+
+    if (isConfiguredChoice(model, page)) {
+      const test = make("button", "model-test", "Test");
+      test.type = "button";
+      test.title = "Ask this model for one token, to see whether it answers";
+      test.addEventListener("click", () => void testConfiguredModel(model, test, status));
+      actions.append(test);
+
+      if (isModelWithApiKey(model, page)) {
+        actions.append(modelToggleSwitch(model, page));
+      }
+    }
+
+    const setDefault = make("button", "model-set-default", "Set Default");
+    setDefault.type = "button";
+    setDefault.title = "Make this the default model for new Runs";
+    setDefault.addEventListener("click", () => void setModelDefaultFromList(model, setDefault));
+    actions.append(setDefault);
+
+    actions.append(modelApiKeyAction(model, page));
+
+    item.append(actions, status);
+  } else if (page !== undefined && isConfiguredChoice(model, page)) {
+    item.className = "model-row";
+    labelEl.title = label;
+    const actions = make("div", "model-row-actions");
     const test = make("button", "model-test", "Test");
     test.type = "button";
     test.title = "Ask this model for one token, to see whether it answers";
     const status = make("span", "model-test-status", "");
     status.setAttribute("aria-live", "polite");
     test.addEventListener("click", () => void testConfiguredModel(model, test, status));
-    item.append(test, status);
+    actions.append(test);
+    item.append(actions, status);
   }
   return item;
+}
+
+/**
+ * The switch that turns one model on or off in the model lists. It is only
+ * offered for a model whose provider has a key.
+ * @param {ModelChoice} model
+ * @param {ModelPage} page
+ */
+function modelToggleSwitch(model, page) {
+  const enabled = isModelToggleEnabled(model, page);
+  const label = document.createElement("label");
+  label.className = "model-toggle-switch";
+  label.title = enabled
+    ? "Enabled. Click to hide this model from the lists."
+    : "Disabled. Click to show this model in the lists.";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = enabled;
+  checkbox.addEventListener("change", () => {
+    // The page's data is refreshed by the save; read the state before that.
+    const wanted = checkbox.checked;
+    label.title = wanted
+      ? "Enabled. Click to hide this model from the lists."
+      : "Disabled. Click to show this model in the lists.";
+    void setModelEnabled(model, wanted, checkbox);
+  });
+
+  const slider = make("span", "model-toggle-slider", "");
+  label.append(checkbox, slider);
+  return label;
+}
+
+/**
+ * Saves one model's on/off state, then redraws the page so the cell model
+ * lists agree with it.
+ * @param {ModelChoice} model
+ * @param {boolean} enabled
+ * @param {HTMLInputElement} checkbox
+ */
+async function setModelEnabled(model, enabled, checkbox) {
+  checkbox.disabled = true;
+  const status = element("models-status");
+  status.textContent = "";
+  try {
+    await post("/api/models/enabled", { provider: model.provider, model: model.id, enabled });
+    const page = await fetchModels();
+    renderModelPage(page);
+    cellModels = configuredModelsOf(page).map((entry) => `${entry.provider}/${entry.id}`);
+    fillModelSelects();
+    status.textContent = `${enabled ? "Enabled" : "Disabled"} ${modelLabel(model)}.`;
+  } catch (cause) {
+    checkbox.checked = !enabled;
+    checkbox.disabled = false;
+    status.textContent = `Could not ${enabled ? "enable" : "disable"} ${modelLabel(model)}: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Makes `model` the default model for new Runs.
+ * @param {ModelChoice} model
+ * @param {HTMLButtonElement} button
+ */
+async function setModelDefaultFromList(model, button) {
+  button.disabled = true;
+  const status = element("models-status");
+  status.textContent = "";
+  try {
+    await post("/api/models/default", {
+      provider: model.provider,
+      model: model.id,
+    });
+    renderModelPage(await fetchModels());
+    status.textContent = `Set ${modelLabel(model)} as the default.`;
+  } catch (cause) {
+    button.disabled = false;
+    status.textContent = `Could not set the default: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Button to set or change/reset the API key for `model.provider`.
+ * @param {ModelChoice} model
+ * @param {ModelPage} page
+ */
+function modelApiKeyAction(model, page) {
+  const container = make("span", "model-key-action-container");
+  const hasKey = isModelWithApiKey(model, page);
+
+  const mainBtn = make(
+    "button",
+    hasKey ? "model-change-key" : "model-set-key",
+    hasKey ? "Change / Reset API key" : "Set API key",
+  );
+  mainBtn.type = "button";
+  mainBtn.title = hasKey
+    ? `Change or reset the stored API key for ${model.provider}`
+    : `Set an API key for ${model.provider}`;
+
+  const form = make("span", "model-key-inline-form");
+  form.hidden = true;
+
+  const input = document.createElement("input");
+  input.type = "password";
+  input.className = "model-key-input";
+  input.placeholder = hasKey ? "New API key" : "API key";
+  input.autocomplete = "off";
+
+  const saveBtn = make("button", "model-key-save", "Save");
+  saveBtn.type = "button";
+  saveBtn.title = `Save API key for ${model.provider}`;
+
+  const cancelBtn = make("button", "model-key-cancel", "Cancel");
+  cancelBtn.type = "button";
+  cancelBtn.title = "Cancel";
+
+  mainBtn.addEventListener("click", () => {
+    mainBtn.hidden = true;
+    form.hidden = false;
+    input.value = "";
+    input.focus();
+  });
+
+  cancelBtn.addEventListener("click", () => {
+    form.hidden = true;
+    mainBtn.hidden = false;
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const val = input.value.trim();
+    if (val === "") {
+      input.focus();
+      return;
+    }
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    const status = element("models-status");
+    status.textContent = "";
+    try {
+      await post("/api/models/key", { provider: model.provider, apiKey: val });
+      const updatedPage = await fetchModels();
+      renderModelPage(updatedPage);
+      cellModels = configuredModelsOf(updatedPage).map((entry) => `${entry.provider}/${entry.id}`);
+      fillModelSelects();
+      status.textContent = `Saved API key for ${model.provider}.`;
+    } catch (cause) {
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+      status.textContent = `Could not save API key: ${describe(cause)}`;
+    }
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveBtn.click();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      cancelBtn.click();
+    }
+  });
+
+  form.append(input, saveBtn);
+
+  if (hasKey) {
+    const resetBtn = make("button", "model-key-reset", "Reset");
+    resetBtn.type = "button";
+    resetBtn.title = `Remove and reset the stored API key for ${model.provider}`;
+    resetBtn.addEventListener("click", async () => {
+      resetBtn.disabled = true;
+      cancelBtn.disabled = true;
+      const status = element("models-status");
+      status.textContent = "";
+      try {
+        await post("/api/models/key", { provider: model.provider, clearApiKey: true });
+        const updatedPage = await fetchModels();
+        renderModelPage(updatedPage);
+        cellModels = configuredModelsOf(updatedPage).map(
+          (entry) => `${entry.provider}/${entry.id}`,
+        );
+        fillModelSelects();
+        status.textContent = `Reset API key for ${model.provider}.`;
+      } catch (cause) {
+        resetBtn.disabled = false;
+        cancelBtn.disabled = false;
+        status.textContent = `Could not reset API key: ${describe(cause)}`;
+      }
+    });
+    form.append(resetBtn);
+  }
+
+  form.append(cancelBtn);
+  container.append(mainBtn, form);
+  return container;
 }
 
 /**
@@ -7643,7 +8010,7 @@ function modelTestPopup() {
 function chosenText() {
   const chosen = element("models-chosen");
   if (chosenModel === undefined) {
-    chosen.textContent = "No model chosen yet. Search, then pick one.";
+    chosen.textContent = "No default model set yet.";
     return;
   }
   const keyed = modelPage?.keyed?.includes(chosenModel.provider) === true;
@@ -7674,22 +8041,18 @@ function renderMatches(query) {
   const models = (modelPage?.models ?? [])
     .filter((model) => allowed === undefined || allowed.has(model.provider))
     .filter((model) => needle === "" || modelLabel(model).toLowerCase().includes(needle))
-    .sort((a, b) => rank(a, needle) - rank(b, needle));
+    .sort((a, b) => {
+      const pA = modelSortPriority(a, modelPage);
+      const pB = modelSortPriority(b, modelPage);
+      if (pA !== pB) return pA - pB;
+      const rankDiff = rank(a, needle) - rank(b, needle);
+      if (rankDiff !== 0) return rankDiff;
+      return modelLabel(a).localeCompare(modelLabel(b));
+    });
   list.replaceChildren(
     ...models.map((model) =>
       modelChoiceItem(model, modelPage, {
         current: chosenModel?.provider === model.provider && chosenModel.id === model.id,
-        onChoose: () => {
-          chosenModel = { provider: model.provider, id: model.id };
-          const key = /** @type {HTMLInputElement} */ (element("models-key"));
-          key.value = "";
-          key.placeholder =
-            modelPage?.keyed?.includes(model.provider) === true
-              ? "Leave blank to keep the stored key"
-              : "Paste an API key";
-          chosenText();
-          renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
-        },
       }),
     ),
   );
@@ -7711,89 +8074,190 @@ function renderMatches(query) {
 /** @param {ModelPage} page */
 function renderModelPage(page) {
   modelPage = page;
-  providerDraft = page.providers.map((provider) => ({
+  const openIndices = new Set(
+    providerDraft.map((p, idx) => (p.open === true ? idx : -1)).filter((idx) => idx >= 0),
+  );
+  const openIds = new Set(providerDraft.filter((p) => p.open === true).map((p) => p.id));
+  providerDraft = page.providers.map((provider, idx) => ({
     ...provider,
-    models: provider.models.map((model) => ({ ...model })),
+    open: openIds.has(provider.id) || openIndices.has(idx),
+    models: provider.models.map((model) => ({
+      ...model,
+      enabled: model.enabled !== false,
+    })),
   }));
   if (page.defaultProvider !== undefined && page.defaultModel !== undefined) {
     chosenModel = { provider: page.defaultProvider, id: page.defaultModel };
   }
   chosenText();
-  const key = /** @type {HTMLInputElement} */ (element("models-key"));
-  key.value = "";
-  key.placeholder =
-    chosenModel !== undefined && page.keyed?.includes(chosenModel.provider) === true
-      ? "Leave blank to keep the stored key"
-      : "Paste an API key";
   /** @type {HTMLInputElement} */ (element("models-search")).value = "";
-
-  const thinking = /** @type {HTMLSelectElement} */ (element("models-thinking"));
-  thinking.replaceChildren(
-    ...page.thinkingLevels.map((level) => {
-      const option = document.createElement("option");
-      option.value = level;
-      option.textContent = level;
-      option.selected = level === page.defaultThinking;
-      return option;
-    }),
-  );
   renderMatches("");
   syncConfiguredButton();
   renderProviders();
 }
 
 /**
- * One row per model: its id, and the context window, which starts at 200,000.
+ * Renders the models list for a custom provider with:
+ * - Clean list of models with toggle switches (Screenshot 2)
+ * - Setting context window size & removing custom model
+ * - "+ Add Custom Model" action which reveals an inline input form (Screenshot 3)
  * @param {CustomProvider} provider
  */
 function providerModels(provider) {
   const block = document.createElement("div");
+  block.className = "custom-models-block";
+
+  const list = document.createElement("div");
+  list.className = "custom-models-list";
+
   for (const [index, model] of provider.models.entries()) {
-    const row = make("div", "provider-model");
-    const id = document.createElement("input");
-    id.type = "text";
-    id.value = model.id;
-    id.placeholder = "model id";
-    id.addEventListener("input", () => {
-      model.id = id.value.trim();
-    });
+    const row = make("div", "custom-model-row");
+
+    // Left: Model Name
+    const nameSpan = make("span", "custom-model-name", model.id);
+    nameSpan.title = model.id;
+
+    // Right: Controls (Context window, Toggle switch, Remove button)
+    const controls = make("div", "custom-model-controls");
+
+    // Context window size input
+    const tokensLabel = document.createElement("label");
+    tokensLabel.className = "custom-model-tokens-label";
+    tokensLabel.title = "Maximum context window (tokens)";
+
     const tokens = document.createElement("input");
     tokens.type = "number";
+    tokens.className = "custom-model-tokens-input";
     tokens.min = "1";
     tokens.step = "1000";
     tokens.value = String(model.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-    tokens.title = "Maximum context window, in tokens. The default is 200,000.";
+    tokens.placeholder = String(DEFAULT_CONTEXT_WINDOW);
+    tokens.title = "Maximum context window (tokens)";
     tokens.addEventListener("input", () => {
       const parsed = Number(tokens.value);
       if (Number.isSafeInteger(parsed) && parsed > 0) model.contextWindow = parsed;
     });
-    tokens.addEventListener("change", () => {
+    tokens.addEventListener("change", async () => {
       const parsed = Number(tokens.value);
       if (Number.isSafeInteger(parsed) && parsed > 0) {
         model.contextWindow = parsed;
+        await saveModelProviders();
         return;
       }
       tokens.value = String(model.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
     });
-    const windowLabel = document.createElement("label");
-    windowLabel.append("Context window", tokens);
-    const remove = make("button", "", "Remove");
-    remove.type = "button";
-    remove.addEventListener("click", () => {
+    tokensLabel.append(tokens);
+
+    // Remove model button with Confirm and Cancel
+    const removeBtn = make("button", "custom-model-remove", "×");
+    removeBtn.type = "button";
+    removeBtn.title = "Remove model";
+    removeBtn.setAttribute("aria-label", `Remove ${model.id}`);
+
+    const modelConfirmGroup = make("span", "custom-model-confirm-group");
+    modelConfirmGroup.hidden = true;
+
+    const modelConfirmBtn = make("button", "custom-model-confirm-btn", "Confirm");
+    modelConfirmBtn.type = "button";
+    modelConfirmBtn.title = `Confirm removing ${model.id}`;
+
+    const modelCancelBtn = make("button", "custom-model-cancel-btn", "Cancel");
+    modelCancelBtn.type = "button";
+    modelCancelBtn.title = "Cancel";
+
+    removeBtn.addEventListener("click", () => {
+      removeBtn.hidden = true;
+      modelConfirmGroup.hidden = false;
+    });
+
+    modelCancelBtn.addEventListener("click", () => {
+      modelConfirmGroup.hidden = true;
+      removeBtn.hidden = false;
+    });
+
+    modelConfirmBtn.addEventListener("click", async () => {
       provider.models.splice(index, 1);
       renderProviders();
+      if (modelPage) {
+        cellModels = configuredModelsOf(modelPage).map((m) => `${m.provider}/${m.id}`);
+        fillModelSelects();
+      }
+      await saveModelProviders();
     });
-    row.append(id, windowLabel, remove);
-    block.append(row);
+
+    modelConfirmGroup.append(modelConfirmBtn, modelCancelBtn);
+
+    controls.append(tokensLabel, removeBtn, modelConfirmGroup);
+    row.append(nameSpan, controls);
+    list.append(row);
   }
-  const add = make("button", "", "Add model");
-  add.type = "button";
-  add.addEventListener("click", () => {
-    provider.models.push({ id: "", contextWindow: DEFAULT_CONTEXT_WINDOW });
-    provider.open = true;
-    renderProviders();
-  });
-  block.append(add);
+
+  block.append(list);
+
+  if (provider.addingModel === true) {
+    const addRow = make("div", "add-custom-model-row");
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "add-custom-model-input";
+    input.placeholder = "Enter model name";
+
+    const addBtn = make("button", "add-custom-model-submit", "Add");
+    addBtn.type = "button";
+
+    const cancelBtn = make("button", "add-custom-model-cancel", "Cancel");
+    cancelBtn.type = "button";
+
+    const submitAdd = async () => {
+      const id = input.value.trim();
+      if (id !== "") {
+        provider.models.push({
+          id,
+          contextWindow: DEFAULT_CONTEXT_WINDOW,
+          enabled: true,
+        });
+        provider.addingModel = false;
+        renderProviders();
+        await saveModelProviders();
+      } else {
+        provider.addingModel = false;
+        renderProviders();
+      }
+    };
+
+    const cancelAdd = () => {
+      provider.addingModel = false;
+      renderProviders();
+    };
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitAdd();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelAdd();
+      }
+    });
+
+    addBtn.addEventListener("click", submitAdd);
+    cancelBtn.addEventListener("click", cancelAdd);
+
+    addRow.append(input, addBtn, cancelBtn);
+    block.append(addRow);
+
+    setTimeout(() => input.focus(), 0);
+  } else {
+    const addTrigger = make("button", "add-custom-model-btn", "+ Add Custom Model");
+    addTrigger.type = "button";
+    addTrigger.addEventListener("click", () => {
+      provider.addingModel = true;
+      provider.open = true;
+      renderProviders();
+    });
+    block.append(addTrigger);
+  }
+
   return block;
 }
 
@@ -7852,13 +8316,6 @@ function renderProviders() {
 
       const models = providerModels(provider);
 
-      const remove = make("button", "", "Remove");
-      remove.type = "button";
-      remove.addEventListener("click", () => {
-        providerDraft.splice(at, 1);
-        renderProviders();
-      });
-
       const nameLabel = document.createElement("label");
       nameLabel.append("Name", name);
       const urlLabel = document.createElement("label");
@@ -7870,8 +8327,51 @@ function renderProviders() {
       const modelsLabel = document.createElement("div");
       modelsLabel.className = "provider-models";
       modelsLabel.append(make("span", "provider-models-label", "Models"), models);
+
       const actions = make("div", "provider-actions");
-      actions.append(remove);
+      if (provider.isNew === true) {
+        const cancelNewBtn = make("button", "provider-cancel-btn", "Cancel");
+        cancelNewBtn.type = "button";
+        cancelNewBtn.title = "Cancel adding this new provider";
+        cancelNewBtn.addEventListener("click", () => {
+          providerDraft.splice(at, 1);
+          renderProviders();
+        });
+        actions.append(cancelNewBtn);
+      } else {
+        const removeBtn = make("button", "provider-remove-btn", "Remove");
+        removeBtn.type = "button";
+        removeBtn.title =
+          "Remove this custom provider and its models. You confirm first, and the change is saved right away";
+
+        const confirmContainer = make("span", "provider-remove-confirm-container");
+        confirmContainer.hidden = true;
+
+        const confirmMsg = make("span", "provider-remove-confirm-msg", "Remove provider?");
+        const confirmBtn = make("button", "provider-remove-confirm-btn", "Confirm");
+        confirmBtn.type = "button";
+        const cancelBtn = make("button", "provider-remove-cancel-btn", "Cancel");
+        cancelBtn.type = "button";
+
+        removeBtn.addEventListener("click", () => {
+          removeBtn.hidden = true;
+          confirmContainer.hidden = false;
+        });
+
+        cancelBtn.addEventListener("click", () => {
+          confirmContainer.hidden = true;
+          removeBtn.hidden = false;
+        });
+
+        confirmBtn.addEventListener("click", async () => {
+          providerDraft.splice(at, 1);
+          renderProviders();
+          await saveModelProviders();
+        });
+
+        confirmContainer.append(confirmMsg, confirmBtn, cancelBtn);
+        actions.append(removeBtn, confirmContainer);
+      }
       card.append(summary, nameLabel, urlLabel, apiLabel, keyLabel, modelsLabel, actions);
       return card;
     }),
@@ -7897,7 +8397,9 @@ function configuredModelsOf(page) {
   for (const provider of page.providers ?? []) {
     if (provider.id !== "") ids.add(provider.id);
   }
-  return page.models.filter((model) => ids.has(model.provider));
+  return page.models
+    .filter((model) => ids.has(model.provider))
+    .filter((model) => isModelToggleEnabled(model, page));
 }
 
 /**
@@ -7945,7 +8447,12 @@ function renderNotebookModelChoices(models, query) {
       const aCurrent = `${a.provider}/${a.id}` === modelCurrent;
       const bCurrent = `${b.provider}/${b.id}` === modelCurrent;
       if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
-      return rank(a, needle) - rank(b, needle);
+      const pA = modelSortPriority(a, notebookModels);
+      const pB = modelSortPriority(b, notebookModels);
+      if (pA !== pB) return pA - pB;
+      const rankDiff = rank(a, needle) - rank(b, needle);
+      if (rankDiff !== 0) return rankDiff;
+      return modelLabel(a).localeCompare(modelLabel(b));
     });
 
   const clear = make("button", "", "Use the default");
@@ -8015,6 +8522,7 @@ async function fetchModels() {
 }
 
 async function openModels() {
+  sessionStorage.setItem("activeTab", "models");
   configuredOnly = false;
   element("workspace").hidden = true;
   element("modes").hidden = true;
@@ -8035,6 +8543,7 @@ async function openModels() {
 
 /** The notebook page: the directory and whichever notebook or list is open. */
 function showNotebook() {
+  sessionStorage.setItem("activeTab", "notebook");
   closeProbePopup(modelTestPopup());
   element("models").hidden = true;
   element("modes").hidden = true;
@@ -8047,6 +8556,7 @@ function showNotebook() {
 }
 
 async function openModes() {
+  sessionStorage.setItem("activeTab", "modes");
   closeProbePopup(modelTestPopup());
   element("workspace").hidden = true;
   element("models").hidden = true;
@@ -8206,30 +8716,6 @@ async function deleteMode(name) {
   }
 }
 
-async function saveModelDefault() {
-  const status = element("models-status");
-  if (chosenModel === undefined) {
-    status.textContent = "Search for a model and pick one before saving.";
-    return;
-  }
-  const { provider, id } = chosenModel;
-  const thinking = /** @type {HTMLSelectElement} */ (element("models-thinking")).value;
-  const apiKey = /** @type {HTMLInputElement} */ (element("models-key")).value.trim();
-  status.textContent = "";
-  try {
-    await post("/api/models/default", {
-      provider,
-      model: id,
-      ...(thinking === "" ? {} : { thinking }),
-    });
-    if (apiKey !== "") await post("/api/models/key", { provider, apiKey });
-    renderModelPage(await fetchModels());
-    status.textContent = apiKey === "" ? "Saved the default." : "Saved the default and the key.";
-  } catch (cause) {
-    status.textContent = `Could not save: ${describe(cause)}`;
-  }
-}
-
 async function saveModelProviders() {
   const status = element("models-status");
   status.textContent = "";
@@ -8250,10 +8736,16 @@ async function saveModelProviders() {
             const id = model.id.trim();
             if (id === "") return [];
             const tokens = model.contextWindow;
-            if (tokens !== undefined && Number.isSafeInteger(tokens) && tokens > 0) {
-              return [{ id, contextWindow: tokens }];
-            }
-            return [{ id }];
+            const enabled = model.enabled !== false;
+            return [
+              {
+                id,
+                enabled,
+                ...(tokens !== undefined && Number.isSafeInteger(tokens) && tokens > 0
+                  ? { contextWindow: tokens }
+                  : {}),
+              },
+            ];
           }),
           ...(provider.apiKey !== undefined && provider.apiKey !== ""
             ? { apiKey: provider.apiKey }
@@ -8261,7 +8753,10 @@ async function saveModelProviders() {
         })),
     });
     status.textContent = "Saved the providers.";
-    renderModelPage(await fetchModels());
+    const updatedPage = await fetchModels();
+    renderModelPage(updatedPage);
+    cellModels = configuredModelsOf(updatedPage).map((m) => `${m.provider}/${m.id}`);
+    fillModelSelects();
   } catch (cause) {
     status.textContent = `Could not save the providers: ${describe(cause)}`;
   }
@@ -8277,6 +8772,7 @@ function addProvider() {
     apiKeyFromCommand: false,
     models: [],
     open: true,
+    isNew: true,
   });
   renderProviders();
 }
@@ -8340,7 +8836,6 @@ element("models-configured").addEventListener("click", () => {
   syncConfiguredButton();
   renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
 });
-element("models-save-default").addEventListener("click", () => void saveModelDefault());
 element("models-save-providers").addEventListener("click", () => void saveModelProviders());
 element("models-add").addEventListener("click", addProvider);
 element("models-form").addEventListener("submit", (event) => event.preventDefault());
@@ -8510,7 +9005,10 @@ element("editor").addEventListener("submit", (event) => {
   event.preventDefault();
   void saveDraft();
 });
-window.addEventListener("hashchange", route);
+window.addEventListener("hashchange", () => {
+  sessionStorage.setItem("activeTab", "notebook");
+  route();
+});
 route();
 
 /** How often to check that the Connection is still known to the server. */

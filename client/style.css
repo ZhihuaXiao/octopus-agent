@@ -770,6 +770,342 @@ header #tree-new {
   font-size: 0.9rem;
 }
 
+.custom-models-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.custom-models-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.custom-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.2rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  gap: 0.8rem;
+}
+
+.custom-model-name {
+  font-size: 0.95rem;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-weight: 400;
+  color: inherit;
+  word-break: break-all;
+  flex: 1;
+}
+
+.custom-model-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.custom-model-tokens-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  font-size: 0.8rem;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+
+.custom-model-tokens-input {
+  width: 6.5rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.82rem;
+  text-align: right;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  color: inherit;
+}
+
+/* Toggle switch styling matching Screenshot 2 */
+.model-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.model-toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  position: absolute;
+}
+
+.model-toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #2b2b2d;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 22px;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s;
+}
+
+.model-toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  bottom: 2px;
+  background-color: #8e8e93;
+  border-radius: 50%;
+  transition:
+    transform 0.2s,
+    background-color 0.2s;
+}
+
+.model-toggle-switch input:checked + .model-toggle-slider {
+  background-color: #3a3a3c;
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.model-toggle-switch input:checked + .model-toggle-slider::before {
+  transform: translateX(16px);
+  background-color: #ffffff;
+}
+
+.custom-model-remove {
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  color: color-mix(in srgb, currentColor 45%, transparent);
+  cursor: pointer;
+  border-radius: 4px;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.custom-model-remove:hover {
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+}
+
+.custom-model-confirm-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.custom-model-confirm-btn {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.custom-model-confirm-btn:hover {
+  background: color-mix(in srgb, #ef4444 35%, transparent);
+}
+
+.custom-model-cancel-btn {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.custom-model-cancel-btn:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.provider-remove-confirm-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.provider-remove-confirm-msg {
+  font-size: 0.85rem;
+  color: color-mix(in srgb, currentColor 75%, transparent);
+}
+
+.provider-remove-confirm-btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.provider-remove-confirm-btn:hover {
+  background: color-mix(in srgb, #ef4444 35%, transparent);
+}
+
+.provider-remove-cancel-btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.provider-remove-cancel-btn:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.provider-cancel-btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.provider-cancel-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.models-default-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.models-confirm-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.models-confirm-group button.btn-danger {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.models-confirm-group button.btn-danger:hover {
+  background: color-mix(in srgb, #ef4444 35%, transparent);
+}
+
+/* + Add Custom Model button matching Screenshot 2 */
+.add-custom-model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  border: none;
+  padding: 0.6rem 0;
+  margin-top: 0.3rem;
+  color: #5c8ae6;
+  font-size: 0.92rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s;
+}
+
+.add-custom-model-btn:hover {
+  color: #7ba3f7;
+  text-decoration: underline;
+}
+
+/* Add custom model inline row matching Screenshot 3 */
+.add-custom-model-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding: 0.4rem 0;
+}
+
+.add-custom-model-input {
+  flex: 1;
+  min-width: 12rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 4px;
+  padding: 0.4rem 0.65rem;
+  color: inherit;
+  font-size: 0.92rem;
+  font-family: inherit;
+}
+
+.add-custom-model-input::placeholder {
+  color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+.add-custom-model-submit,
+.add-custom-model-cancel {
+  padding: 0.4rem 0.9rem;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-family: inherit;
+  transition: background-color 0.15s;
+}
+
+.add-custom-model-submit:hover,
+.add-custom-model-cancel:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
 .provider-model {
   display: flex;
   flex-wrap: wrap;
@@ -842,15 +1178,28 @@ header #tree-new {
   overflow: auto;
 }
 
-.models-matches > li > button {
+.models-matches > li > button,
+.models-matches > li > .model-name {
   display: block;
   width: 100%;
   text-align: left;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
+  line-height: 1.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.3rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: transparent;
+  color: inherit;
+  box-sizing: border-box;
 }
 
-/* Name, Test, then one short result. The column stays put so Test lines up. */
+.models-matches > li > .model-name {
+  cursor: default;
+  user-select: text;
+}
+
+/* Name, the row's actions, then one short result. The columns stay put. */
 .model-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(8.5rem, 13rem);
@@ -858,7 +1207,8 @@ header #tree-new {
   gap: 0.35rem;
 }
 
-.models-matches > li.model-row > button:not(.model-test) {
+.models-matches > li.model-row > button,
+.models-matches > li.model-row > .model-name {
   width: auto;
   min-width: 0;
   overflow: hidden;
@@ -866,10 +1216,61 @@ header #tree-new {
   white-space: nowrap;
 }
 
-.models-matches > li.model-row > button.model-test {
-  width: auto;
+.model-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+}
+
+.model-row-actions button {
   font-family: inherit;
+  font-size: 0.78rem;
   text-align: center;
+  white-space: nowrap;
+}
+
+.model-row-actions .model-toggle-switch {
+  flex: none;
+}
+
+.model-key-action-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.model-key-inline-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.model-key-input {
+  font-family: inherit;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  padding: 0.18rem 0.4rem;
+  width: 8.5rem;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
+}
+
+.model-key-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.model-key-reset {
+  color: #ef4444;
+  border-color: color-mix(in srgb, #ef4444 40%, transparent);
+}
+
+.model-key-reset:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  border-color: color-mix(in srgb, #ef4444 55%, transparent);
 }
 
 .model-test-status {
@@ -994,7 +1395,8 @@ header #tree-new {
   white-space: pre-wrap;
 }
 
-.models-matches button[aria-current="true"] {
+.models-matches button[aria-current="true"],
+.models-matches .model-name[aria-current="true"] {
   border-color: #3b82f6;
 }
 
@@ -2513,7 +2915,8 @@ button.context-ring svg {
   width: 7rem;
 }
 
-.draft-declaration select.draft-mode {
+.draft-declaration select.draft-mode,
+.draft-declaration select.draft-thinking {
   font-size: 0.85rem;
 }
 

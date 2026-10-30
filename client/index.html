@@ -359,17 +359,19 @@
           <button id="models-close" type="button">Close</button>
         </div>
         <p class="hint">
-          Pi's model settings for this user. Search for a model, save it as the default, and store
-          an API key for its provider. <strong>Show configured</strong> lists only models whose
-          provider already has a stored key, and models from custom providers you added.
-          <strong>Show all</strong> brings the full list back. <strong>Test</strong>, beside a
-          configured model, asks it for one token. The line that appears stays short; click it to
-          read the full answer. A notebook or a cell that names its own model still uses that. A key
-          already stored is not shown; leave the field blank to keep it.
+          Pi's model settings for this user. Search for a model and set it as the default.
+          <strong>Show configured</strong> lists only models whose provider already has a stored
+          key, and models from custom providers you added. <strong>Show all</strong> brings the full
+          list back. <strong>Test</strong>, beside a configured model, asks it for one token. The
+          line that appears stays short; click it to read the full answer.
+          <strong>Set Default</strong> makes that model the one new Runs use. A model whose provider
+          has a key also has a switch, which includes or leaves it out of the model lists. Use the
+          button beside each model to set, change, or reset its provider's API key. A notebook or a
+          cell that names its own model still uses that.
         </p>
         <fieldset>
           <legend>Default</legend>
-          <p id="models-chosen" class="models-chosen">No model chosen yet.</p>
+          <p id="models-chosen" class="models-chosen">No default model set yet.</p>
           <div class="models-search-row">
             <label
               >Search
@@ -380,15 +382,6 @@
             </button>
           </div>
           <ul id="models-matches" class="models-matches"></ul>
-          <label
-            >Thinking
-            <select id="models-thinking"></select>
-          </label>
-          <label
-            >API key for this provider
-            <input id="models-key" type="password" autocomplete="off" />
-          </label>
-          <button id="models-save-default" type="button">Save</button>
         </fieldset>
         <fieldset>
           <legend>Custom providers</legend>
@@ -400,8 +393,20 @@
             not a chat completions path.
           </p>
           <div id="models-providers"></div>
-          <button id="models-add" type="button">Add provider</button>
-          <button id="models-save-providers" type="button">Save providers</button>
+          <button
+            id="models-add"
+            type="button"
+            title="Add a blank custom provider card. Fill in its name, base URL, API, key, and models, then save the providers"
+          >
+            Add provider
+          </button>
+          <button
+            id="models-save-providers"
+            type="button"
+            title="Save every custom provider card, including its models and stored key, to pi's models.json"
+          >
+            Save providers
+          </button>
         </fieldset>
         <p id="models-status" class="status"></p>
       </form>
