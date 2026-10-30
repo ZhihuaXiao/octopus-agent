@@ -45,7 +45,12 @@ import {
   userModesDirectory,
 } from "../mode/mode.js";
 import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
-import { formatDiagnostics, parseNotebook, workspaceOf } from "../notebook/notebook.js";
+import {
+  THINKING_LEVELS,
+  formatDiagnostics,
+  parseNotebook,
+  workspaceOf,
+} from "../notebook/notebook.js";
 import { type CellAccess, cellAccess, cellAccessAllows } from "../run/access.js";
 import { DOWNLOAD, runFileType } from "../run/store.js";
 import { isRecord } from "../util/guards.js";
@@ -1473,7 +1478,12 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
   if (type !== "prompt" && type !== "bash") return undefined;
   if (!isStrings(uses)) return undefined;
   if (model !== undefined && typeof model !== "string") return undefined;
-  if (thinking !== undefined && typeof thinking !== "string") return undefined;
+  if (
+    thinking !== undefined &&
+    (typeof thinking !== "string" || !THINKING_LEVELS.includes(thinking as any))
+  ) {
+    return undefined;
+  }
   if (timeout !== undefined && typeof timeout !== "string") return undefined;
   if (
     approach !== undefined &&

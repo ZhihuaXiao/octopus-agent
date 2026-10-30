@@ -68,4 +68,43 @@ describe("a custom model's thinking level", () => {
       session.dispose();
     }
   });
+
+  it("enables thinking when asked for a specific thinking level even if default was off", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "octo-think-agent-"));
+    const cwd = await mkdtemp(join(tmpdir(), "octo-think-cwd-"));
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        defaultProvider: "panel",
+        defaultModel: "luna",
+        defaultThinkingLevel: "off",
+      }),
+    );
+    await writeFile(
+      join(agentDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          panel: {
+            baseUrl: "http://127.0.0.1:9/v1",
+            api: "openai-completions",
+            apiKey: "test-key",
+            models: [{ id: "luna" }],
+          },
+        },
+      }),
+    );
+
+    const { session } = await createAgentSession({ cwd, agentDir, noTools: "all" });
+    try {
+      expect(session.thinkingLevel).toBe("off");
+      const model = session.model;
+      expect(model).toBeDefined();
+      if (model === undefined) return;
+      enableCustomThinking(model, await customThinking(agentDir, "panel", "luna"), "medium");
+      session.setThinkingLevel("medium");
+      expect(session.thinkingLevel).toBe("medium");
+    } finally {
+      session.dispose();
+    }
+  });
 });

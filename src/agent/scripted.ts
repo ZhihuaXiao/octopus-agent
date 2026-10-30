@@ -52,6 +52,8 @@ export interface ScriptedTurnRecord {
   readonly context: readonly string[];
   /** The model the Run asked for, when it asked for one. */
   readonly model?: string;
+  /** The thinking level the Run asked for, when it asked for one. */
+  readonly thinking?: string;
   /** Images attached to the turn. */
   readonly images?: readonly ImageAttachment[];
 }
@@ -191,13 +193,14 @@ export function createScriptedAgent(
       reopenedAgentSession: asked.agentSession !== undefined,
 
       async prompt(body: string, options: TurnOptions = {}): Promise<CellResult> {
-        const { signal, model, onText, onThinking, onToolCall } = options;
+        const { signal, model, thinking, onText, onThinking, onToolCall } = options;
         prompts.push(body);
         turns.push({
           body,
           session,
           context: held.map((turn) => turn.body),
           ...(model !== undefined ? { model } : {}),
+          ...(thinking !== undefined ? { thinking } : {}),
           ...(options.images !== undefined ? { images: options.images } : {}),
         });
 

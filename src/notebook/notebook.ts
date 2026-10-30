@@ -51,6 +51,10 @@ export type PromptApproach = "agent" | "plan" | "ask";
 
 export const PROMPT_APPROACHES: readonly PromptApproach[] = ["agent", "plan", "ask"];
 
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
 export interface Cell {
   readonly id: string;
   readonly type: CellType;
@@ -362,7 +366,15 @@ function readCell(
         errors.push({ line, message: `"thinking" is only for a prompt cell` });
         continue;
       }
+      if (!THINKING_LEVELS.includes(value as ThinkingLevel)) {
+        errors.push({
+          line,
+          message: `"thinking" must be one of ${THINKING_LEVELS.join(", ")}`,
+        });
+        continue;
+      }
       thinking = value;
+      continue;
     }
 
     if (key === "timeout") {

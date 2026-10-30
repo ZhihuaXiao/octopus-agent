@@ -191,12 +191,12 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
    * The level in settings is what was asked for. Done before the session is
    * put on the model, because the clamp happens as the model changes.
    */
-  const allowThinking = async (model: Model | undefined): Promise<void> => {
+  const allowThinking = async (model: Model | undefined, thinkingLevel?: string): Promise<void> => {
     if (model === undefined) return;
     enableCustomThinking(
       model,
       await customThinking(agentDir, model.provider, model.id),
-      settingsManager.getDefaultThinkingLevel(),
+      thinkingLevel ?? settingsManager.getDefaultThinkingLevel(),
     );
   };
 
@@ -205,11 +205,11 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
    * can think and the level was clamped to off. A level already set is left,
    * and so is a model that cannot think.
    */
-  const applyThinking = (): void => {
+  const applyThinking = (thinkingLevel?: string): void => {
     if (session.model?.reasoning !== true || session.thinkingLevel !== "off") return;
-    const level = settingsManager.getDefaultThinkingLevel();
+    const level = thinkingLevel ?? settingsManager.getDefaultThinkingLevel();
     if (level === undefined || level === "off") return;
-    session.setThinkingLevel(level);
+    session.setThinkingLevel(level as any);
   };
 
   await allowThinking(session.model);
@@ -239,11 +239,11 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
    * no key for the model's provider, which is the Cell's failure to record: the
    * Notebook asked for what the machine has not.
    */
-  const takeOn = async (named: string): Promise<void> => {
+  const takeOn = async (named: string, thinkingLevel?: string): Promise<void> => {
     const wanted = resolveModel(named);
-    await allowThinking(wanted);
+    await allowThinking(wanted, thinkingLevel);
     if (!sameModel(wanted, session.model)) await session.setModel(wanted);
-    applyThinking();
+    applyThinking(thinkingLevel);
     await alignContextWindow(session.model);
   };
 
@@ -310,7 +310,11 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       const allImages = [...extractedImages, ...(directImages ?? [])];
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
-      if (model !== undefined) await takeOn(model);
+      if (model !== undefined) {
+        await takeOn(model, turnThinking);
+      } else if (turnThinking !== undefined) {
+        await allowThinking(session.model, turnThinking);
+      }
       const previousThinking = session.thinkingLevel;
       if (turnThinking !== undefined) session.setThinkingLevel(turnThinking as any);
 

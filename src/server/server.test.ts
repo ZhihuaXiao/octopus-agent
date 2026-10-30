@@ -423,6 +423,7 @@ interface CellView {
   isolated: boolean;
   approach?: string;
   model?: string;
+  thinkingLevel?: string;
   timeout?: number;
   status: string;
   text: string;
@@ -2397,6 +2398,7 @@ type SegmentEdit =
       isolated: boolean;
       approach?: string;
       model?: string;
+      thinking?: string;
       timeout?: string;
     };
 
@@ -2421,6 +2423,7 @@ function editOf(state: NotebookSessionState): {
         isolated: cell.isolated,
         ...(cell.approach !== undefined ? { approach: cell.approach } : {}),
         ...(cell.model !== undefined ? { model: cell.model } : {}),
+        ...(cell.thinkingLevel !== undefined ? { thinking: cell.thinkingLevel } : {}),
         ...(cell.timeout !== undefined ? { timeout: `${cell.timeout}ms` } : {}),
       };
     }),
@@ -2784,6 +2787,20 @@ describe("editing a notebook in its session", () => {
       400,
     );
     expect(await readFile(join(server.directory, "essay.md"), "utf8")).toBe(essay);
+  });
+
+  it("saves and loads a prompt cell with thinking level", async () => {
+    const server = await serve({ "essay.md": essay });
+    const session = await open(server, "essay.md");
+    const saved = await save(
+      server,
+      session,
+      withCell(session, "think", (cell) => ({ ...cell, thinking: "high" })),
+    );
+    expect(saved.status).toBe(200);
+    const updated = (await saved.json()) as NotebookSessionState;
+    expect(updated.cells.find((c) => c.id === "think")?.thinkingLevel).toBe("high");
+    expect(await readFile(join(server.directory, "essay.md"), "utf8")).toContain("thinking=high");
   });
 
   it("is a change to the file, never a read", async () => {

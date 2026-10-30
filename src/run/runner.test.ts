@@ -2038,6 +2038,26 @@ describe("a cell's model", () => {
   });
 });
 
+describe("a cell's thinking", () => {
+  it("asks the agent for the thinking level the cell names", async () => {
+    const path = await notebookFile("```prompt id=step thinking=high\nDo the step.\n```\n");
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.turns[0]?.thinking).toBe("high");
+  });
+
+  it("leaves thinking level unset when the cell does not name one", async () => {
+    const path = await notebookFile("```prompt id=step\nDo the step.\n```\n");
+    const agent = createScriptedAgent([{ text: "done" }]);
+
+    await runNotebook(path, { agent: agent.create });
+
+    expect(agent.turns[0]?.thinking).toBeUndefined();
+  });
+});
+
 /** A directory of the user's own modes, holding each file given by name. */
 async function modesDirectory(files: Readonly<Record<string, string>> = {}): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "octo-modes-"));

@@ -471,6 +471,15 @@ describe("malformed notebooks", () => {
     ]);
   });
 
+  it("reports a thinking level that is not one of the allowed levels", () => {
+    expect(problems("```prompt id=a thinking=turbo\nx\n```\n")).toEqual([
+      {
+        line: 1,
+        message: `"thinking" must be one of off, minimal, low, medium, high, xhigh, max`,
+      },
+    ]);
+  });
+
   it("reports a cell fence that still says mode", () => {
     expect(problems("```prompt id=a mode=plan\nGo.\n```\n")[0]?.message).toContain(
       `Unknown cell attribute "mode"`,
