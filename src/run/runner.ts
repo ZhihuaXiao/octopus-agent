@@ -253,6 +253,8 @@ interface Turn {
   readonly body: string;
   /** The model the Cell or the Notebook names, when either does. */
   readonly model?: string;
+  /** The thinking level the Cell names, when it does. */
+  readonly thinking?: string;
   /** How the Cell takes its turn. Absent, and agent, leave the session's tools alone. */
   readonly approach?: PromptApproach;
   /** How long the turn may take, when the Notebook bounds it. */
@@ -280,6 +282,7 @@ async function runPromptCell(
       onThinking: turn.onThinking,
       onToolCall: turn.onToolCall,
       ...(turn.model !== undefined ? { model: turn.model } : {}),
+      ...(turn.thinking !== undefined ? { thinking: turn.thinking } : {}),
       ...(turn.approach !== undefined && turn.approach !== "agent"
         ? { approach: turn.approach }
         : {}),
@@ -491,6 +494,7 @@ async function runCells(cleared: Cleared): Promise<RunRecord> {
     const turn: Turn = {
       body: withApproach(body, approach),
       ...(model !== undefined ? { model } : {}),
+      ...(cell.thinking !== undefined ? { thinking: cell.thinking } : {}),
       ...(approach !== "agent" ? { approach } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
       interrupt: cellStop.signal,

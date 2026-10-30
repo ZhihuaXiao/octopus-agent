@@ -68,6 +68,8 @@ export interface Cell {
   readonly approach?: Exclude<PromptApproach, "agent">;
   /** Overrides the Notebook's model for this Cell alone. */
   readonly model?: string;
+  /** Overrides the thinking level for this Cell alone. */
+  readonly thinking?: string;
   /**
    * How long this Cell may run before the Run aborts it, in milliseconds.
    * Overrides the Notebook's own `timeout` for this Cell alone.
@@ -119,7 +121,16 @@ export type ParseResult =
 const FRONTMATTER_DELIMITER = "---";
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const INDENTED_FENCE = /^ {1,3}(`{3,}|~{3,})(.*)$/;
-const CELL_ATTRIBUTES = ["id", "type", "uses", "isolated", "approach", "model", "timeout"];
+const CELL_ATTRIBUTES = [
+  "id",
+  "type",
+  "uses",
+  "isolated",
+  "approach",
+  "model",
+  "thinking",
+  "timeout",
+];
 /** The attributes that are this project's own invention, so no snippet has one. */
 const CELL_ONLY_ATTRIBUTES = CELL_ATTRIBUTES.filter((key) => key !== "id");
 const MISSING_ID = "Cell is missing an id";
@@ -262,6 +273,7 @@ function readCell(
   let isolated = false;
   let approach: Exclude<PromptApproach, "agent"> | undefined;
   let model: string | undefined;
+  let thinking: string | undefined;
   let timeout: number | undefined;
   const seen = new Set<string>();
 
@@ -345,6 +357,14 @@ function readCell(
 
     if (key === "model") model = value;
 
+    if (key === "thinking") {
+      if (tag !== "prompt") {
+        errors.push({ line, message: `"thinking" is only for a prompt cell` });
+        continue;
+      }
+      thinking = value;
+    }
+
     if (key === "timeout") {
       timeout = parseDuration(value);
       if (timeout === undefined) errors.push({ line, message: `"timeout" ${DURATION_RULE}` });
@@ -364,6 +384,7 @@ function readCell(
     isolated,
     ...(approach !== undefined ? { approach } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
   };
 }

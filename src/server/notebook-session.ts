@@ -145,6 +145,8 @@ export interface CellView {
   readonly approach?: "plan" | "ask";
   /** The model the Cell names for itself, when it does. */
   readonly model?: string;
+  /** The thinking level the Cell names for itself, when it does. */
+  readonly thinkingLevel?: string;
   /** The Cell's own Timeout in milliseconds, when it declares one. */
   readonly timeout?: number;
   readonly status: CellState;
@@ -725,6 +727,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
       isolated: cell.isolated,
       ...(cell.approach !== undefined ? { approach: cell.approach } : {}),
       ...(cell.model !== undefined ? { model: cell.model } : {}),
+      ...(cell.thinking !== undefined ? { thinkingLevel: cell.thinking } : {}),
       ...(cell.timeout !== undefined ? { timeout: cell.timeout } : {}),
     };
 

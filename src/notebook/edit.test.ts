@@ -255,7 +255,7 @@ describe("applying an edit to a notebook", () => {
       expect(edited(valid(source), editOf(valid(source)))).toBe(source);
     });
 
-    it("may change a cell's type, model and timeout", () => {
+    it("may change a cell's type, model, thinking, and timeout", () => {
       const notebook = valid(source);
 
       const made = edited(
@@ -264,6 +264,7 @@ describe("applying an edit to a notebook", () => {
           ...cell,
           type: "prompt",
           model: "anthropic/claude-haiku-4-5",
+          thinking: "high",
           timeout: "2m",
         })),
       );
@@ -271,7 +272,7 @@ describe("applying an edit to a notebook", () => {
       expect(made).toBe(
         source.replace(
           "```bash id=second uses=first timeout=30s",
-          "```prompt id=second uses=first model=anthropic/claude-haiku-4-5 timeout=2m",
+          "```prompt id=second uses=first model=anthropic/claude-haiku-4-5 thinking=high timeout=2m",
         ),
       );
     });

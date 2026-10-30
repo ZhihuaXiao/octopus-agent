@@ -4240,6 +4240,25 @@ describe("model settings", () => {
       providers: { models: { id: string; contextWindow: number }[] }[];
     };
     expect(shown.providers[0]?.models).toEqual([{ id: "llama3.1:8b", contextWindow: 100_000 }]);
+
+    expect(
+      (
+        await providers({
+          providers: [
+            {
+              ...provider,
+              models: [{ id: "llama3.1:8b", contextWindow: 100_000, enabled: false }],
+            },
+          ],
+        })
+      ).status,
+    ).toBe(204);
+    const withDisabled = (await (await get(server, "/api/models")).json()) as {
+      providers: { models: { id: string; contextWindow: number; enabled?: boolean }[] }[];
+    };
+    expect(withDisabled.providers[0]?.models).toEqual([
+      { id: "llama3.1:8b", contextWindow: 100_000, enabled: false },
+    ]);
   });
 
   it("refuses a default that is not a model, and a provider that is not one", async () => {
@@ -4306,6 +4325,89 @@ describe("model settings", () => {
     expect(again.keyed).toContain("anthropic");
     expect(JSON.stringify(again)).not.toContain("test-key-value");
     expect((await post(server, "/api/models/key", { provider: "anthropic" })).status).toBe(400);
+
+    const removed = await post(server, "/api/models/key", {
+      provider: "anthropic",
+      clearApiKey: true,
+    });
+    expect(removed.status).toBe(204);
+    const unkeyed = (await (await get(server, "/api/models")).json()) as { keyed: string[] };
+    expect(unkeyed.keyed).not.toContain("anthropic");
+  });
+
+  it("enables a model only when its provider has a key", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+    const page = (await (await get(server, "/api/models")).json()) as {
+      models: { provider: string; id: string }[];
+    };
+    const model = page.models.find((candidate) => candidate.provider === "anthropic");
+    expect(model).toBeDefined();
+    const body = { provider: model?.provider, model: model?.id };
+
+    const refused = await post(server, "/api/models/enabled", { ...body, enabled: true });
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toMatch(/API key/);
+
+    expect(
+      (await post(server, "/api/models/key", { provider: "anthropic", apiKey: "test-key-value" }))
+        .status,
+    ).toBe(204);
+    expect((await post(server, "/api/models/enabled", { ...body, enabled: false })).status).toBe(
+      204,
+    );
+    const disabled = (await (await get(server, "/api/models")).json()) as {
+      modelEnabled: Record<string, boolean>;
+    };
+    expect(disabled.modelEnabled[`${model?.provider}/${model?.id}`]).toBe(false);
+
+    expect((await post(server, "/api/models/enabled", { ...body, enabled: true })).status).toBe(
+      204,
+    );
+    const enabled = (await (await get(server, "/api/models")).json()) as {
+      modelEnabled: Record<string, boolean>;
+    };
+    expect(enabled.modelEnabled[`${model?.provider}/${model?.id}`]).toBe(true);
+
+    expect((await post(server, "/api/models/enabled", body)).status).toBe(400);
+    expect(
+      (await post(server, "/api/models/enabled", { ...body, model: "not-a-model", enabled: true }))
+        .status,
+    ).toBe(422);
+  });
+
+  it("removes a custom provider's own key from its card", async () => {
+    const agentDirectory = await mkdtemp(join(tmpdir(), "octo-models-"));
+    const server = await serve({}, unusedAgent(), { agentDirectory });
+    expect(
+      (
+        await post(server, "/api/models/providers", {
+          providers: [
+            {
+              id: "ollama",
+              baseUrl: "http://localhost:11434/v1",
+              api: "openai-completions",
+              apiKey: "local-secret",
+              models: ["llama3.1:8b"],
+            },
+          ],
+        })
+      ).status,
+    ).toBe(204);
+
+    expect(
+      (await post(server, "/api/models/key", { provider: "ollama", clearApiKey: true })).status,
+    ).toBe(204);
+    const file = JSON.parse(await readFile(join(agentDirectory, "models.json"), "utf8")) as {
+      providers: { ollama: Record<string, unknown> };
+    };
+    expect(file.providers.ollama).not.toHaveProperty("apiKey");
+    const page = (await (await get(server, "/api/models")).json()) as {
+      keyed: string[];
+      providers: { id: string; apiKeySet: boolean }[];
+    };
+    expect(page.keyed).not.toContain("ollama");
+    expect(page.providers.find((provider) => provider.id === "ollama")?.apiKeySet).toBe(false);
   });
 
   it("counts a custom provider's own key as a key that is set", async () => {

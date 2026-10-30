@@ -22,6 +22,12 @@ import { DEFAULT_CONTEXT_WINDOW, contextWindowTokens } from "../pi/model-window.
 import { isRecord } from "../util/guards.js";
 
 const MODELS_FILE = "models.json";
+/**
+ * Which models the page shows as enabled. Pi's own files have no such field for
+ * models it ships with, so the page keeps the answer beside them, keyed by
+ * `provider/model`. A model without an entry is enabled.
+ */
+const PREFERENCES_FILE = "model-preferences.json";
 
 /** The APIs pi's `models.json` accepts for a custom provider. */
 export const PROVIDER_APIS = [
@@ -48,12 +54,14 @@ export interface CustomModel {
   readonly id: string;
   /** Tokens. A model that left this unset is reported as the default, 200,000. */
   readonly contextWindow: number;
+  readonly enabled?: boolean;
 }
 
 /** One model in a save. A missing window keeps one already stored, or the default. */
 export interface ModelEdit {
   readonly id: string;
   readonly contextWindow?: number;
+  readonly enabled?: boolean;
 }
 
 /** One custom provider as the page draws it. The key itself is not here. */
@@ -78,6 +86,8 @@ export interface ModelPage {
   readonly models: readonly ModelChoice[];
   /** Providers that already have a stored credential, in pi's `auth.json` or as a custom provider's own key. The key itself is not included. */
   readonly keyed: readonly string[];
+  /** Models the user turned off, keyed by `provider/model`. A model absent here is enabled. */
+  readonly modelEnabled: Readonly<Record<string, boolean>>;
   readonly providers: readonly CustomProvider[];
 }
 
@@ -102,6 +112,10 @@ export type ModelResult<T> =
   { readonly ok: true; readonly value: T } | { readonly ok: false; readonly problem: string };
 
 const modelsPath = (agentDirectory: string) => join(agentDirectory, MODELS_FILE);
+const preferencesPath = (agentDirectory: string) => join(agentDirectory, PREFERENCES_FILE);
+
+/** The key the page uses for one model in the preferences file. */
+const modelPreferenceKey = (provider: string, id: string) => `${provider}/${id}`;
 
 const isApi = (value: string): value is ProviderApi =>
   (PROVIDER_APIS as readonly string[]).includes(value);
@@ -135,6 +149,8 @@ export async function readModelPage(agentDirectory: string): Promise<ModelResult
   if (!listed.ok) return listed;
   const providers = await readProviders(agentDirectory);
   if (!providers.ok) return providers;
+  const preferences = await readModelPreferences(agentDirectory);
+  if (!preferences.ok) return preferences;
 
   const thinking = settings.getDefaultThinkingLevel();
   const provider = settings.getDefaultProvider();
@@ -149,6 +165,7 @@ export async function readModelPage(agentDirectory: string): Promise<ModelResult
       apis: PROVIDER_APIS,
       models: listed.value.models,
       keyed: listed.value.keyed,
+      modelEnabled: preferences.value,
       providers: providers.value,
     },
   };
@@ -188,6 +205,50 @@ export async function saveDefaultModel(
   const errors = settings.drainErrors();
   const [error] = errors;
   if (error !== undefined) return { ok: false, problem: error.error.message };
+  return { ok: true, value: undefined };
+}
+
+/**
+ * Turns one model on or off for the model lists. Only a model whose provider
+ * has an API key can be enabled: without one, enabling it would offer a Run a
+ * model it cannot call.
+ */
+export async function saveModelEnabled(
+  agentDirectory: string,
+  provider: string,
+  id: string,
+  enabled: boolean,
+): Promise<ModelResult<undefined>> {
+  if (!providerName.test(provider) || id.trim() === "") {
+    return { ok: false, problem: "Name the provider and the model." };
+  }
+  const listed = await listModels(agentDirectory);
+  if (!listed.ok) return listed;
+  const known = listed.value.models.some((model) => model.provider === provider && model.id === id);
+  if (!known) {
+    return { ok: false, problem: `No model ${provider}/${id}.` };
+  }
+  if (enabled && !listed.value.keyed.includes(provider)) {
+    return {
+      ok: false,
+      problem: `${provider} has no API key, so ${id} cannot be enabled.`,
+    };
+  }
+
+  const read = await readModelPreferencesFile(agentDirectory);
+  if (!read.ok) return read;
+  const enabledByModel = { ...read.value.enabled };
+  enabledByModel[modelPreferenceKey(provider, id)] = enabled;
+
+  const file = preferencesPath(agentDirectory);
+  await mkdirOwner(dirname(file));
+  await writeFile(
+    file,
+    `${JSON.stringify({ ...read.value.rest, modelEnabled: enabledByModel }, null, 2)}\n`,
+    { encoding: "utf8", mode: OWNER_FILE },
+  );
+  await chmod(file, OWNER_FILE);
+  await chmod(dirname(file), OWNER_DIR);
   return { ok: true, value: undefined };
 }
 
@@ -242,6 +303,7 @@ export async function saveProviders(
             {
               id,
               ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+              ...(model.enabled !== undefined ? { enabled: model.enabled } : {}),
             },
           ];
     });
@@ -280,7 +342,15 @@ export async function saveProviders(
         model.contextWindow ??
         contextWindowTokens(isRecord(stored) ? stored.contextWindow : undefined) ??
         DEFAULT_CONTEXT_WINDOW;
-      return { ...(isRecord(stored) ? stored : {}), id: model.id, contextWindow: tokens };
+      const enabled =
+        model.enabled ??
+        (isRecord(stored) && typeof stored.enabled === "boolean" ? stored.enabled : undefined);
+      return {
+        ...(isRecord(stored) ? stored : {}),
+        id: model.id,
+        contextWindow: tokens,
+        ...(enabled !== undefined ? { enabled } : {}),
+      };
     });
     next[edit.id] = provider;
   }
@@ -461,6 +531,44 @@ export async function saveProviderKey(
   return { ok: true, value: undefined };
 }
 
+/**
+ * Removes an API key for a provider: from `auth.json`, then from the custom
+ * provider's own card when it stored the key in `models.json`.
+ */
+export async function removeProviderKey(
+  agentDirectory: string,
+  provider: string,
+): Promise<ModelResult<undefined>> {
+  if (!providerName.test(provider)) return { ok: false, problem: "Name the provider." };
+  const runtime = await openRuntime(agentDirectory);
+  if (!runtime.ok) return runtime;
+  try {
+    await runtime.value.logout(provider);
+  } catch (cause) {
+    return { ok: false, problem: cause instanceof Error ? cause.message : String(cause) };
+  }
+
+  const read = await readModelsFile(agentDirectory);
+  if (!read.ok) return read;
+  const entry = read.value.providers[provider];
+  if (!isRecord(entry) || entry.apiKey === undefined) return { ok: true, value: undefined };
+  const { apiKey: _apiKey, ...kept } = entry;
+  const file = modelsPath(agentDirectory);
+  await mkdirOwner(dirname(file));
+  await writeFile(
+    file,
+    `${JSON.stringify(
+      { ...read.value.rest, providers: { ...read.value.providers, [provider]: kept } },
+      null,
+      2,
+    )}\n`,
+    { encoding: "utf8", mode: OWNER_FILE },
+  );
+  await chmod(file, OWNER_FILE);
+  await chmod(dirname(file), OWNER_DIR);
+  return { ok: true, value: undefined };
+}
+
 async function listModels(
   agentDirectory: string,
 ): Promise<ModelResult<{ models: ModelChoice[]; keyed: string[] }>> {
@@ -524,6 +632,7 @@ async function readProviders(agentDirectory: string): Promise<ModelResult<Custom
                 {
                   id: model.id,
                   contextWindow: contextWindowTokens(model.contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
+                  ...(typeof model.enabled === "boolean" ? { enabled: model.enabled } : {}),
                 },
               ]
             : [],
@@ -546,6 +655,57 @@ async function readProviders(agentDirectory: string): Promise<ModelResult<Custom
 interface ModelsFile {
   readonly rest: Record<string, unknown>;
   readonly providers: Record<string, unknown>;
+}
+
+interface ModelPreferencesFile {
+  readonly rest: Record<string, unknown>;
+  /** The page's answer for a model. An absent entry falls back to pi's own settings. */
+  readonly enabled: Record<string, boolean>;
+}
+
+async function readModelPreferencesFile(
+  agentDirectory: string,
+): Promise<ModelResult<ModelPreferencesFile>> {
+  let text: string;
+  try {
+    text = await readFile(preferencesPath(agentDirectory), "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: true, value: { rest: {}, enabled: {} } };
+    }
+    throw cause;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { ok: false, problem: `${PREFERENCES_FILE} is not JSON, so it was left unchanged.` };
+  }
+  if (!isRecord(parsed)) {
+    return {
+      ok: false,
+      problem: `${PREFERENCES_FILE} is not an object, so it was left unchanged.`,
+    };
+  }
+  const { modelEnabled: raw, ...rest } = parsed;
+  if (raw !== undefined && !isRecord(raw)) {
+    return {
+      ok: false,
+      problem: `${PREFERENCES_FILE} has no modelEnabled object, so it was left unchanged.`,
+    };
+  }
+  const enabled: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(isRecord(raw) ? raw : {})) {
+    if (typeof value === "boolean") enabled[key] = value;
+  }
+  return { ok: true, value: { rest, enabled } };
+}
+
+async function readModelPreferences(
+  agentDirectory: string,
+): Promise<ModelResult<Record<string, boolean>>> {
+  const read = await readModelPreferencesFile(agentDirectory);
+  return read.ok ? { ok: true, value: read.value.enabled } : read;
 }
 
 async function readModelsFile(agentDirectory: string): Promise<ModelResult<ModelsFile>> {

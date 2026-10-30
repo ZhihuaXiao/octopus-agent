@@ -56,6 +56,7 @@ export interface CellEdit {
    */
   readonly approach?: PromptApproach;
   readonly model?: string;
+  readonly thinking?: string;
   readonly timeout?: string;
 }
 
@@ -96,6 +97,7 @@ function declarationOf(cell: Cell): CellEdit {
     isolated: cell.isolated,
     ...(cell.approach !== undefined ? { approach: cell.approach } : {}),
     ...(cell.model !== undefined ? { model: cell.model } : {}),
+    ...(cell.thinking !== undefined ? { thinking: cell.thinking } : {}),
     ...(cell.timeout !== undefined ? { timeout: formatDuration(cell.timeout) } : {}),
   };
 }
@@ -280,6 +282,7 @@ function sameDeclaration(cell: Cell, edit: CellEdit): boolean {
     cell.isolated === edit.isolated &&
     (cell.approach ?? "agent") === (edit.approach ?? "agent") &&
     cell.model === edit.model &&
+    cell.thinking === edit.thinking &&
     (edit.timeout === undefined
       ? cell.timeout === undefined
       : timeout !== undefined && cell.timeout === timeout)
@@ -299,6 +302,7 @@ function infoOf(edit: CellEdit): string {
     parts.push(attribute("approach", edit.approach));
   }
   if (edit.model !== undefined) parts.push(attribute("model", edit.model));
+  if (edit.thinking !== undefined) parts.push(attribute("thinking", edit.thinking));
   if (edit.timeout !== undefined) parts.push(attribute("timeout", edit.timeout));
   return parts.join(" ");
 }

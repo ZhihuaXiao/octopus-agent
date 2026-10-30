@@ -300,6 +300,7 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
         signal,
         model,
         approach,
+        thinking: turnThinking,
         onText,
         onThinking,
         onToolCall,
@@ -310,6 +311,8 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       // Before anything is subscribed to or counted: a model that cannot be had
       // is the agent declining the turn, not a turn that was taken and failed.
       if (model !== undefined) await takeOn(model);
+      const previousThinking = session.thinkingLevel;
+      if (turnThinking !== undefined) session.setThinkingLevel(turnThinking as any);
 
       const stream = createAssistantTextStream();
       // Pi's own retries, as pi announces each one. Pi decides what is transient
@@ -406,6 +409,9 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
         // messages, so that the Anchor read below is past it and a Run forking
         // there reopens on the session's own model rather than the override.
         if (model !== undefined) await restore();
+        if (turnThinking !== undefined && previousThinking !== undefined) {
+          session.setThinkingLevel(previousThinking);
+        }
       }
 
       const turn = session.messages.slice(before);

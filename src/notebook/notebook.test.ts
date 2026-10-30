@@ -465,6 +465,12 @@ describe("malformed notebooks", () => {
     ]);
   });
 
+  it("reports a thinking attribute on a bash cell", () => {
+    expect(problems("```bash id=a thinking=high\nx\n```\n")).toEqual([
+      { line: 1, message: `"thinking" is only for a prompt cell` },
+    ]);
+  });
+
   it("reports a cell fence that still says mode", () => {
     expect(problems("```prompt id=a mode=plan\nGo.\n```\n")[0]?.message).toContain(
       `Unknown cell attribute "mode"`,

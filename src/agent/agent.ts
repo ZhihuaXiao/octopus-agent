@@ -200,6 +200,11 @@ export interface TurnOptions {
    */
   readonly model?: string;
   /**
+   * The thinking level for this turn (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+   * Absent leaves the agent on its current thinking level.
+   */
+  readonly thinking?: string;
+  /**
    * How this Prompt Cell takes its turn. Agent leaves the session's tools as
    * they are. Plan narrows them to reading. Ask takes them away for the turn.
    * Either way the session is put back when the turn ends, so the next Cell

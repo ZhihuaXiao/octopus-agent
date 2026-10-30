@@ -57,7 +57,9 @@ import {
   type ProviderEdit,
   isConfiguredModel,
   readModelPage,
+  removeProviderKey,
   saveDefaultModel,
+  saveModelEnabled,
   saveProviderKey,
   saveProviders,
   testConfiguredModel,
@@ -209,6 +211,7 @@ const MODE_ROUTE = /^\/api\/modes\/([^/]+)$/;
 const MODELS_ROUTE = "/api/models";
 const MODELS_DEFAULT_ROUTE = "/api/models/default";
 const MODELS_KEY_ROUTE = "/api/models/key";
+const MODELS_ENABLED_ROUTE = "/api/models/enabled";
 const MODELS_PROVIDERS_ROUTE = "/api/models/providers";
 /** One token sent to a configured model, to see whether it answers. */
 const MODELS_TEST_ROUTE = "/api/models/test";
@@ -707,14 +710,56 @@ async function saveModelKey(
   const body = await readJson(request);
   if (
     !isRecord(body) ||
-    !hasKeys(body, ["provider", "apiKey"]) ||
-    typeof body.provider !== "string" ||
-    typeof body.apiKey !== "string"
+    !hasKeys(body, ["provider"], ["apiKey", "clearApiKey"]) ||
+    typeof body.provider !== "string"
   ) {
+    reply(response, 400, "The request must name a provider, as JSON.\n");
+    return;
+  }
+  if (
+    body.clearApiKey === true ||
+    request.method === "DELETE" ||
+    (typeof body.apiKey === "string" && body.apiKey.trim() === "")
+  ) {
+    const removed = await removeProviderKey(agentDirectory, body.provider);
+    if (!removed.ok) {
+      reply(response, 422, `${removed.problem}\n`);
+      return;
+    }
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+  if (typeof body.apiKey !== "string") {
     reply(response, 400, "The request must name a provider and a key, as JSON.\n");
     return;
   }
   const saved = await saveProviderKey(agentDirectory, body.provider, body.apiKey);
+  if (!saved.ok) {
+    reply(response, 422, `${saved.problem}\n`);
+    return;
+  }
+  response.writeHead(204);
+  response.end();
+}
+
+async function saveModelEnabledSetting(
+  agentDirectory: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !isRecord(body) ||
+    !hasKeys(body, ["provider", "model", "enabled"]) ||
+    typeof body.provider !== "string" ||
+    typeof body.model !== "string" ||
+    typeof body.enabled !== "boolean"
+  ) {
+    reply(response, 400, "The request must name a provider and a model, and say enabled.\n");
+    return;
+  }
+  const saved = await saveModelEnabled(agentDirectory, body.provider, body.model, body.enabled);
   if (!saved.ok) {
     reply(response, 422, `${saved.problem}\n`);
     return;
@@ -747,7 +792,7 @@ function providerEditsOf(body: unknown): ProviderEdit[] | undefined {
   return edits;
 }
 
-/** A model id, or `{ id, contextWindow }`. Anything else is not a model edit. */
+/** A model id, or `{ id, contextWindow, enabled }`. Anything else is not a model edit. */
 function modelEditsOf(value: unknown): ProviderEdit["models"] | undefined {
   if (!Array.isArray(value)) return undefined;
   const models: ProviderEdit["models"][number][] = [];
@@ -759,9 +804,11 @@ function modelEditsOf(value: unknown): ProviderEdit["models"] | undefined {
     if (!isRecord(item) || typeof item.id !== "string") return undefined;
     if (item.contextWindow !== undefined && typeof item.contextWindow !== "number")
       return undefined;
+    if (item.enabled !== undefined && typeof item.enabled !== "boolean") return undefined;
     models.push({
       id: item.id,
       ...(typeof item.contextWindow === "number" ? { contextWindow: item.contextWindow } : {}),
+      ...(typeof item.enabled === "boolean" ? { enabled: item.enabled } : {}),
     });
   }
   return models;
@@ -1414,18 +1461,19 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
     !hasKeys(
       value,
       ["kind", "id", "type", "body", "uses", "isolated"],
-      ["model", "timeout", "approach"],
+      ["model", "timeout", "approach", "thinking"],
     )
   ) {
     return undefined;
   }
-  const { id, type, body, uses, isolated, model, timeout, approach } = value;
+  const { id, type, body, uses, isolated, model, timeout, approach, thinking } = value;
   if (typeof id !== "string" || typeof body !== "string" || typeof isolated !== "boolean") {
     return undefined;
   }
   if (type !== "prompt" && type !== "bash") return undefined;
   if (!isStrings(uses)) return undefined;
   if (model !== undefined && typeof model !== "string") return undefined;
+  if (thinking !== undefined && typeof thinking !== "string") return undefined;
   if (timeout !== undefined && typeof timeout !== "string") return undefined;
   if (
     approach !== undefined &&
@@ -1438,6 +1486,7 @@ function segmentEditOf(value: unknown): SegmentEdit | undefined {
     ...cell,
     ...(approach === "agent" || approach === "plan" || approach === "ask" ? { approach } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
   };
 }
@@ -1979,8 +2028,14 @@ async function handle(
     return;
   }
   if (pathname === MODELS_KEY_ROUTE) {
-    if (permitted(WRITES, request, response)) {
+    if (permitted([...WRITES, "DELETE"], request, response)) {
       await saveModelKey(served.agentDirectory, request, response);
+    }
+    return;
+  }
+  if (pathname === MODELS_ENABLED_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await saveModelEnabledSetting(served.agentDirectory, request, response);
     }
     return;
   }
