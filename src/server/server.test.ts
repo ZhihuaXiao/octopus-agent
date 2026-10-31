@@ -3970,6 +3970,139 @@ describe("promoting a chat", () => {
     expect(listed.chats.map((entry) => entry.id)).toEqual([cliChat.id]);
   });
 
+  it("omits isolated cell runs saved to a notebook run record from chats", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const cliChat = chatIn(server, chatDirectory, chat("Count the files.", "Three."));
+    const isolatedRun = chatIn(
+      server,
+      chatDirectory,
+      chat("Isolated prompt.", "Thinking alone..."),
+      "Isolated prompt run",
+    );
+
+    const run = join(server.directory, ".octo/runs/hello/2026-10-21T00-00-00-000Z-test-isolated");
+    await mkdir(run, { recursive: true });
+    await writeFile(
+      join(run, "record.json"),
+      JSON.stringify({
+        id: "2026-10-21T00-00-00-000Z-test-isolated",
+        notebook: join(server.directory, "hello.md"),
+        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+        startedAt: "2026-10-21T00:00:00.000Z",
+        endedAt: "2026-10-21T00:00:01.000Z",
+        cells: [
+          {
+            id: "greet",
+            type: "prompt",
+            status: "ok",
+            agentSession: isolatedRun.file,
+            text: "Thinking alone...",
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, cost: 0 },
+            model: "claude",
+            retries: [],
+          },
+        ],
+        stale: [],
+        anchors: {},
+      }),
+      "utf8",
+    );
+
+    const response = await get(server, "/api/chats");
+    expect(response.status).toBe(200);
+    const listed = (await response.json()) as { chats: { id: string }[] };
+    expect(listed.chats.map((entry) => entry.id)).toEqual([cliChat.id]);
+  });
+
+  it("removes session files and runs when a notebook is deleted", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const sharedRun = chatIn(server, chatDirectory, chat("Shared prompt.", "Hi."));
+    const isolatedRun = chatIn(server, chatDirectory, chat("Isolated prompt.", "Hi alone."));
+
+    const run = join(server.directory, ".octo/runs/hello/run-1");
+    await mkdir(run, { recursive: true });
+    await writeFile(
+      join(run, "record.json"),
+      JSON.stringify({
+        id: "run-1",
+        notebook: join(server.directory, "hello.md"),
+        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+        agentSession: sharedRun.file,
+        startedAt: "2026-10-21T00:00:00.000Z",
+        endedAt: "2026-10-21T00:00:01.000Z",
+        cells: [
+          {
+            id: "greet",
+            type: "prompt",
+            status: "ok",
+            agentSession: isolatedRun.file,
+            text: "Hi alone.",
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, cost: 0 },
+            model: "claude",
+            retries: [],
+          },
+        ],
+        stale: [],
+        anchors: { greet: "entry-1" },
+      }),
+      "utf8",
+    );
+
+    // Delete the notebook
+    const removed = await removeFile(server, "hello.md");
+    expect(removed.status).toBe(204);
+
+    // Both session files should be removed
+    await expect(readFile(sharedRun.file)).rejects.toThrow();
+    await expect(readFile(isolatedRun.file)).rejects.toThrow();
+    // The runs directory should be removed
+    await expect(readdir(join(server.directory, ".octo/runs/hello"))).rejects.toThrow();
+  });
+
+  it("renames session files and updates run records when a notebook is renamed", async () => {
+    const { server, chatDirectory } = await serveWithChats({ "hello.md": hello });
+    const sharedFile = join(chatDirectory, "2026-10-21T00-00-00-000Z_uuid_hello.jsonl");
+    await writeFile(sharedFile, "{}\n", "utf8");
+
+    const run = join(server.directory, ".octo/runs/hello/run-1");
+    await mkdir(run, { recursive: true });
+    await writeFile(
+      join(run, "record.json"),
+      JSON.stringify({
+        id: "run-1",
+        notebook: join(server.directory, "hello.md"),
+        environment: { workspace: server.directory, trusted: false, piVersion: "", tools: [] },
+        agentSession: sharedFile,
+        startedAt: "2026-10-21T00:00:00.000Z",
+        endedAt: "2026-10-21T00:00:01.000Z",
+        cells: [],
+        stale: [],
+        anchors: { greet: "entry-1" },
+      }),
+      "utf8",
+    );
+
+    const renamed = await post(server, "/api/notebooks/rename", {
+      from: "hello.md",
+      to: "world.md",
+    });
+    expect(renamed.status).toBe(200);
+
+    // The session file should be renamed to end with _world.jsonl
+    const expectedNewFile = join(chatDirectory, "2026-10-21T00-00-00-000Z_uuid_world.jsonl");
+    expect(await readFile(expectedNewFile, "utf8")).toBe("{}\n");
+    await expect(readFile(sharedFile)).rejects.toThrow();
+
+    // The run record should have updated notebook path and agentSession
+    const updatedRecord = JSON.parse(
+      await readFile(join(server.directory, ".octo/runs/world/run-1/record.json"), "utf8"),
+    );
+    expect(updatedRecord.notebook).toBe(join(server.directory, "world.md"));
+    expect(updatedRecord.agentSession).toBe(expectedNewFile);
+  });
+
   it("returns the details of executed commands and results for a chat", async () => {
     const { server, chatDirectory } = await serveWithChats();
     const assistantWithTool: AppendableMessage = {

@@ -289,7 +289,13 @@ async function runPromptCell(
       ...(stops.signal !== undefined ? { signal: stops.signal } : {}),
       ...(extractedImages.length > 0 ? { images: extractedImages } : {}),
     });
-    return { id: cell.id, type: "prompt", status: "ok", ...result };
+    return {
+      id: cell.id,
+      type: "prompt",
+      status: "ok",
+      ...(agent.agentSession !== undefined ? { agentSession: agent.agentSession } : {}),
+      ...result,
+    };
   } catch (cause) {
     const failure = promptFailure(cell, cause);
     // Stopped by the Run rather than failed on its own. The agent's word rather
@@ -747,6 +753,7 @@ export async function runNotebook(path: string, options: RunOptions): Promise<Ru
       : undefined;
   const setup: AgentSetup = {
     workspace,
+    notebook: path,
     ...(tools !== undefined ? { tools } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(mode?.bare === true

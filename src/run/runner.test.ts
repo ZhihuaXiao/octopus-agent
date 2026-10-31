@@ -1440,6 +1440,7 @@ describe("isolated cells", () => {
 
     expect(cell.text).toBe("done apart");
     expect(cell.usage).toEqual({ inputTokens: 7, outputTokens: 2, cost: 0.00005 });
+    expect(cell.agentSession).toBe("scripted-session-2");
   });
 
   it("fails only the cell whose fresh context could not be made", async () => {

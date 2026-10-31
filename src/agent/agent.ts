@@ -131,6 +131,8 @@ export interface AgentSetup {
    * that never held that entry.
    */
   readonly agentSession?: string;
+  /** The notebook this agent is being set up for, if any. */
+  readonly notebook?: string;
 }
 
 /**

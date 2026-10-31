@@ -12,7 +12,7 @@
  * uploads or downloads: it has to be a real file the tree could list.
  */
 
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -23,9 +23,12 @@ import {
   rename,
   rm,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { formatDiagnostics } from "../notebook/diagnostic.js";
 import {
@@ -36,9 +39,11 @@ import {
   notebookWithModel,
 } from "../notebook/edit.js";
 import { type Notebook, cellsOf, parseNotebook, titleOf } from "../notebook/notebook.js";
+import type { RunRecord } from "../run/record.js";
 import { runsDirectory } from "../run/store.js";
 import { within } from "../util/paths.js";
 import { markdownFiles, isSkipped } from "../util/tree.js";
+import { isNotebookSessionFile } from "./chats.js";
 import { isTextFile } from "./text-files.js";
 
 export interface NotebookEntry {
@@ -383,6 +388,7 @@ export async function renameNotebook(
   directory: string,
   from: string,
   to: string,
+  chatDirectory?: string,
 ): Promise<Renamed> {
   const source = fileWithin(directory, from);
   if (source === undefined) return { kind: "absent" };
@@ -427,6 +433,8 @@ export async function renameNotebook(
     }
   }
 
+  await renameNotebookRunsAndSessions(source, target, fromRuns, toRuns, directory, chatDirectory);
+
   return {
     kind: "renamed",
     entry: {
@@ -436,6 +444,122 @@ export async function renameNotebook(
       ...(entry.mode !== undefined ? { mode: entry.mode } : {}),
     },
   };
+}
+
+/** Updates run records and renames associated session files when a notebook is renamed. */
+export async function renameNotebookRunsAndSessions(
+  source: string,
+  target: string,
+  fromRuns: string,
+  toRuns: string,
+  directory: string,
+  chatDirectory?: string,
+): Promise<void> {
+  const fromStem = basename(source, extname(source));
+  const toStem = basename(target, extname(target));
+
+  if (await isThere(toRuns)) {
+    const runDirs = await readdir(toRuns, { withFileTypes: true }).catch(() => []);
+    for (const runDir of runDirs) {
+      if (!runDir.isDirectory()) continue;
+      const recFile = join(toRuns, runDir.name, "record.json");
+      let record: RunRecord | undefined;
+      try {
+        record = JSON.parse(await readFile(recFile, "utf8")) as RunRecord;
+      } catch {
+        continue;
+      }
+      if (!record) continue;
+
+      let changed = false;
+      const updatedRecord: any = { ...record };
+      if (record.notebook !== undefined) {
+        updatedRecord.notebook = target;
+        changed = true;
+      }
+
+      if (record.agentSession !== undefined) {
+        let sessionFile = resolve(record.agentSession);
+        if (sessionFile.startsWith(resolve(fromRuns))) {
+          sessionFile = sessionFile.replace(resolve(fromRuns), resolve(toRuns));
+          updatedRecord.agentSession = sessionFile;
+          changed = true;
+        } else if (fromStem !== toStem) {
+          const newSessionFile = sessionFile.endsWith(`_${fromStem}.jsonl`)
+            ? sessionFile.replace(new RegExp(`_${fromStem}\\.jsonl$`), `_${toStem}.jsonl`)
+            : sessionFile.replace(/\.jsonl$/, `_${toStem}.jsonl`);
+          if (newSessionFile !== sessionFile) {
+            if (existsSync(sessionFile)) {
+              await rename(sessionFile, newSessionFile).catch(() => undefined);
+            }
+            updatedRecord.agentSession = newSessionFile;
+            changed = true;
+          }
+        }
+      }
+
+      if (record.cells !== undefined) {
+        const updatedCells = [];
+        for (const cell of record.cells) {
+          if ("agentSession" in cell && typeof cell.agentSession === "string") {
+            let sessionFile = resolve(cell.agentSession);
+            if (sessionFile.startsWith(resolve(fromRuns))) {
+              sessionFile = sessionFile.replace(resolve(fromRuns), resolve(toRuns));
+              updatedCells.push({ ...cell, agentSession: sessionFile });
+              changed = true;
+            } else if (fromStem !== toStem) {
+              const newSessionFile = sessionFile.endsWith(`_${fromStem}.jsonl`)
+                ? sessionFile.replace(new RegExp(`_${fromStem}\\.jsonl$`), `_${toStem}.jsonl`)
+                : sessionFile.replace(/\.jsonl$/, `_${toStem}.jsonl`);
+              if (newSessionFile !== sessionFile) {
+                if (existsSync(sessionFile)) {
+                  await rename(sessionFile, newSessionFile).catch(() => undefined);
+                }
+                updatedCells.push({ ...cell, agentSession: newSessionFile });
+                changed = true;
+              } else {
+                updatedCells.push(cell);
+              }
+            } else {
+              updatedCells.push(cell);
+            }
+          } else {
+            updatedCells.push(cell);
+          }
+        }
+        if (changed) updatedRecord.cells = updatedCells;
+      }
+
+      if (changed) {
+        await writeFile(recFile, JSON.stringify(updatedRecord, null, 2), "utf8");
+      }
+    }
+  }
+
+  // Also rename any matching session files in session directory
+  if (fromStem !== toStem) {
+    let sessionDir = chatDirectory;
+    if (sessionDir === undefined) {
+      try {
+        sessionDir = SessionManager.create(directory).getSessionDir();
+      } catch {
+        sessionDir = undefined;
+      }
+    }
+    if (sessionDir !== undefined && existsSync(sessionDir)) {
+      const files = await readdir(sessionDir).catch(() => []);
+      for (const file of files) {
+        if (file.endsWith(`_${fromStem}.jsonl`)) {
+          const oldPath = join(sessionDir, file);
+          const newPath = join(
+            sessionDir,
+            file.replace(new RegExp(`_${fromStem}\\.jsonl$`), `_${toStem}.jsonl`),
+          );
+          await rename(oldPath, newPath).catch(() => undefined);
+        }
+      }
+    }
+  }
 }
 
 /** How renaming a file that is not a Notebook went. */
@@ -703,6 +827,75 @@ export type WorkspaceRemoved =
   | { readonly kind: "absent" }
   | { readonly kind: "invalid"; readonly problem: string };
 
+/** Removes all run records, journals, and session files belonging to a deleted notebook. */
+export async function cleanNotebookRunsAndSessions(
+  directory: string,
+  notebookFile: string,
+  chatDirectory?: string,
+): Promise<void> {
+  const fromRuns = runsDirectory(notebookFile);
+  const stem = basename(notebookFile, extname(notebookFile));
+
+  if (await isThere(fromRuns)) {
+    const runDirs = await readdir(fromRuns, { withFileTypes: true }).catch(() => []);
+    for (const runDir of runDirs) {
+      if (!runDir.isDirectory()) continue;
+      const recFile = join(fromRuns, runDir.name, "record.json");
+      const record = await readFile(recFile, "utf8")
+        .then((text) => JSON.parse(text) as RunRecord)
+        .catch(() => undefined);
+      if (record?.agentSession !== undefined) {
+        await unlink(resolve(record.agentSession)).catch(() => undefined);
+      }
+      if (record?.cells !== undefined) {
+        for (const cell of record.cells) {
+          if ("agentSession" in cell && typeof cell.agentSession === "string") {
+            await unlink(resolve(cell.agentSession)).catch(() => undefined);
+          }
+        }
+      }
+    }
+    await rm(fromRuns, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  // Also clean up any session files in pi's session directory matching *_${stem}.jsonl
+  let sessionDir = chatDirectory;
+  if (sessionDir === undefined) {
+    try {
+      sessionDir = SessionManager.create(directory).getSessionDir();
+    } catch {
+      sessionDir = undefined;
+    }
+  }
+  if (sessionDir !== undefined && existsSync(sessionDir)) {
+    const files = await readdir(sessionDir).catch(() => []);
+    for (const file of files) {
+      if (file.endsWith(`_${stem}.jsonl`)) {
+        await unlink(join(sessionDir, file)).catch(() => undefined);
+      }
+    }
+  }
+
+  // Also clean up any active journal for this notebook
+  const relPath = pathWithin(directory, notebookFile);
+  const journalDir = join(directory, ".octo", "journals");
+  if (existsSync(journalDir)) {
+    const journals = await readdir(journalDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of journals) {
+      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        const jFile = join(journalDir, entry.name);
+        const content = await readFile(jFile, "utf8").catch(() => "");
+        if (
+          content.includes(`"notebook":"${relPath}"`) ||
+          content.includes(`"notebook":"${notebookFile}"`)
+        ) {
+          await unlink(jFile).catch(() => undefined);
+        }
+      }
+    }
+  }
+}
+
 /**
  * Removes the file `name` names under `directory`. A directory is left, and a
  * link is not removed and not followed: either could delete more than the
@@ -711,14 +904,20 @@ export type WorkspaceRemoved =
 export async function removeWorkspaceFile(
   directory: string,
   name: string,
+  chatDirectory?: string,
 ): Promise<WorkspaceRemoved> {
   const file = visibleFile(directory, name);
   if (file === undefined) {
     return { kind: "invalid", problem: `The file must be under ${directory}.` };
   }
   if ((await walkFile(directory, file)) !== "file") return { kind: "absent" };
+  const ext = extname(file).toLowerCase();
+  const isNotebook = ext === ".md" || ext === ".markdown";
   try {
     await rm(file);
+    if (isNotebook) {
+      await cleanNotebookRunsAndSessions(directory, file, chatDirectory);
+    }
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };

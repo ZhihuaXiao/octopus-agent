@@ -13,7 +13,7 @@
  */
 
 import { unlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -23,6 +23,7 @@ import { titleOf } from "../notebook/notebook.js";
 import { saidIn, summariseTurn, textBlocksOf, thoughtIn } from "../pi/turn.js";
 import { notebookAgentSessions } from "../run/store.js";
 import { within } from "../util/paths.js";
+import { isRecord } from "../util/guards.js";
 import { readJournals } from "./journal.js";
 import { type NotebookEntry, notebookTarget, pathWithin } from "./notebooks.js";
 
@@ -60,9 +61,24 @@ async function servedNotebookSessions(directory: string): Promise<Set<string>> {
       if (typeof line.agentSession === "string") {
         sessions.add(resolve(line.agentSession));
       }
+      if (
+        line.type === "cell-ended" &&
+        isRecord(line.record) &&
+        typeof line.record.agentSession === "string"
+      ) {
+        sessions.add(resolve(line.record.agentSession));
+      }
     }
   }
   return sessions;
+}
+
+/** Whether a session file on disk belongs to a notebook (tagged with `_<stem>.jsonl`). */
+export function isNotebookSessionFile(filePath: string): boolean {
+  const name = basename(filePath);
+  return /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z_[0-9a-f-]+_[^/]+\.jsonl$/.test(
+    name,
+  );
 }
 
 /**
@@ -81,7 +97,12 @@ export async function listChats(
     servedNotebookSessions(directory),
   ]);
   return found
-    .filter((session) => !notebookSessions.has(resolve(session.path)))
+    .filter((session) => {
+      const resolved = resolve(session.path);
+      if (notebookSessions.has(resolved)) return false;
+      if (isNotebookSessionFile(session.path)) return false;
+      return true;
+    })
     .map((session) => ({
       id: session.id,
       ...(session.name !== undefined ? { name: session.name } : {}),
@@ -278,7 +299,7 @@ export async function deleteChat(
       problem: "The chat is not kept with the others, so it was left as it is.",
     };
   }
-  if ((await servedNotebookSessions(directory)).has(file)) {
+  if (isNotebookSessionFile(file) || (await servedNotebookSessions(directory)).has(file)) {
     return {
       kind: "refused",
       problem:

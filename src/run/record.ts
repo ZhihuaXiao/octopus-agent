@@ -51,6 +51,8 @@ interface CellRecordBase extends Timing {
  */
 export interface PromptCellRecord extends CellRecordBase, CellResult {
   type: "prompt";
+  /** The agent session this prompt cell ran in. */
+  agentSession?: string;
 }
 
 /** What a Bash Cell's command produced. */

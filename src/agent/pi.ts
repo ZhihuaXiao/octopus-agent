@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
+import { basename, extname } from "node:path";
 
 import {
   type AgentSession,
@@ -172,6 +173,16 @@ export async function createPiAgent(options: AgentSetup): Promise<Agent> {
       ? { sessionManager: SessionManager.open(reopened, undefined, workspace) }
       : {}),
   });
+
+  if (reopened === undefined && options.notebook !== undefined) {
+    const stem = basename(options.notebook, extname(options.notebook));
+    const originalFile = session.sessionFile;
+    if (stem !== "" && originalFile !== undefined && !originalFile.endsWith(`_${stem}.jsonl`)) {
+      const namedFile = originalFile.replace(/\.jsonl$/, `_${stem}.jsonl`);
+      if (existsSync(originalFile)) renameSync(originalFile, namedFile);
+      session.sessionManager.setSessionFile(namedFile);
+    }
+  }
 
   /**
    * A custom model that names no window is 200,000 tokens, or the size its

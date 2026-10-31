@@ -484,7 +484,7 @@ async function deleteWorkspaceFile(
     reply(response, 409, "This notebook is running; interrupt it or wait, then delete it.\n");
     return;
   }
-  const removed = await removeWorkspaceFile(served.directory, name);
+  const removed = await removeWorkspaceFile(served.directory, name, served.chats.chatDirectory);
   switch (removed.kind) {
     case "removed":
       await served.sessions.dropFile(removed.path);
@@ -2152,7 +2152,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // Recovered before anything can be asked for, so that a browser coming back
   // as the server does finds its session rather than a second one opened
   // beside it.
-  const sessions = await createNotebookSessions({ directory, agent: options.agent, access });
+  const sessions = await createNotebookSessions({
+    directory,
+    agent: options.agent,
+    access,
+    ...(options.chatDirectory !== undefined ? { chatDirectory: options.chatDirectory } : {}),
+  });
   const auth = createAuth(
     options.storedPassword !== undefined ? { storedPassword: options.storedPassword } : {},
   );

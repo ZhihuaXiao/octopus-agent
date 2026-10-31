@@ -1716,6 +1716,8 @@ export interface NotebookSessionsOptions {
    * choice, any path the account can already use.
    */
   readonly access?: CellAccess;
+  /** Where pi keeps chats, if overridden. */
+  readonly chatDirectory?: string;
 }
 
 /**
@@ -1873,7 +1875,7 @@ export async function createNotebookSessions(
       }
       if (session?.state().running) return { kind: "running" };
 
-      const renamed = await renameNotebook(directory, from, to);
+      const renamed = await renameNotebook(directory, from, to, options.chatDirectory);
       if (renamed.kind !== "renamed" || session === undefined) return renamed;
       const target = fileWithin(directory, renamed.entry.path);
       if (target === undefined || target === source) return renamed;

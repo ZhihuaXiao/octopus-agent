@@ -78,7 +78,8 @@ describe.skipIf(availableModels.length === 0)("pi's SDK against a real provider"
   });
 
   it("spans a turn across several messages, with tool calls in the earlier ones", async () => {
-    const agent = await createPiAgent({ workspace: process.cwd() });
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), "octo-turn-")));
+    const agent = await createPiAgent({ workspace });
 
     try {
       const result = await agent.prompt(

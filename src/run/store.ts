@@ -199,10 +199,22 @@ export async function latestRunId(notebookPath: string): Promise<string | undefi
  */
 export async function notebookAgentSessions(directory: string): Promise<Set<string>> {
   const sessions = new Set<string>();
+  const addFromRecord = (record: RunRecord | undefined) => {
+    if (!record) return;
+    if (record.agentSession !== undefined) sessions.add(resolve(record.agentSession));
+    if (record.cells !== undefined) {
+      for (const cell of record.cells) {
+        if ("agentSession" in cell && typeof cell.agentSession === "string") {
+          sessions.add(resolve(cell.agentSession));
+        }
+      }
+    }
+  };
+
   for (const notebook of await markdownFiles(directory)) {
     for (const run of await runsOf(notebook)) {
       const record = await readRunRecord(notebook, run).catch(() => undefined);
-      if (record?.agentSession !== undefined) sessions.add(resolve(record.agentSession));
+      addFromRecord(record);
     }
   }
   const runsRoot = join(directory, OCTO_DIRECTORY, "runs");
@@ -226,7 +238,7 @@ export async function notebookAgentSessions(directory: string): Promise<Set<stri
       const record = await readFile(file, "utf8")
         .then((text) => JSON.parse(text) as RunRecord)
         .catch(() => undefined);
-      if (record?.agentSession !== undefined) sessions.add(resolve(record.agentSession));
+      addFromRecord(record);
     }
   }
   return sessions;
