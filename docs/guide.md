@@ -379,7 +379,21 @@ npm run octo -- export notes/audit.md audit.md
 npm run octo -- export notes/audit.md audit.html --run <run-id>
 ```
 
-Without `--run`, the latest run is used. In the browser, **Export** opens a list of **HTML** and **Markdown**, and the one you pick downloads that same document for the latest finished run.
+Without `--run`, the latest run is used. In the browser, **Export** opens a list of **HTML**, **Markdown**, and **Bundle (.octo.zip)**.
+
+## Package and share a notebook with its runs and sessions
+
+To share a notebook along with its entire run history, artifacts, and agent sessions so someone else can inspect or resume it in another workspace:
+
+```sh
+# Export as a self-contained .octo.zip archive
+npm run octo -- export notes/audit.md audit.octo.zip --bundle
+
+# Import the bundle into a workspace
+npm run octo -- import audit.octo.zip [target.md]
+```
+
+In the browser, click **Bundle (.octo.zip)** under the **Export** menu in the session view, or choose **Export bundle** from the notebook's file menu in the sidebar. To import, click **Import bundle** beside **New notebook** on the home page, select an `.octo.zip` archive, verify its summary, and confirm or adjust the destination filename.
 
 ## From another computer
 
@@ -452,6 +466,6 @@ octo help                         these commands
 octo run <notebook.md> [--trust|--no-trust] [--cell-access served|user|dir] [--<input> <value>]...
 octo --web [--port <number>] [--host <address>] [--password] [--cell-access served|user|dir]
 octo password
-octo import <session.jsonl> <notebook.md>
-octo export <notebook.md> <document.html|document.md> [--run <id>]
+octo import <session.jsonl|bundle.octo.zip> [notebook.md]
+octo export <notebook.md> [document.html|document.md|bundle.octo.zip] [--bundle] [--run <id>]
 ```

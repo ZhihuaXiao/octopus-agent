@@ -85,10 +85,20 @@
       <main id="list">
         <div class="list-header">
           <h2>Notebooks</h2>
-          <button id="list-new" type="button" title="Make a new notebook in this directory">
-            New notebook
-          </button>
+          <div style="display: flex; gap: 0.5rem; align-items: center">
+            <button
+              id="list-import-bundle"
+              type="button"
+              title="Import a .octo.zip notebook bundle"
+            >
+              Import bundle
+            </button>
+            <button id="list-new" type="button" title="Make a new notebook in this directory">
+              New notebook
+            </button>
+          </div>
         </div>
+        <input id="bundle-file-input" type="file" accept=".zip,.octo.zip" hidden />
         <p id="status" class="status">Looking for notebooks…</p>
         <ul id="notebooks" class="notebooks"></ul>
         <section id="chats-section" class="chats-section" hidden>
@@ -196,6 +206,14 @@
                       title="Export as Markdown document"
                     >
                       Markdown
+                    </button>
+                    <button
+                      id="export-bundle"
+                      type="button"
+                      role="menuitem"
+                      title="Export notebook, runs, and sessions as .octo.zip"
+                    >
+                      Bundle (.octo.zip)
                     </button>
                   </div>
                 </div>
@@ -458,6 +476,27 @@
         <button id="chat-details-close" type="button" aria-label="Close" title="Close">×</button>
       </div>
       <div id="chat-details-body"></div>
+    </dialog>
+    <dialog id="bundle-import-dialog">
+      <div class="rounds-heading">
+        <h2 id="bundle-import-title">Import Notebook Bundle</h2>
+        <button id="bundle-import-close" type="button" aria-label="Close" title="Close">×</button>
+      </div>
+      <div id="bundle-import-body">
+        <p id="bundle-import-summary" class="hint"></p>
+        <label
+          >Destination file name
+          <input id="bundle-import-target" type="text" placeholder="notebook.md" />
+        </label>
+        <p id="bundle-import-warning" class="status" style="color: #ef4444" hidden>
+          A file with this name already exists in this directory.
+        </p>
+        <p id="bundle-import-status" class="status"></p>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem">
+          <button id="bundle-import-cancel" type="button">Cancel</button>
+          <button id="bundle-import-confirm" type="button" class="primary">Import</button>
+        </div>
+      </div>
     </dialog>
     <dialog id="notebook-model-dialog">
       <div class="rounds-heading">

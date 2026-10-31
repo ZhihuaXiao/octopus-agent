@@ -157,8 +157,10 @@ _Avoid_: conversation, transcript, terminal session, pi session (unqualified)
 **Import**:
 Making a Notebook, and a Run Record of what already happened, from a Chat: a Prompt Cell for
 each message the user sent, a Bash Cell for each command they ran at pi's prompt, and the
-turns' results read off pi's messages as a live Run's are. One-way by design (ADR-0022): the
-Chat's file is read and copied, never written, and nothing syncs back to it.
+turns' results read off pi's messages as a live Run's are (ADR-0022). Or, unpacking a
+`.octo.zip` bundle, recreating the notebook and all past run records, artifacts, and
+sessions in the destination workspace (ADR-0025). One-way by design: the source file is read and copied,
+never written, and nothing syncs back to it.
 _Avoid_: convert, migrate, sync
 
 **Promote**:
@@ -169,11 +171,17 @@ previous running results from the Run Record.
 _Avoid_: upgrade, save as notebook, convert
 
 **Export**:
-A Notebook and one of its Runs made into a single HTML document that stands
-alone, so someone who will never run it can still read the answer. The Notebook
-is unchanged; the credentials the machine holds are struck out of the document
-(ADR-0023).
-_Avoid_: share, publish, snapshot, archive
+A Notebook and one of its Runs made into a single HTML or Markdown document that stands
+alone, so someone who will never run it can still read the answer (ADR-0023). Or, a Notebook
+and its full run history, artifacts, and agent sessions packaged as a self-contained `.octo.zip`
+bundle to be shared, inspected, and imported into another workspace (ADR-0025).
+_Avoid_: publish, snapshot
+
+**Bundle**:
+A self-contained `.octo.zip` archive containing a Notebook, its full run history,
+cell artifacts, and agent session files, packaged with a `manifest.json`. Unpacked into
+a workspace with all file and session links remapped to be completely local and self-contained (ADR-0025).
+_Avoid_: package (unqualified), zip (unqualified), tarball
 
 ### The interfaces
 

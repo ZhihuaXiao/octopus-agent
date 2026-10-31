@@ -784,6 +784,9 @@ function fileMenu(path, kind) {
   if (kind !== "file") {
     actions.push({ label: "Edit", run: () => editTreeFile(path, kind) });
   }
+  if (kind === "notebook") {
+    actions.push({ label: "Export bundle", run: () => void exportTreeBundle(path) });
+  }
   actions.push(
     { label: "Rename", run: () => void renameTreeFile(path, kind) },
     { label: "Download", run: () => void downloadTreeFile(path) },
@@ -996,6 +999,25 @@ async function downloadTreeFile(path) {
     status.textContent = "";
   } catch (cause) {
     status.textContent = `Could not download: ${describe(cause)}`;
+  }
+}
+
+/**
+ * Downloads a self-contained .octo.zip bundle of the notebook at `path`.
+ * @param {string} path
+ */
+async function exportTreeBundle(path) {
+  const status = element("tree-status");
+  try {
+    const response = await request(`/api/bundles/export?notebook=${encodeURIComponent(path)}`);
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    const stem = path.split("/").pop()?.replace(/\.md$/, "") ?? "notebook";
+    saveDownload(await response.blob(), filenameOf(response) ?? `${stem}.octo.zip`);
+    status.textContent = "";
+  } catch (cause) {
+    status.textContent = `Could not export bundle: ${describe(cause)}`;
   }
 }
 
@@ -6937,6 +6959,26 @@ async function exportRun(format) {
 }
 
 /**
+ * Downloads a self-contained .octo.zip bundle of the current notebook and its runs.
+ */
+async function exportCurrentBundle() {
+  if (watching === undefined) return;
+  const notebook = watching.state.notebook;
+  const status = element("session-status");
+  try {
+    const response = await request(`/api/bundles/export?notebook=${encodeURIComponent(notebook)}`);
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    const stem = notebook.split("/").pop()?.replace(/\.md$/, "") ?? "notebook";
+    saveDownload(await response.blob(), filenameOf(response) ?? `${stem}.octo.zip`);
+    status.textContent = "";
+  } catch (cause) {
+    status.textContent = `Could not export bundle: ${describe(cause)}`;
+  }
+}
+
+/**
  * A button that forks a new notebook from this cell and opens it in a new
  * browser tab. The notebook on this page stays where it is.
  * @param {CellView} cell
@@ -8896,6 +8938,10 @@ element("export-markdown").addEventListener("click", () => {
   closeExportMenu();
   void exportRun("markdown");
 });
+element("export-bundle").addEventListener("click", () => {
+  closeExportMenu();
+  void exportCurrentBundle();
+});
 element("cancel").addEventListener("click", stopEditing);
 element("add-prompt").addEventListener("click", () => addCell("prompt"));
 element("add-bash").addEventListener("click", () => addCell("bash"));
@@ -9018,6 +9064,124 @@ element("tree-new").addEventListener("click", () => {
       ? element("session-status")
       : element("tree-status");
   void newNotebook(status);
+});
+/** @type {Uint8Array | undefined} */
+let pendingBundleBytes;
+
+function chooseBundleUpload() {
+  const input = /** @type {HTMLInputElement} */ (element("bundle-file-input"));
+  input.value = "";
+  input.click();
+}
+
+/**
+ * @param {File} file
+ */
+async function handleBundleFile(file) {
+  const status = element("status");
+  try {
+    status.textContent = "Inspecting bundle…";
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const response = await request("/api/bundles/inspect", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    });
+    if (!response.ok) {
+      throw new Error((await response.text()).trim() || `The server answered ${response.status}`);
+    }
+    const result = await response.json();
+    pendingBundleBytes = bytes;
+    openBundleImportDialog(result);
+    status.textContent = "";
+  } catch (cause) {
+    status.textContent = `Could not inspect bundle: ${describe(cause)}`;
+  }
+}
+
+/**
+ * @param {{ manifest: { title: string; originalNotebook: string; runCount: number; createdAt: string }; suggestedTarget: string; exists: boolean }} info
+ */
+function openBundleImportDialog(info) {
+  const dialog = /** @type {HTMLDialogElement} */ (element("bundle-import-dialog"));
+  element("bundle-import-title").textContent = info.manifest.title || "Import Notebook Bundle";
+  const runText = info.manifest.runCount === 1 ? "1 run" : `${info.manifest.runCount} runs`;
+  const dateText = new Date(info.manifest.createdAt).toLocaleString();
+  element("bundle-import-summary").textContent =
+    `Original: ${info.manifest.originalNotebook} · ${runText} · Exported: ${dateText}`;
+  const targetInput = /** @type {HTMLInputElement} */ (element("bundle-import-target"));
+  targetInput.value = info.suggestedTarget;
+  const warning = element("bundle-import-warning");
+  warning.hidden = !info.exists;
+  element("bundle-import-status").textContent = "";
+
+  targetInput.oninput = () => {
+    const val = targetInput.value.trim();
+    const to = val.endsWith(".md") ? val : `${val}.md`;
+    const taken = new Set(listed.map((entry) => entry.path));
+    warning.hidden = !taken.has(to);
+  };
+
+  if (!dialog.open) dialog.showModal();
+}
+
+async function submitBundleImport() {
+  if (pendingBundleBytes === undefined) return;
+  const targetInput = /** @type {HTMLInputElement} */ (element("bundle-import-target"));
+  const given = targetInput.value.trim();
+  if (given === "") {
+    element("bundle-import-status").textContent = "Please enter a destination file name.";
+    return;
+  }
+  const to = given.endsWith(".md") ? given : `${given}.md`;
+  const status = element("bundle-import-status");
+  status.textContent = "Importing bundle…";
+
+  try {
+    const response = await request(`/api/bundles/import?to=${encodeURIComponent(to)}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: /** @type {BodyInit} */ (pendingBundleBytes),
+    });
+    if (!response.ok) {
+      const msg = (await response.text()).trim() || `The server answered ${response.status}`;
+      throw new Error(msg);
+    }
+    const result = await response.json();
+    const dialog = /** @type {HTMLDialogElement} */ (element("bundle-import-dialog"));
+    dialog.close();
+    pendingBundleBytes = undefined;
+    await refreshTree();
+    await refreshOpenList();
+    editOnOpen = result.path;
+    location.hash = hashFor(result.path, "author");
+  } catch (cause) {
+    status.textContent = `Could not import: ${describe(cause)}`;
+  }
+}
+
+element("list-import-bundle").addEventListener("click", () => {
+  chooseBundleUpload();
+});
+element("bundle-file-input").addEventListener("change", (event) => {
+  const input = /** @type {HTMLInputElement} */ (event.target);
+  const file = input.files?.[0];
+  if (file !== undefined) {
+    void handleBundleFile(file);
+  }
+});
+element("bundle-import-cancel").addEventListener("click", () => {
+  const dialog = /** @type {HTMLDialogElement} */ (element("bundle-import-dialog"));
+  dialog.close();
+  pendingBundleBytes = undefined;
+});
+element("bundle-import-close").addEventListener("click", () => {
+  const dialog = /** @type {HTMLDialogElement} */ (element("bundle-import-dialog"));
+  dialog.close();
+  pendingBundleBytes = undefined;
+});
+element("bundle-import-confirm").addEventListener("click", () => {
+  void submitBundleImport();
 });
 element("list-new").addEventListener("click", () => void newNotebook(element("status")));
 element("editor").addEventListener("submit", (event) => {

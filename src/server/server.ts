@@ -22,6 +22,7 @@
  * who asks, since it is where a browser authenticates and holds nothing.
  */
 
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import { isIP } from "node:net";
@@ -34,6 +35,11 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { WebSocketServer } from "ws";
 
 import type { AgentFactory } from "../agent/agent.js";
+import {
+  exportNotebookBundle,
+  importNotebookBundle,
+  inspectNotebookBundle,
+} from "../export/bundle.js";
 import {
   type Mode,
   availableModes,
@@ -196,6 +202,11 @@ const TREE_ROUTE = "/api/tree";
 const TEXT_ROUTE = "/api/text";
 /** Skills installed for the user and, when a Notebook is named, for its Workspace. */
 const SKILLS_ROUTE = "/api/skills";
+/** Bundles: export, inspect and import notebook archives. */
+const BUNDLE_EXPORT_ROUTE = "/api/bundles/export";
+const BUNDLE_INSPECT_ROUTE = "/api/bundles/inspect";
+const BUNDLE_IMPORT_ROUTE = "/api/bundles/import";
+const LONGEST_BUNDLE_UPLOAD = 64 * 1024 * 1024;
 /** A Notebook's file renamed, Runs included, the session following when one holds it. */
 const RENAME_ROUTE = "/api/notebooks/rename";
 /** A file that is not a Notebook, renamed in place. */
@@ -1420,6 +1431,98 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   }
 }
 
+async function serveBundleExport(
+  served: Served,
+  searchParams: URLSearchParams,
+  response: ServerResponse,
+): Promise<void> {
+  const notebook = searchParams.get("notebook");
+  if (!notebook) {
+    reply(response, 400, "The request must name a notebook to export.\n");
+    return;
+  }
+  const file = fileWithin(served.directory, notebook);
+  if (file === undefined) {
+    notFound(response);
+    return;
+  }
+  const exported = await exportNotebookBundle({ notebook: file });
+  switch (exported.kind) {
+    case "absent":
+      notFound(response);
+      return;
+    case "invalid":
+      reply(response, 400, `${exported.problem}\n`);
+      return;
+    case "exported": {
+      const stem = basename(file, extname(file));
+      response.writeHead(200, {
+        "content-type": "application/zip",
+        "content-disposition": `attachment; filename="${encodeURIComponent(stem)}.octo.zip"`,
+        "content-length": exported.bytes.byteLength,
+      });
+      response.end(Buffer.from(exported.bytes));
+      return;
+    }
+  }
+}
+
+async function serveBundleInspect(
+  served: Served,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const bytes = await readLimited(request, LONGEST_BUNDLE_UPLOAD);
+  if (bytes === undefined) {
+    reply(response, 413, "That bundle is too large to inspect here.\n");
+    return;
+  }
+  try {
+    const manifest = inspectNotebookBundle(bytes);
+    const target = fileWithin(served.directory, manifest.originalNotebook);
+    const exists = target !== undefined && existsSync(target);
+    json(response, 200, {
+      manifest,
+      suggestedTarget: manifest.originalNotebook,
+      exists,
+    });
+  } catch (cause) {
+    reply(response, 400, `${cause instanceof Error ? cause.message : String(cause)}\n`);
+  }
+}
+
+async function serveBundleImport(
+  served: Served,
+  searchParams: URLSearchParams,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const bytes = await readLimited(request, LONGEST_BUNDLE_UPLOAD);
+  if (bytes === undefined) {
+    reply(response, 413, "That bundle is too large to upload here.\n");
+    return;
+  }
+  const to = searchParams.get("to") ?? undefined;
+  const force = searchParams.get("force") === "true";
+  const imported = await importNotebookBundle({
+    bundle: bytes,
+    directory: served.directory,
+    ...(to ? { to } : {}),
+    ...(force ? { force: true } : {}),
+  });
+  switch (imported.kind) {
+    case "imported":
+      json(response, 201, { path: imported.path, title: imported.title, runs: imported.runs });
+      return;
+    case "exists":
+      reply(response, 409, `There is already a file at ${imported.path}.\n`);
+      return;
+    case "invalid":
+      reply(response, 400, `${imported.problem}\n`);
+      return;
+  }
+}
+
 const isStrings = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
@@ -2058,6 +2161,24 @@ async function handle(
   if (pathname === MODELS_TEST_ROUTE) {
     if (permitted(WRITES, request, response)) {
       await testModel(served.agentDirectory, request, response);
+    }
+    return;
+  }
+  if (pathname === BUNDLE_EXPORT_ROUTE) {
+    if (permitted(READS, request, response)) {
+      await serveBundleExport(served, searchParams, response);
+    }
+    return;
+  }
+  if (pathname === BUNDLE_INSPECT_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await serveBundleInspect(served, request, response);
+    }
+    return;
+  }
+  if (pathname === BUNDLE_IMPORT_ROUTE) {
+    if (permitted(WRITES, request, response)) {
+      await serveBundleImport(served, searchParams, request, response);
     }
     return;
   }

@@ -5230,3 +5230,82 @@ describe("a journal that cannot be written", () => {
     });
   });
 });
+
+describe("bundle export, inspect and import endpoints", () => {
+  it("exports a notebook as a .octo.zip archive with attachment headers", async () => {
+    const server = await serve({ "hello.md": hello });
+    const response = await get(server, "/api/bundles/export?notebook=hello.md");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/zip");
+    expect(response.headers.get("content-disposition")).toContain('filename="hello.octo.zip"');
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect(bytes.length).toBeGreaterThan(0);
+
+    // 404 for missing notebook and 400 for missing param
+    expect((await get(server, "/api/bundles/export?notebook=missing.md")).status).toBe(404);
+    expect((await get(server, "/api/bundles/export")).status).toBe(400);
+  });
+
+  it("inspects a bundle and checks if the suggested target already exists", async () => {
+    const server = await serve({ "hello.md": hello });
+    const exported = await get(server, "/api/bundles/export?notebook=hello.md");
+    const bytes = await exported.arrayBuffer();
+
+    const inspectRes = await fetch(new URL("/api/bundles/inspect", server.url), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tokenOf(server)}`,
+        "content-type": "application/octet-stream",
+      },
+      body: bytes,
+    });
+    expect(inspectRes.status).toBe(200);
+    const inspected = (await inspectRes.json()) as {
+      manifest: { title: string; originalNotebook: string; runCount: number };
+      suggestedTarget: string;
+      exists: boolean;
+    };
+    expect(inspected.suggestedTarget).toBe("hello.md");
+    expect(inspected.exists).toBe(true);
+    expect(inspected.manifest.title).toBe("Hello");
+  });
+
+  it("imports a bundle, refusing collision unless overridden with to", async () => {
+    const server = await serve({ "hello.md": hello });
+    const exported = await get(server, "/api/bundles/export?notebook=hello.md");
+    const bytes = await exported.arrayBuffer();
+
+    // Refuses default target because hello.md already exists
+    const collisionRes = await fetch(new URL("/api/bundles/import", server.url), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tokenOf(server)}`,
+        "content-type": "application/octet-stream",
+      },
+      body: bytes,
+    });
+    expect(collisionRes.status).toBe(409);
+
+    // Succeeds when importing under a new target name
+    const importRes = await fetch(new URL("/api/bundles/import?to=imported.md", server.url), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tokenOf(server)}`,
+        "content-type": "application/octet-stream",
+      },
+      body: bytes,
+    });
+    expect(importRes.status).toBe(201);
+    expect(await importRes.json()).toEqual({
+      path: "imported.md",
+      title: "Hello",
+      runs: 0,
+    });
+
+    // The imported notebook is in the directory and can be opened
+    expect(await readFile(join(server.directory, "imported.md"), "utf8")).toBe(hello);
+    const session = await open(server, "imported.md");
+    expect(session.cells[0]?.body).toBe("Say hello.\n");
+  });
+});

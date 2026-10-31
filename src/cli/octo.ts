@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { networkInterfaces, userInfo } from "node:os";
-import { dirname, extname, resolve } from "node:path";
+import { basename, dirname, extname, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 
 import { createPiAgent } from "../agent/pi.js";
+import { exportNotebookBundle, importNotebookBundle } from "../export/bundle.js";
 import { thisMachine } from "../export/credentials.js";
 import { type ExportFormat, exportNotebook } from "../export/html.js";
 import { importSession } from "../import/pi-session.js";
@@ -73,6 +74,37 @@ async function run(command: Extract<Command, { kind: "run" }>): Promise<void> {
  */
 async function importChat(command: Extract<Command, { kind: "import" }>): Promise<void> {
   const session = resolve(command.session);
+  if (session.endsWith(".zip")) {
+    let bundle: Uint8Array;
+    try {
+      bundle = await readFile(session);
+    } catch {
+      throw new Error(`There is no file at ${session} to import.`);
+    }
+    const imported = await importNotebookBundle({
+      bundle,
+      directory: process.cwd(),
+      ...(command.notebook !== undefined ? { to: resolve(command.notebook) } : {}),
+      ...(command.force ? { force: true } : {}),
+    });
+    switch (imported.kind) {
+      case "invalid":
+        throw new Error(imported.problem);
+      case "exists":
+        throw new Error(
+          `There is already a file at ${imported.path}; choose another name or pass --force.`,
+        );
+      case "imported": {
+        const runs = imported.runs === 1 ? "1 run" : `${imported.runs} runs`;
+        process.stdout.write(`Imported ${imported.title} into ${imported.path} (${runs})\n`);
+        return;
+      }
+    }
+  }
+
+  if (command.notebook === undefined) {
+    throw new Error("A notebook to write the session to is needed.");
+  }
   const notebook = resolve(command.notebook);
   const imported = await importSession({ session, notebook });
   switch (imported.kind) {
@@ -100,13 +132,43 @@ function markdownDestination(document: string): boolean {
 }
 
 /**
- * Writes a Notebook and one of its Runs as a single document, never over a
- * file that is there — a mistyped name should not cost somebody a file. Each
- * refusal is a sentence to act on, and exits 1 as a Run's refusal does.
- * A destination ending in `.md` or `.markdown` is Markdown; any other name is HTML.
+ * Writes a Notebook and one of its Runs as a single document, or packages the notebook
+ * and all its runs as a .octo.zip bundle.
  */
 async function exportDocument(command: Extract<Command, { kind: "export" }>): Promise<void> {
   const notebook = resolve(command.notebook);
+  const isBundle =
+    command.bundle === true ||
+    (command.document !== undefined && command.document.endsWith(".zip"));
+
+  if (isBundle) {
+    const stem = basename(notebook, extname(notebook));
+    const dest = resolve(command.document ?? `${stem}.octo.zip`);
+    const exported = await exportNotebookBundle({ notebook });
+    switch (exported.kind) {
+      case "absent":
+        throw new Error(`There is no notebook at ${notebook} to export.`);
+      case "invalid":
+        throw new Error(exported.problem);
+      case "exported":
+        try {
+          await writeFile(dest, exported.bytes, { flag: "wx" });
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new Error(`There is already a file at ${dest}; choose another name.`);
+          }
+          throw cause;
+        }
+        const runs =
+          exported.manifest.runCount === 1 ? "1 run" : `${exported.manifest.runCount} runs`;
+        process.stdout.write(`Exported bundle of ${notebook} to ${dest} (${runs})\n`);
+        return;
+    }
+  }
+
+  if (command.document === undefined) {
+    throw new Error("A document to write the export to is needed.");
+  }
   const document = resolve(command.document);
   const format: ExportFormat = markdownDestination(document) ? "markdown" : "html";
   const exported = await exportNotebook({

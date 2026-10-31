@@ -27,23 +27,21 @@ import { DEFAULT_PORT } from "../server/server.js";
 
 const USAGE = `usage: octo [pi arguments]...
        octo run <notebook.md> [--trust|--no-trust] [--cell-access served|user|dir] [--<input> <value>]...
-       octo import <session.jsonl> <notebook.md>
-       octo export <notebook.md> <document.html|document.md> [--run <id>]
+       octo import <session.jsonl|bundle.octo.zip> [notebook.md]
+       octo export <notebook.md> [document.html|document.md|bundle.octo.zip] [--bundle] [--run <id>]
        octo --web [--port <number>] [--host <address>] [--password] [--cell-access served|user|dir]
        octo password
 
   A bare invocation is pi itself: anything not shown here is handed to the pi
   command as written, and only a request for help stops here instead.
   \`run\` executes a notebook headlessly, giving each declared input its value.
-  \`import\` makes a notebook of a chat had with pi at the terminal — a prompt
-  cell for each message you sent, a bash cell for each command you ran with
-  \`!\` — and a run record of what it did. Pi's session file is read and
-  copied, never written; pi keeps them under ~/.pi/agent/sessions.
-  \`export\` writes a notebook and the results of one of its runs — the latest,
-  or the one \`--run\` names — as one document, to send to someone who will not
-  run it. A destination ending in \`.md\` or \`.markdown\` is Markdown. Any other
-  name is HTML, with the files the run left embedded in it. The credentials
-  this machine holds are struck out of it; the notebook itself is left as it is.
+  \`import\` makes a notebook of a chat had with pi at the terminal, or unpacks
+  a .octo.zip notebook bundle with its full run history and session files.
+  Pi's session file is read and copied, never written; pi keeps them under ~/.pi/agent/sessions.
+  \`export\` writes a notebook and the results of one of its runs as a single document,
+  or — with \`--bundle\` or a .zip destination — packages the notebook, its run
+  history, artifacts and session files as a self-contained .octo.zip archive.
+  The credentials this machine holds are struck out of a document export.
   \`--web\` starts the web interface on loopback, serving the notebooks under
   the current directory, on the port given or ${DEFAULT_PORT}. It prints the URL
   to open, carrying a token generated for this start; with \`--password\` the
@@ -93,16 +91,23 @@ export type Command =
     }
   /** Sets the password `--web --password` asks for. */
   | { readonly kind: "password" }
-  /** Makes a Notebook of a Chat, given pi's session file, with a Run Record of what it did. */
-  | { readonly kind: "import"; readonly session: string; readonly notebook: string }
-  /** Writes a Notebook and one of its Runs as a single document. */
+  /** Makes a Notebook of a Chat or unpacks an .octo.zip bundle. */
+  | {
+      readonly kind: "import";
+      readonly session: string;
+      readonly notebook?: string;
+      readonly force?: boolean;
+    }
+  /** Writes a Notebook and one of its Runs as a document or packages an .octo.zip bundle. */
   | {
       readonly kind: "export";
       readonly notebook: string;
-      /** Where the document is written. */
-      readonly document: string;
+      /** Where the document or bundle is written. */
+      readonly document?: string;
       /** The Run to export, by id; absent, the latest. */
       readonly run?: string;
+      /** Whether to export as a .octo.zip bundle. */
+      readonly bundle?: boolean;
     }
   | { readonly kind: "help"; readonly usage: string }
   | { readonly kind: "mistake"; readonly error: string };
@@ -115,6 +120,7 @@ const PASSWORD_WORD = "password";
 const IMPORT_WORD = "import";
 const EXPORT_WORD = "export";
 const RUN_FLAG = "--run";
+const BUNDLE_FLAG = "--bundle";
 const WEB_FLAG = "--web";
 const PORT_FLAG = "--port";
 const HOST_FLAG = "--host";
@@ -190,21 +196,28 @@ function readImport(argv: readonly string[]): Command {
 
   const [session, notebook, stray] = argv;
   if (session === undefined) return mistake("A pi session file to import is needed.");
-  if (notebook === undefined) return mistake("A notebook to write the session to is needed.");
   if (stray !== undefined) {
     return mistake(`One session is imported into one notebook, so "${stray}" is a stray argument.`);
   }
-  return { kind: "import", session, notebook };
+  if (!session.endsWith(".zip") && notebook === undefined) {
+    return mistake("A notebook to write the session to is needed.");
+  }
+  return {
+    kind: "import",
+    session,
+    ...(notebook !== undefined ? { notebook } : {}),
+  };
 }
 
 /**
  * Two files and, at most, which Run: the Notebook to read and the document to
  * write, in that order as `import` takes its two, and `--run` naming a Run
- * other than the latest. Anything else is a mistake, as everywhere here.
+ * other than the latest, or `--bundle` to package a .octo.zip archive.
  */
 function readExport(argv: readonly string[]): Command {
   const files: string[] = [];
   let run: string | undefined;
+  let bundle = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
@@ -214,6 +227,11 @@ function readExport(argv: readonly string[]): Command {
       continue;
     }
     const { name, attached } = splitOption(argument);
+    if (name === BUNDLE_FLAG) {
+      if (attached !== undefined) return mistake(`Option "${BUNDLE_FLAG}" takes no value.`);
+      bundle = true;
+      continue;
+    }
     if (name !== RUN_FLAG) return mistake(`Unknown option "${argument}".`);
     if (run !== undefined) return mistake(`Option "${RUN_FLAG}" was given twice.`);
     run = valueOf(attached, argv[index + 1]);
@@ -223,13 +241,20 @@ function readExport(argv: readonly string[]): Command {
 
   const [notebook, document, stray] = files;
   if (notebook === undefined) return mistake("A notebook to export is needed.");
-  if (document === undefined) return mistake("A document to write the export to is needed.");
+  if (document === undefined && !bundle)
+    return mistake("A document to write the export to is needed.");
   if (stray !== undefined) {
     return mistake(
       `One notebook is exported into one document, so "${stray}" is a stray argument.`,
     );
   }
-  return { kind: "export", notebook, document, ...(run !== undefined ? { run } : {}) };
+  return {
+    kind: "export",
+    notebook,
+    ...(document !== undefined ? { document } : {}),
+    ...(run !== undefined ? { run } : {}),
+    ...(bundle ? { bundle: true } : {}),
+  };
 }
 
 /** What `--cell-access` collected, or the complaint when the values cannot be one choice. */

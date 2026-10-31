@@ -307,6 +307,18 @@ describe("the import subcommand", () => {
     });
   });
 
+  it("reads a bundle to import with or without target notebook", () => {
+    expect(readCommand(["import", "bundle.octo.zip"])).toEqual({
+      kind: "import",
+      session: "bundle.octo.zip",
+    });
+    expect(readCommand(["import", "bundle.octo.zip", "target.md"])).toEqual({
+      kind: "import",
+      session: "bundle.octo.zip",
+      notebook: "target.md",
+    });
+  });
+
   it("reports a session with no notebook to write, and no session at all", () => {
     expect(rejected(["import", "chat.jsonl"])).toContain("notebook");
     expect(rejected(["import"])).toContain("session");
@@ -319,5 +331,42 @@ describe("the import subcommand", () => {
 
   it("answers a request for help, which the usage says how to import in", () => {
     expect(command(["import", "--help"], "help").usage).toContain("octo import");
+  });
+});
+
+describe("the export subcommand", () => {
+  it("reads the notebook to export and the document to write", () => {
+    expect(readCommand(["export", "notes.md", "doc.html"])).toEqual({
+      kind: "export",
+      notebook: "notes.md",
+      document: "doc.html",
+    });
+  });
+
+  it("reads the --bundle flag with or without destination", () => {
+    expect(readCommand(["export", "notes.md", "--bundle"])).toEqual({
+      kind: "export",
+      notebook: "notes.md",
+      bundle: true,
+    });
+    expect(readCommand(["export", "notes.md", "pkg.octo.zip", "--bundle"])).toEqual({
+      kind: "export",
+      notebook: "notes.md",
+      document: "pkg.octo.zip",
+      bundle: true,
+    });
+  });
+
+  it("reads a destination ending in .zip as an export document", () => {
+    expect(readCommand(["export", "notes.md", "pkg.octo.zip"])).toEqual({
+      kind: "export",
+      notebook: "notes.md",
+      document: "pkg.octo.zip",
+    });
+  });
+
+  it("reports missing notebook or document", () => {
+    expect(rejected(["export"])).toContain("notebook");
+    expect(rejected(["export", "notes.md"])).toContain("document");
   });
 });
