@@ -63,7 +63,7 @@ TypeScript on Node 22.19 or newer, ESM. `tsc` compiles `src/` to `dist/`. The br
 | `src/server/` | HTTP, the WebSocket, auth, Notebook Sessions, the Journal, line diffing and text reviews, the notebook list, and Promote. |
 | `src/import/` | A Chat copied into a Notebook and a Run Record. |
 | `src/export/` | A Notebook and one Run written as a single HTML or Markdown document, with credentials struck out; or a self-contained `.octo.zip` bundle holding the notebook, its full run history, artifacts, and sessions. |
-| `client/` | Author View and Run View. |
+| `client/` | Author View, Run View, Preview View, and subtab text and HTML/Markdown file previews. |
 
 `runNotebook` in `src/run/runner.ts` is the engine's public interface. Tests drive it with the scripted agent and assert on the Run Record. The live pi suite is separate and small: it fails when an upgrade breaks the SDK surface this program uses.
 
@@ -137,11 +137,15 @@ Every event a Notebook Session emits is numbered and appended, synchronously, to
 
 ## The client
 
-`client/main.js` is the page. The Notebook in view is the URL fragment, with `#run/` selecting Run View. The served directory is drawn beside it, and a small arrow between the columns folds that column away; the choice stays in the browser.
+`client/main.js` is the page. The Notebook in view is the URL fragment, with `#run/` selecting Run View and `#preview/` selecting Preview View. The served directory is drawn beside it, and a small arrow between the columns folds that column away; the choice stays in the browser.
 
 Author View draws the Notebook as written: Prose, each Cell, an interleaved stream of thoughts, tool calls, reply text, and artifacts. Cells can be collapsed and expanded with an open chevron toggle (`›` when folded, `⌄` when open) or by double-clicking the cell's left sidebar / column bar. Each cell provides a distinct green Run button to execute that cell alone. All buttons feature clear hover highlighting, and a lightweight client tooltip manager (`client/tooltip.js`) provides responsive, low-latency action tooltips with warm-chain switching. Thoughts and tool calls are collapsed by default with click-to-expand, showing tool arguments and execution results. It can run one Cell or all of them, interrupt, edit, duplicate, and export. Each cell's edit button opens an inline editor for that cell in place — editing its declaration (type, approach, id, uses, isolated, model, timeout) as well as its body — while keeping other cells in their view. In prompt cells, screenshots, graphs, or presentation slides can be pasted directly into the prompt area and managed via an attached image strip. Each cell also has a '+' button to add a prompt or bash cell directly below it in place, and a '×' button to delete that cell. Full edit mode on the toolbar is a form of the whole Notebook — frontmatter, Prose, and Cells — saved in one request.
 
 Run View hides the Cells. It draws the declared Inputs as a form and one button, then how far the Run has got. Each step in Run View also has a '×' button to delete that cell. It is the same Connection as Author View. A value typed into the form reaches a Cell as typed.
+
+Preview View renders the Notebook as a single readable document without editing chrome: prose and assistant replies formatted as Markdown, thoughts and tool calls expandable, and images and artifacts displayed inline.
+
+Files in subtabs provide a Preview/Source toggle: Markdown files render formatted typography, lists, and code blocks; HTML files render inside an isolated, sandboxed `<iframe>` (`sandbox="allow-scripts"`, with an opaque origin preventing access to Octo's session cookies or API).
 
 The page keeps the sequence number of the last event it applied. A dropped socket reconnects and asks for everything since that number. A background heartbeat checks connection status every two seconds; if the server restarted (answering `401`), the page cleans up active sessions and presents the connect panel automatically. Once authenticated with the new token or password, the browser reconnects and restores the active view.
 

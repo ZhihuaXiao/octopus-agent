@@ -387,10 +387,18 @@ function renderEntry(entry) {
   const path = make("span", "path");
   path.append(entry.path, octoMark());
   link.append(make("span", "title", entry.title), path);
-  // The other way in, for whoever is here to run it rather than read it.
+  // The other ways in, for whoever is here to run it or read it.
   const run = make("a", "run-link", "Run view");
   run.href = hashFor(entry.path, "run");
-  item.append(link, modeControl(entry.path, entry.mode), modelButton(entry.path, entry.model), run);
+  const preview = make("a", "run-link", "Preview");
+  preview.href = hashFor(entry.path, "preview");
+  item.append(
+    link,
+    modeControl(entry.path, entry.mode),
+    modelButton(entry.path, entry.model),
+    run,
+    preview,
+  );
   return item;
 }
 
@@ -785,7 +793,18 @@ function fileMenu(path, kind) {
     actions.push({ label: "Edit", run: () => editTreeFile(path, kind) });
   }
   if (kind === "notebook") {
-    actions.push({ label: "Export bundle", run: () => void exportTreeBundle(path) });
+    actions.push(
+      {
+        label: "Preview document",
+        run: () => {
+          location.hash = hashFor(path, "preview");
+        },
+      },
+      { label: "Export bundle", run: () => void exportTreeBundle(path) },
+    );
+  }
+  if (kind !== "notebook" && isPreviewableFile(path)) {
+    actions.push({ label: "Preview", run: () => openTextWithPreview(path) });
   }
   actions.push(
     { label: "Rename", run: () => void renameTreeFile(path, kind) },
@@ -1526,9 +1545,9 @@ async function removeChat(chat, button) {
 let watching;
 
 /**
- * Which way the Notebook is shown: as its Cells, for whoever writes them, or
- * as the Run View. Read off the URL, so a link says which.
- * @typedef {"author" | "run"} View
+ * Which way the Notebook is shown: as its Cells, for whoever writes them, as
+ * the Run View, or as a single readable document preview. Read off the URL, so a link says which.
+ * @typedef {"author" | "run" | "preview"} View
  */
 /** @type {View} */
 let view = "author";
@@ -1546,6 +1565,41 @@ let fileLoad = 0;
 
 /** The text last drawn for the file on show, before any diff marks. */
 let fileSource = "";
+
+/** The preview mode for open text files: "preview" or "source". */
+/** @type {Map<string, "preview" | "source">} */
+const filePreviewModes = new Map();
+
+/**
+ * @param {string} path
+ */
+function isMarkdownFile(path) {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return ext === "md" || ext === "markdown";
+}
+
+/**
+ * @param {string} path
+ */
+function isHtmlFile(path) {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return ext === "html" || ext === "htm";
+}
+
+/**
+ * @param {string} path
+ */
+function isPreviewableFile(path) {
+  return isMarkdownFile(path) || isHtmlFile(path);
+}
+
+/**
+ * @param {string} path
+ */
+function openTextWithPreview(path) {
+  filePreviewModes.set(path, "preview");
+  openText(path);
+}
 
 /** Unsaved text of files being edited, by path, so changing subtab does not drop it. */
 /** @type {Map<string, string>} */
@@ -1624,6 +1678,8 @@ const TEXT_LABELS = {
 
 /** What the fragment begins with when it names the Run View; a Notebook's own path is encoded, so it never does. */
 const RUN_VIEW_PREFIX = "run/";
+/** What the fragment begins with when it names the Preview View. */
+const PREVIEW_VIEW_PREFIX = "preview/";
 
 /**
  * The fragment that opens `notebook` in the view named.
@@ -1631,7 +1687,7 @@ const RUN_VIEW_PREFIX = "run/";
  * @param {View} shown
  */
 const hashFor = (notebook, shown) =>
-  `#${shown === "run" ? RUN_VIEW_PREFIX : ""}${encodeURIComponent(notebook)}`;
+  `#${shown === "run" ? RUN_VIEW_PREFIX : shown === "preview" ? PREVIEW_VIEW_PREFIX : ""}${encodeURIComponent(notebook)}`;
 
 /** A Timeout as an author would write it, when the milliseconds allow. */
 /** @param {number} ms */
@@ -4526,6 +4582,15 @@ function updateDiffSelectionControls() {
  */
 function renderFileBody(text, review) {
   const body = element("file-body");
+  const canPreview = isPreviewableFile(openPane);
+  const previewing = canPreview && filePreviewModes.get(openPane) === "preview";
+  if (previewing) {
+    if (isMarkdownFile(openPane)) {
+      element("file-preview-markdown").replaceChildren(...markdownBlocks(text));
+    } else if (isHtmlFile(openPane)) {
+      /** @type {HTMLIFrameElement} */ (element("file-preview-html")).srcdoc = text;
+    }
+  }
   if (review === undefined || review.kind !== "modified" || review.before === undefined) {
     body.classList.remove("diff");
     body.textContent = text;
@@ -4737,7 +4802,11 @@ function showFileChrome(path, editing, review) {
       : review.kind === "created"
         ? "New file"
         : "Modified";
-  element("file-edit").hidden = editing;
+  const canPreview = isPreviewableFile(path);
+  const previewing = canPreview && !editing && filePreviewModes.get(path) === "preview";
+  element("file-preview-toggle").hidden = !canPreview || editing;
+  element("file-preview-toggle").textContent = previewing ? "Source" : "Preview";
+  element("file-edit").hidden = editing || previewing;
   element("file-wrap").hidden = !editing;
   element("file-save").hidden = !editing;
   element("file-cancel-edit").hidden = !editing;
@@ -4747,8 +4816,10 @@ function showFileChrome(path, editing, review) {
   element("file-accept").textContent = review?.kind === "modified" ? "Accept All" : "Accept";
   element("file-reject").textContent = review?.kind === "modified" ? "Reject All" : "Reject";
   updateDiffSelectionControls();
-  element("file-body").hidden = editing;
+  element("file-body").hidden = editing || previewing;
   element("file-editor").hidden = !editing;
+  element("file-preview-markdown").hidden = !previewing || !isMarkdownFile(path);
+  element("file-preview-html").hidden = !previewing || !isHtmlFile(path);
 }
 
 /**
@@ -4871,6 +4942,9 @@ async function showFile(path) {
       editFileOnOpen = undefined;
       beginFileEdit();
       return;
+    }
+    if (!filePreviewModes.has(path) && isPreviewableFile(path)) {
+      filePreviewModes.set(path, review?.kind === "modified" ? "source" : "preview");
     }
     showFileChrome(path, false, review);
     renderFileBody(body.text, review);
@@ -5102,25 +5176,58 @@ function renderSession() {
   const { state } = watching;
   showHeading(state.title, state.notebook);
   const authoring = view === "author";
+  const running = view === "run";
+  const previewing = view === "preview";
   element("author-controls").hidden = !authoring;
-  element("run-controls").hidden = authoring;
+  element("run-controls").hidden = !running;
+  element("preview-controls").hidden = !previewing;
   /** @type {HTMLAnchorElement} */ (element("to-run-view")).href = hashFor(state.notebook, "run");
+  /** @type {HTMLAnchorElement} */ (element("to-preview-view")).href = hashFor(
+    state.notebook,
+    "preview",
+  );
   /** @type {HTMLAnchorElement} */ (element("to-author-view")).href = hashFor(
     state.notebook,
     "author",
   );
-  element("run-view").hidden = authoring || openPane !== "notebook";
+  /** @type {HTMLAnchorElement} */ (element("to-preview-from-run")).href = hashFor(
+    state.notebook,
+    "preview",
+  );
+  /** @type {HTMLAnchorElement} */ (element("to-author-from-preview")).href = hashFor(
+    state.notebook,
+    "author",
+  );
+  /** @type {HTMLAnchorElement} */ (element("to-run-from-preview")).href = hashFor(
+    state.notebook,
+    "run",
+  );
+  element("run-view").hidden = !running || openPane !== "notebook";
+  element("preview-view").hidden = !previewing || openPane !== "notebook";
   // While editing, Insert below on each cell adds the next one, so the pair
   // under the draft would repeat those two buttons.
   element("add-cells").hidden = !authoring || openPane !== "notebook" || draft !== undefined;
   element("file-view").hidden = openPane === "notebook";
   renderSubtabs();
   syncFoldAllButton();
+  if (openPane !== "notebook") {
+    element("segments").hidden = true;
+    element("editor").hidden = true;
+    element("run-view").hidden = true;
+    element("preview-view").hidden = true;
+    void showFile(openPane);
+    return;
+  }
+  if (previewing) {
+    element("segments").hidden = true;
+    element("editor").hidden = true;
+    renderNotebookPreview(state);
+    return;
+  }
   if (!authoring) {
     element("segments").hidden = true;
     element("editor").hidden = true;
-    if (openPane !== "notebook") void showFile(openPane);
-    else renderRunView(state);
+    renderRunView(state);
     return;
   }
   /** @type {HTMLButtonElement} */ (element("run-all")).disabled = state.running;
@@ -5140,18 +5247,138 @@ function renderSession() {
       : (state.model ?? "Choose a configured model for this notebook");
   chosen.disabled = draft !== undefined;
   element("edit").hidden = draft !== undefined;
-  if (openPane !== "notebook") {
-    element("segments").hidden = true;
-    element("editor").hidden = true;
-    void showFile(openPane);
-    return;
-  }
   element("segments").hidden = draft !== undefined;
   element("editor").hidden = draft === undefined;
   // While the Notebook is being edited the draft is what is on the page; the
   // Cells are drawn again from the state once the editing is over.
   if (draft === undefined) element("segments").replaceChildren(...renderSegments(state));
   syncRunningTimer();
+}
+
+/**
+ * Renders the notebook as a clean, single readable document.
+ * @param {NotebookSessionState} state
+ */
+function renderNotebookPreview(state) {
+  const container = element("preview-view");
+  container.replaceChildren();
+
+  const header = document.createElement("header");
+  header.className = "preview-doc-header";
+  const h1 = document.createElement("h1");
+  h1.textContent = state.title;
+  header.append(h1);
+
+  if (state.model || state.mode) {
+    const meta = document.createElement("p");
+    meta.className = "preview-doc-meta hint";
+    const parts = [];
+    if (state.mode) parts.push(`Mode: ${state.mode}`);
+    if (state.model) parts.push(`Model: ${state.model}`);
+    meta.textContent = parts.join(" · ");
+    header.append(meta);
+  }
+  container.append(header);
+
+  for (const segment of state.segments) {
+    if (segment.kind === "prose") {
+      if (segment.text.trim() === "") continue;
+      const proseDiv = make("div", "preview-prose");
+      proseDiv.append(...markdownBlocks(segment.text));
+      container.append(proseDiv);
+      continue;
+    }
+
+    const cell = state.cells.find((c) => c.id === segment.id);
+    if (cell === undefined) continue;
+
+    const section = make("section", `preview-cell preview-cell-${cell.type}`);
+
+    if (cell.type === "prompt") {
+      if (cell.body.trim()) {
+        const promptBlock = make("div", "preview-prompt");
+        promptBlock.append(...markdownBlocks(cell.body));
+        section.append(promptBlock);
+      }
+      if (cell.thinking && cell.thinking.trim()) {
+        const details = document.createElement("details");
+        details.className = "preview-thinking";
+        const summary = document.createElement("summary");
+        summary.textContent = "Thought";
+        details.append(summary);
+        const thinkBody = make("div", "preview-thinking-body");
+        thinkBody.textContent = cell.thinking;
+        details.append(thinkBody);
+        section.append(details);
+      }
+      if (cell.toolCalls && cell.toolCalls.length > 0) {
+        const toolsContainer = make("div", "preview-tools");
+        for (const call of cell.toolCalls) {
+          const details = document.createElement("details");
+          details.className = "cell-part tool-call" + (call.isError ? " failed" : "");
+          const summary = document.createElement("summary");
+          const nameSpan = make("span", "tool-name", call.name);
+          summary.append(nameSpan);
+          details.append(summary);
+          if (call.input !== undefined && call.input !== null) {
+            const preIn = make(
+              "pre",
+              "tool-input",
+              typeof call.input === "string" ? call.input : JSON.stringify(call.input, null, 2),
+            );
+            details.append(preIn);
+          }
+          if (call.result !== undefined && call.result !== "") {
+            const preOut = make("pre", "tool-result", call.result);
+            details.append(preOut);
+          }
+          toolsContainer.append(details);
+        }
+        section.append(toolsContainer);
+      }
+      if (cell.text && cell.text.trim()) {
+        const replyBlock = make("div", "preview-reply");
+        replyBlock.append(...markdownBlocks(cell.text));
+        section.append(replyBlock);
+      }
+      if (cell.artifacts && cell.artifacts.length > 0) {
+        const artList = make("ul", "preview-artifacts");
+        for (const art of cell.artifacts) {
+          const li = document.createElement("li");
+          const name = art.split("/").pop() ?? art;
+          const ext = name.split(".").pop()?.toLowerCase();
+          const artUrl = `/api/sessions/${encodeURIComponent(state.id)}/runs/${cell.run ?? "latest"}/${encodeURIComponent(art)}`;
+          if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext ?? "")) {
+            const img = document.createElement("img");
+            img.src = artUrl;
+            img.alt = name;
+            li.append(img);
+          } else {
+            const a = document.createElement("a");
+            a.href = artUrl;
+            a.textContent = name;
+            a.download = name;
+            li.append(a);
+          }
+          artList.append(li);
+        }
+        section.append(artList);
+      }
+    } else if (cell.type === "bash") {
+      const bashCmd = make("pre", "preview-bash", `$ ${cell.body.trim()}`);
+      section.append(bashCmd);
+      if (cell.text && cell.text.trim()) {
+        const out = make("pre", "preview-bash-output", cell.text);
+        section.append(out);
+      }
+      if (cell.error) {
+        const err = make("pre", "preview-bash-error status error", cell.error);
+        section.append(err);
+      }
+    }
+
+    container.append(section);
+  }
 }
 
 /**
@@ -7435,7 +7662,9 @@ async function showSession(notebook) {
   element("segments").hidden = view !== "author";
   element("add-cells").hidden = view !== "author";
   element("author-controls").hidden = view !== "author";
-  element("run-controls").hidden = view === "author";
+  element("run-controls").hidden = view !== "run";
+  element("preview-controls").hidden = view !== "preview";
+  element("preview-view").hidden = view !== "preview";
   // Drawn once the Notebook is open; a Run button with no form yet says nothing.
   element("run-view").hidden = true;
   element("list").hidden = true;
@@ -7586,8 +7815,18 @@ function route() {
     return;
   }
   const hash = location.hash.slice(1);
-  view = hash.startsWith(RUN_VIEW_PREFIX) ? "run" : "author";
-  asked = decodeURIComponent(view === "run" ? hash.slice(RUN_VIEW_PREFIX.length) : hash);
+  view = hash.startsWith(RUN_VIEW_PREFIX)
+    ? "run"
+    : hash.startsWith(PREVIEW_VIEW_PREFIX)
+      ? "preview"
+      : "author";
+  asked = decodeURIComponent(
+    view === "run"
+      ? hash.slice(RUN_VIEW_PREFIX.length)
+      : view === "preview"
+        ? hash.slice(PREVIEW_VIEW_PREFIX.length)
+        : hash,
+  );
   if (asked === "") {
     stopRunningTimer();
     watching?.socket.close();
@@ -8909,6 +9148,14 @@ element("file-reject-selected").addEventListener("click", () => {
   if (selectedDiffLines.size > 0) {
     void decideOpenFile("reject", Array.from(selectedDiffLines));
   }
+});
+element("file-preview-toggle").addEventListener("click", () => {
+  if (openPane === "notebook") return;
+  const current = filePreviewModes.get(openPane) === "preview" ? "source" : "preview";
+  filePreviewModes.set(openPane, current);
+  const review = reviewsOf().find((item) => item.path === openPane);
+  showFileChrome(openPane, false, review);
+  renderFileBody(fileSource, review);
 });
 element("file-edit").addEventListener("click", beginFileEdit);
 element("file-rename").addEventListener("click", () => {

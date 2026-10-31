@@ -220,11 +220,33 @@
               </div>
               <div class="control-group">
                 <a id="to-run-view" class="button" href="#" title="Switch to Run view">Run view</a>
+                <a
+                  id="to-preview-view"
+                  class="button"
+                  href="#"
+                  title="Preview notebook as a readable document"
+                  >Preview</a
+                >
               </div>
             </div>
             <div id="run-controls" class="controls" hidden>
               <a id="to-author-view" class="button" href="#" title="Switch to Author view"
                 >Author view</a
+              >
+              <a
+                id="to-preview-from-run"
+                class="button"
+                href="#"
+                title="Preview notebook as a readable document"
+                >Preview</a
+              >
+            </div>
+            <div id="preview-controls" class="controls" hidden>
+              <a id="to-author-from-preview" class="button" href="#" title="Switch to Author view"
+                >Author view</a
+              >
+              <a id="to-run-from-preview" class="button" href="#" title="Switch to Run view"
+                >Run view</a
               >
             </div>
           </div>
@@ -235,6 +257,14 @@
           <div class="file-toolbar">
             <p id="file-path" class="path"></p>
             <span id="file-kind" class="file-kind"></span>
+            <button
+              id="file-preview-toggle"
+              type="button"
+              hidden
+              title="Toggle between formatted preview and source code"
+            >
+              Preview
+            </button>
             <button id="file-edit" type="button" hidden title="Edit this file">Edit</button>
             <button id="file-rename" type="button" title="Give this file a new name">Rename</button>
             <button
@@ -283,8 +313,20 @@
           </div>
           <p id="file-status" class="status"></p>
           <div id="file-body" class="file-body"></div>
+          <div
+            id="file-preview-markdown"
+            class="file-preview-markdown cell-output markdown"
+            hidden
+          ></div>
+          <iframe
+            id="file-preview-html"
+            class="file-preview-html"
+            sandbox="allow-scripts"
+            hidden
+          ></iframe>
           <textarea id="file-editor" class="file-editor" hidden spellcheck="false"></textarea>
         </section>
+        <section id="preview-view" class="preview-view cell-output markdown" hidden></section>
         <ol id="segments" class="segments"></ol>
         <form id="editor" class="editor" hidden>
           <div class="editor-controls">

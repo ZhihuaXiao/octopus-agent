@@ -153,6 +153,19 @@ When a run finishes, the page says so in a sentence and, if it did not finish, w
 
 Author view and run view are the same login. A value typed into the form is passed to the cells as typed, including into a shell command.
 
+### Preview view
+
+**Preview** renders the notebook as a clean, single readable document without editing chrome. Prose blocks are formatted with typography and headings, prompt questions and assistant replies appear as rendered Markdown, model thoughts and tool calls stay expandable, and images or artifacts are shown inline. Click **Author view** or **Run view** to return.
+
+### Previewing Markdown and HTML files
+
+Files opened in subtabs provide a **Preview / Source** toggle button:
+
+- **Markdown files** (`.md`, `.markdown`): Toggle to **Preview** to render headings, tables, formatted text, code blocks, blockquotes, and lists as styled HTML. Toggle to **Source** to view or edit the raw text.
+- **HTML files** (`.html`, `.htm`): Toggle to **Preview** to render the HTML inside a sandboxed `<iframe>` with JavaScript enabled (`sandbox="allow-scripts"`). The iframe operates with an opaque `null` origin, completely isolated from Octo's session cookies and APIs for security. Toggle to **Source** to view or edit the HTML source code.
+
+In the sidebar file tree, click the `⋯` menu on any `.md` or `.html` file and choose **Preview** (or **Preview document** for notebooks) to open it directly in preview mode.
+
 ### Coming back
 
 You can close the tab. The run continues on the server. Open the same address again and the page catches up.

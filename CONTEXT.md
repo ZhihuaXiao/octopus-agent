@@ -195,6 +195,12 @@ For people who do not write prompts — not people who may not: it is opened wit
 Connection the Author View is, and a value typed into it reaches a Cell as typed (ADR-0006).
 _Avoid_: run mode, form mode, simple mode, user mode
 
+**Preview View**:
+The same Notebook shown as a single readable document without cell-editing controls:
+prose and replies rendered as formatted Markdown, thoughts and tool calls expandable, and
+artifacts shown inline.
+_Avoid_: document mode, preview mode, read mode
+
 **Connection**:
 An authenticated client attachment to the server. Opened by presenting the one account's
 credential — the token generated when the server started, or the stored password — and

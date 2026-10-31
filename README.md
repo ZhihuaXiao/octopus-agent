@@ -61,7 +61,7 @@ The same few shapes cover most of the work the examples are built for.
 
 The screenshots below are the web interface started in this repository (`octo --web`), with the examples under `examples/`. The directory column is folded away so the notebook has the width.
 
-The list is every Markdown file under the served directory that parses and contains at least one cell. A README full of shell samples is not listed. Each row can set the notebook's mode and model, or open run view directly. Under the notebooks, chats from interactive octo CLI runs in this directory can be inspected for details, promoted into a notebook with previous running results restored, or deleted (agent sessions run by notebook prompt cells are excluded). Notebook bundles (`.octo.zip`) can also be imported directly from the home page using **Import bundle**.
+The list is every Markdown file under the served directory that parses and contains at least one cell. A README full of shell samples is not listed. Each row can set the notebook's mode and model, or open its run view or preview directly. Under the notebooks, chats from interactive octo CLI runs in this directory can be inspected for details, promoted into a notebook with previous running results restored, or deleted (agent sessions run by notebook prompt cells are excluded). Files and notebooks can be previewed directly, and notebook bundles (`.octo.zip`) can also be imported directly from the home page using **Import bundle**.
 
 ![The notebook list, with the five examples and the chats pi has had in this directory](docs/images/notebook-list.png)
 
