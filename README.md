@@ -231,6 +231,8 @@ Bound to `0.0.0.0` or `::`, the server prints the loopback URL and one URL for e
 
 Closing the browser does not stop a run. A heartbeat notices when the server restarts and prompts to reconnect automatically, recovering each notebook session from its journal.
 
+Each browser tab displays one notebook at a time. To view or run multiple notebooks or workspaces simultaneously, open separate browser tabs or windows. Opening the same notebook across multiple tabs connects to a single shared session: cell runs stream live to all tabs in real time, only one run may execute at a time (preventing duplicate runs), either tab can interrupt the run, and edits are protected by revision-based conflict checks.
+
 ### Import a chat
 
 A chat is a session pi already had at the terminal. Import copies it into a notebook: a prompt cell for each message you sent, a bash cell for each command you ran with `!`, and a run record of what already happened. Pi's session file is read and never written.

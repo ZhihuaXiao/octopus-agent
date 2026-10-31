@@ -172,6 +172,19 @@ You can close the tab. The run continues on the server. Open the same address ag
 
 If the connection drops, the page says it is reconnecting and then shows what happened while it was away. A background heartbeat checks connection status every two seconds; when the server restarts or the cookie is lost, the page automatically logs out and brings up the connect panel. Enter the new token or password to reconnect and restore your view. The work is still there: each open notebook is restored, and a run that was in progress when the process died is recorded as interrupted.
 
+### Multiple tabs, sessions, and workspaces
+
+The web interface displays one notebook at a time in each browser tab. To view or work on multiple notebooks or workspaces simultaneously, open each notebook in its own browser tab or window. Because each notebook owns its own Notebook Session on the server, running a notebook in one tab never blocks a notebook running in another.
+
+When two browser tabs open the **same** notebook file, they attach to the exact same live Notebook Session on the server:
+
+- **Shared real-time events**: Output streams to all open tabs over WebSocket as cells run—replies, thoughts, tool calls, and status updates appear in both tabs simultaneously.
+- **Exclusive runs**: Only one run may execute on a notebook at a time. The **Run all** button is disabled across tabs while a run is active. Attempting to start another run returns an error (`409 Conflict`) asking you to wait or interrupt.
+- **Shared interrupt and stop**: Clicking **Interrupt** or stopping an individual cell in any tab halts that running cell or run for all tabs.
+- **Save conflict detection**: Edits check the notebook's revision. If one tab saves changes, any other tab holding an unsaved draft is alerted that the notebook changed since the draft was begun, preventing inadvertent overwrites.
+
+When notebooks declare different workspaces in frontmatter (or reside in different subdirectories), each executes inside its respective workspace directory with that workspace's own settings, tools, and skills. Access outside the served directory is governed by `--cell-access`.
+
 ## Write a notebook
 
 A notebook is a Markdown file. YAML between `---` lines at the top is the frontmatter. Fenced blocks are cells. Everything else is prose.
