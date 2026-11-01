@@ -41,10 +41,11 @@ import { type ExportFormat, type Exported, exportNotebook } from "../export/html
 import {
   type EditResult,
   type NotebookEdit,
+  NotebookDocument,
   applyEdit,
   notebookWithMode,
   notebookWithModel,
-} from "../notebook/edit.js";
+} from "../notebook/notebook.js";
 import {
   type Cell,
   type CellType,
@@ -88,25 +89,21 @@ import {
   type NotebookEntry,
   type Renamed,
   type RenamedFile,
+  type Workspace,
+  type WorkspaceRemoved,
   assignNotebookMode,
   assignNotebookModel,
+  createWorkspace,
   fileWithin,
   pathWithin,
   renameFile,
   renameNotebook,
-} from "./notebooks.js";
+} from "../workspace/workspace.js";
 import {
   type TextReview,
-  baselineUnder,
-  isTextFile,
-  readTextFile,
-  readTextFiles,
-  revertText,
-  reviewsBetween,
-  textPath,
-  writeTextFile,
-} from "./text-files.js";
-import { applyDecision } from "./diff.js";
+  type WorkspaceReview,
+  createWorkspaceReview,
+} from "../workspace/review.js";
 
 /**
  * Where a Cell stands in its Notebook Session: not yet run, running now, what
@@ -537,18 +534,6 @@ function textOfParts(parts: readonly CellPart[]): string {
   return parts.map((part) => (part.kind === "text" ? part.text : "")).join("");
 }
 
-const sameReviewList = (a: readonly TextReview[], b: readonly TextReview[]): boolean =>
-  a.length === b.length &&
-  a.every((review, index) => {
-    const other = b[index];
-    return (
-      other !== undefined &&
-      review.path === other.path &&
-      review.kind === other.kind &&
-      review.before === other.before
-    );
-  });
-
 async function createNotebookSession(setup: NotebookSessionSetup): Promise<NotebookSession> {
   const { id, agent, journal, directory, access } = setup;
   /** Where the file is now. A rename moves both, and everything after it reads these. */
@@ -609,40 +594,18 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   /** While a Cell runs, the way to stop that Cell alone. */
   const cellStops = new Map<string, () => void>();
   /**
-   * Text files as they were when the open reviews were taken. A review still
-   * waiting keeps its original bytes here, so the next look does not treat
-   * the unaccepted file as the starting point. Absent until a Run has looked.
+   * Text file reviews created or modified during runs.
    */
-  let baseline: Map<string, string> | undefined;
-  /** Text files still waiting to be accepted or rejected, by path. */
-  let reviews = new Map<string, TextReview>();
-  /**
-   * Reviews are read and written one at a time: a Run publishing what a Cell
-   * changed, and a decision to accept or reject, both rewrite the same map.
-   */
-  let reviewLock: Promise<unknown> = Promise.resolve();
-  const withReviews = <T>(work: () => Promise<T>): Promise<T> => {
-    const run = reviewLock.then(work, work);
-    reviewLock = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  };
-
-  const listedReviews = (): TextReview[] =>
-    [...reviews.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const reviewLifecycle = createWorkspaceReview(directory);
 
   /** Notices text files the Run has created or changed, and says so when the list moved. */
   const publishReviews = async (): Promise<void> => {
-    if (baseline === undefined) return;
-    const next = reviewsBetween(baseline, await readTextFiles(directory));
-    if (sameReviewList(listedReviews(), next)) return;
-    observe({ type: "text-changed", reviews: next });
+    const { changed, reviews: next } = await reviewLifecycle.publish();
+    if (changed) observe({ type: "text-changed", reviews: next });
   };
 
   const takeBaseline = async (): Promise<void> => {
-    baseline = baselineUnder(await readTextFiles(directory), listedReviews());
+    await reviewLifecycle.takeBaseline();
   };
 
   /**
@@ -886,7 +849,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         // carries what it was for whoever was watching, not for the session.
         break;
       case "text-changed":
-        reviews = new Map(event.reviews.map((review) => [review.path, review]));
+        reviewLifecycle.restore(event.reviews);
         break;
     }
   };
@@ -899,26 +862,29 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     return true;
   };
 
-  const state = (): NotebookSessionState => ({
-    id,
-    notebook,
-    title: titleOf(parsed, path),
-    revision,
-    ...(parsed.metadata.model !== undefined ? { model: parsed.metadata.model } : {}),
-    ...(parsed.metadata.mode !== undefined ? { mode: parsed.metadata.mode } : {}),
-    ...(parsed.frontmatter !== undefined ? { frontmatter: parsed.frontmatter.text } : {}),
-    inputs: parsed.metadata.inputs ?? [],
-    segments: parsed.segments.map((segment) =>
-      isCellSegment(segment)
-        ? { kind: "cell", id: segment.cell.id }
-        : { kind: "prose", text: segment.text },
-    ),
-    running: current !== undefined || (journalBlocked && inProgress !== undefined),
-    ...(inProgress !== undefined ? { run: inProgress.run } : {}),
-    sequence,
-    cells: cellsOf(parsed).map(viewOf),
-    ...(reviews.size > 0 ? { reviews: listedReviews() } : {}),
-  });
+  const state = (): NotebookSessionState => {
+    const currentReviews = reviewLifecycle.snapshot();
+    return {
+      id,
+      notebook,
+      title: titleOf(parsed, path),
+      revision,
+      ...(parsed.metadata.model !== undefined ? { model: parsed.metadata.model } : {}),
+      ...(parsed.metadata.mode !== undefined ? { mode: parsed.metadata.mode } : {}),
+      ...(parsed.frontmatter !== undefined ? { frontmatter: parsed.frontmatter.text } : {}),
+      inputs: parsed.metadata.inputs ?? [],
+      segments: parsed.segments.map((segment) =>
+        isCellSegment(segment)
+          ? { kind: "cell", id: segment.cell.id }
+          : { kind: "prose", text: segment.text },
+      ),
+      running: current !== undefined || (journalBlocked && inProgress !== undefined),
+      ...(inProgress !== undefined ? { run: inProgress.run } : {}),
+      sequence,
+      cells: cellsOf(parsed).map(viewOf),
+      ...(currentReviews.length > 0 ? { reviews: currentReviews } : {}),
+    };
+  };
 
   /**
    * Makes `bytes` the Notebook the session holds, and tells whoever is watching.
@@ -974,7 +940,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
 
   /** A Run's unaccepted edit of the Notebook itself, which a save must not write over. */
   const blockedByReview = (): string | undefined =>
-    reviews.has(notebook)
+    reviewLifecycle.snapshot().some((r) => r.path === notebook)
       ? `${notebook} was changed by a run. Accept or reject that change before saving.`
       : undefined;
 
@@ -1131,31 +1097,17 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     return { ok: true };
   };
 
-  const retargetText = (from: string, to: string): Promise<void> =>
-    withReviews(async () => {
-      if ((await ensureJournal()) !== undefined) return;
-      const review = reviews.get(from);
-      if (review !== undefined) {
-        reviews.delete(from);
-        if (isTextFile(to)) reviews.set(to, { ...review, path: to });
-      }
-      if (baseline !== undefined && baseline.has(from)) {
-        const bytes = baseline.get(from);
-        baseline.delete(from);
-        if (bytes !== undefined && isTextFile(to)) baseline.set(to, bytes);
-      }
-      if (review !== undefined) observe({ type: "text-changed", reviews: listedReviews() });
-    });
+  const retargetText = async (from: string, to: string): Promise<void> => {
+    if ((await ensureJournal()) !== undefined) return;
+    const { changed, reviews: next } = await reviewLifecycle.retarget(from, to);
+    if (changed) observe({ type: "text-changed", reviews: next });
+  };
 
-  const forgetText = (name: string): Promise<void> =>
-    withReviews(async () => {
-      if ((await ensureJournal()) !== undefined) return;
-      const review = reviews.get(name);
-      baseline?.delete(name);
-      if (review === undefined) return;
-      reviews.delete(name);
-      observe({ type: "text-changed", reviews: listedReviews() });
-    });
+  const forgetText = async (name: string): Promise<void> => {
+    if ((await ensureJournal()) !== undefined) return;
+    const { changed, reviews: next } = await reviewLifecycle.forget(name);
+    if (changed) observe({ type: "text-changed", reviews: next });
+  };
 
   /**
    * Ends a Run the server before this one died in the middle of, as far as it
@@ -1317,99 +1269,29 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
   ): Promise<TextDecided> => {
     const journal = await ensureJournal();
     if (journal !== undefined) return { kind: "refused", problem: journal };
-    const named = textPath(directory, name);
-    if (named === undefined) return { kind: "invalid" };
-    const review = reviews.get(named);
-    if (review === undefined) return { kind: "absent" };
-
-    if (lines !== undefined) {
-      const read = await readTextFile(directory, named);
-      if (read.kind !== "text") return { kind: "invalid" };
-      const diskText = read.text;
-      const beforeText = review.before ?? "";
-
-      let applied;
-      try {
-        applied = applyDecision(beforeText, diskText, decision, lines);
-      } catch {
-        return { kind: "invalid" };
-      }
-
-      let adopting: { readonly bytes: string; readonly notebook: Notebook } | undefined;
-      if (named === notebook && applied.newAfter !== source) {
-        const found = readable(parseNotebook(applied.newAfter), `Cannot open ${notebook}`);
-        if (!found.ok) return { kind: "refused", problem: found.problem };
-        adopting = { bytes: applied.newAfter, notebook: found.notebook };
-      }
-
-      if (applied.newAfter !== diskText) {
-        const written = await writeTextFile(directory, named, applied.newAfter);
-        if (written.kind !== "saved") return { kind: "invalid" };
-      }
-
-      if (applied.resolved) {
-        reviews.delete(named);
-        if (baseline !== undefined) {
-          if (decision === "reject" && review.kind === "created" && applied.newAfter === "") {
-            baseline.delete(named);
-            await revertText(directory, review);
-          } else {
-            baseline.set(named, applied.newAfter);
-          }
-        }
-      } else {
-        reviews.set(named, { path: named, kind: "modified", before: applied.newBefore });
-        if (baseline !== undefined) {
-          baseline.set(named, applied.newBefore);
-        }
-      }
-
-      if (adopting !== undefined && !adopt(adopting.bytes, adopting.notebook)) {
-        return { kind: "refused", problem: JOURNAL_PROBLEM };
-      }
-      if (!observe({ type: "text-changed", reviews: listedReviews() })) {
-        return { kind: "refused", problem: JOURNAL_PROBLEM };
-      }
-      return { kind: "decided" };
-    }
 
     let adopting: { readonly bytes: string; readonly notebook: Notebook } | undefined;
-    if (decision === "accept" && named === notebook) {
-      const read = await readTextFile(directory, named);
-      if (read.kind === "text" && read.text !== source) {
-        const found = readable(parseNotebook(read.text), `Cannot open ${notebook}`);
-        if (!found.ok) return { kind: "refused", problem: found.problem };
-        adopting = { bytes: read.text, notebook: found.notebook };
+
+    const result = await reviewLifecycle.decide(name, decision, lines, (newText) => {
+      if (name === notebook && newText !== source) {
+        const found = readable(parseNotebook(newText), `Cannot open ${notebook}`);
+        if (!found.ok) return { ok: false, problem: found.problem };
+        adopting = { bytes: newText, notebook: found.notebook };
       }
-    }
+      return { ok: true };
+    });
 
-    if (decision === "reject") {
-      const reverted = await revertText(directory, review);
-      if (reverted === "invalid") return { kind: "invalid" };
+    if (result.kind === "refused") {
+      return { kind: "refused", problem: result.problem };
     }
-
-    if (baseline !== undefined) {
-      if (decision === "accept") {
-        const read = await readTextFile(directory, named);
-        if (read.kind === "text") baseline.set(named, read.text);
-        else baseline.delete(named);
-      } else if (review.kind === "created") baseline.delete(named);
-      else if (review.before !== undefined) baseline.set(named, review.before);
-    }
-    reviews.delete(named);
-
-    if (decision === "reject" && named === notebook) {
-      const read = await readTextFile(directory, named);
-      if (read.kind === "text" && read.text !== source) {
-        const found = readable(parseNotebook(read.text), `Cannot open ${notebook}`);
-        if (found.ok) adopting = { bytes: read.text, notebook: found.notebook };
-      }
+    if (result.kind !== "decided") {
+      return { kind: result.kind };
     }
 
     if (adopting !== undefined && !adopt(adopting.bytes, adopting.notebook)) {
       return { kind: "refused", problem: JOURNAL_PROBLEM };
     }
-    if (!observe({ type: "text-changed", reviews: listedReviews() })) {
+    if (result.changed && !observe({ type: "text-changed", reviews: result.reviews })) {
       return { kind: "refused", problem: JOURNAL_PROBLEM };
     }
     return { kind: "decided" };
@@ -1466,12 +1348,12 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         observe(event);
         // A Cell has finished writing. The review is published beside the
         // Run, and a failure to read the tree must not stop the Cell.
-        if (event.type === "cell-ended") void withReviews(publishReviews).catch(noteFailure);
+        if (event.type === "cell-ended") void publishReviews().catch(noteFailure);
       };
 
       const over = (async () => {
         try {
-          await withReviews(takeBaseline);
+          await takeBaseline();
         } catch (cause) {
           current = undefined;
           observe({
@@ -1484,7 +1366,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
         const finish = async (settle: () => void) => {
           // Still running while the review is taken, so a browser that asks
           // once the session is at rest finds the files the Run changed.
-          await withReviews(publishReviews).catch(noteFailure);
+          await publishReviews().catch(noteFailure);
           current = undefined;
           settle();
         };
@@ -1523,7 +1405,7 @@ async function createNotebookSession(setup: NotebookSessionSetup): Promise<Noteb
     },
 
     decideText(name, decision, lines) {
-      return withReviews(() => decide(name, decision, lines));
+      return decide(name, decision, lines);
     },
 
     reread() {
@@ -1669,6 +1551,7 @@ function listedNotebook(state: NotebookSessionState): NotebookEntry {
 }
 
 export interface NotebookSessions {
+  readonly workspace: Workspace;
   /** The Notebook Session for the Notebook at `notebook`, opened if it was not already. */
   open(notebook: string): Promise<Opened>;
   /**
@@ -1684,6 +1567,11 @@ export interface NotebookSessions {
    * that held that Notebook, and is not running, no longer answers for the path.
    */
   dropFile(name: string): Promise<void>;
+  /**
+   * Removes a file or notebook. Refuses with kind: "running" if the notebook is
+   * currently running in an active session.
+   */
+  remove(name: string): Promise<WorkspaceRemoved | { readonly kind: "running" }>;
   /**
    * Sets the Notebook's model, or clears it. One a session holds is set there,
    * so a browser watching it is told; one that is only a file is written directly.
@@ -1736,6 +1624,10 @@ export async function createNotebookSessions(
 ): Promise<NotebookSessions> {
   const { directory, agent } = options;
   const access = options.access ?? cellAccess("served");
+  const workspace = createWorkspace({
+    directory,
+    chatDirectory: options.chatDirectory,
+  });
   const byId = new Map<string, NotebookSession>();
   const byPath = new Map<string, NotebookSession>();
   /** The journaled sessions not yet open, by the Notebook's resolved path. */
@@ -1838,6 +1730,17 @@ export async function createNotebookSessions(
     }
   }
 
+  const dropFile = async (name: string): Promise<void> => {
+    const file = fileWithin(directory, name);
+    const path = file === undefined ? undefined : pathWithin(directory, file);
+    if (file !== undefined) {
+      const session = byPath.get(file);
+      if (session !== undefined && !session.state().running) byPath.delete(file);
+    }
+    if (path === undefined) return;
+    await Promise.all([...byId.values()].map((session) => session.forgetText(path)));
+  };
+
   return {
     async open(notebook) {
       const path = fileWithin(directory, notebook);
@@ -1845,11 +1748,13 @@ export async function createNotebookSessions(
       return openAt(path);
     },
 
+    workspace,
+
     async setModel(notebook, model) {
       const path = fileWithin(directory, notebook);
       if (path === undefined) return { kind: "absent" };
       const session = byPath.get(path);
-      if (session === undefined) return assignNotebookModel(directory, notebook, model);
+      if (session === undefined) return workspace.assignNotebookModel(notebook, model);
       const saved = await session.setModel(model);
       if (saved.kind !== "saved") return { kind: "refused", problem: saved.problem };
       return { kind: "saved", entry: listedNotebook(session.state()) };
@@ -1859,7 +1764,7 @@ export async function createNotebookSessions(
       const path = fileWithin(directory, notebook);
       if (path === undefined) return { kind: "absent" };
       const session = byPath.get(path);
-      if (session === undefined) return assignNotebookMode(directory, notebook, mode);
+      if (session === undefined) return workspace.assignNotebookMode(notebook, mode);
       const saved = await session.setMode(mode);
       if (saved.kind !== "saved") return { kind: "refused", problem: saved.problem };
       return { kind: "saved", entry: listedNotebook(session.state()) };
@@ -1875,7 +1780,7 @@ export async function createNotebookSessions(
       }
       if (session?.state().running) return { kind: "running" };
 
-      const renamed = await renameNotebook(directory, from, to, options.chatDirectory);
+      const renamed = await workspace.renameNotebook(from, to);
       if (renamed.kind !== "renamed" || session === undefined) return renamed;
       const target = fileWithin(directory, renamed.entry.path);
       if (target === undefined || target === source) return renamed;
@@ -1892,7 +1797,7 @@ export async function createNotebookSessions(
     },
 
     async renameFile(from, to) {
-      const renamed = await renameFile(directory, from, to);
+      const renamed = await workspace.renameFile(from, to);
       const source = fileWithin(directory, from);
       const previous = source === undefined ? undefined : pathWithin(directory, source);
       if (renamed.kind !== "renamed" || previous === undefined || previous === renamed.path) {
@@ -1904,15 +1809,21 @@ export async function createNotebookSessions(
       return renamed;
     },
 
-    async dropFile(name) {
+    dropFile,
+
+    async remove(name) {
       const file = fileWithin(directory, name);
-      const path = file === undefined ? undefined : pathWithin(directory, file);
       if (file !== undefined) {
         const session = byPath.get(file);
-        if (session !== undefined && !session.state().running) byPath.delete(file);
+        if (session?.state().running) {
+          return { kind: "running" };
+        }
       }
-      if (path === undefined) return;
-      await Promise.all([...byId.values()].map((session) => session.forgetText(path)));
+      const removed = await workspace.removeFile(name);
+      if (removed.kind === "removed") {
+        await dropFile(removed.path);
+      }
+      return removed;
     },
 
     get: (id) => byId.get(id),

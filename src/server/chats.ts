@@ -25,7 +25,7 @@ import { notebookAgentSessions } from "../run/store.js";
 import { within } from "../util/paths.js";
 import { isRecord } from "../util/guards.js";
 import { readJournals } from "./journal.js";
-import { type NotebookEntry, notebookTarget, pathWithin } from "./notebooks.js";
+import { type NotebookEntry, notebookTarget, pathWithin } from "../workspace/workspace.js";
 
 /** One Chat as the browser lists it: enough to tell it from the others. */
 export interface ChatEntry {

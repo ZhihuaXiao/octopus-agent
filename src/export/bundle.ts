@@ -13,7 +13,7 @@ import { formatDiagnostics } from "../notebook/diagnostic.js";
 import { parseNotebook, titleOf } from "../notebook/notebook.js";
 import type { RunRecord } from "../run/record.js";
 import { runsDirectory } from "../run/store.js";
-import { notebookTarget, pathWithin } from "../server/notebooks.js";
+import { notebookTarget, pathWithin } from "../workspace/workspace.js";
 
 export interface BundleManifest {
   readonly formatVersion: 1;
