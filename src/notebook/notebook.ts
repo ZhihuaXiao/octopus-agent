@@ -31,6 +31,19 @@ export { formatDiagnostics } from "./diagnostic.js";
 export { formatDuration } from "./duration.js";
 export { runOrder, staleAfter } from "./graph.js";
 export {
+  NotebookDocument,
+  applyEdit,
+  branchAt,
+  editOf,
+  notebookWithModel,
+  notebookWithMode,
+  type CellEdit,
+  type ProseEdit,
+  type SegmentEdit,
+  type NotebookEdit,
+  type EditResult,
+} from "./document.js";
+export {
   ARTIFACTS_REFERENCE,
   escapeReferences,
   interpolate,

@@ -15,9 +15,10 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { applyEdit, editOf } from "./edit.js";
 import {
+  applyEdit,
   cellsOf,
+  editOf,
   formatDiagnostics,
   parseNotebook,
   replaceCellBody,

@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  NotebookDocument,
+  type Notebook,
   type NotebookEdit,
   type SegmentEdit,
   applyEdit,
   branchAt,
+  cellsOf,
   editOf,
+  formatDiagnostics,
   notebookWithMode,
   notebookWithModel,
-} from "./edit.js";
-import { type Notebook, cellsOf, formatDiagnostics, parseNotebook } from "./notebook.js";
+  parseNotebook,
+} from "./notebook.js";
 
 /** Parses a Notebook the tests wrote, treating any diagnostic as a test bug. */
 function valid(source: string): Notebook {
@@ -666,5 +670,54 @@ describe("branching a notebook through a cell", () => {
 
   it("is nothing when the notebook has no such cell", () => {
     expect(branchAt(valid(source), "missing")).toBeUndefined();
+  });
+});
+
+describe("NotebookDocument deep module", () => {
+  it("creates empty notebook document and inspects cells", () => {
+    const emptyDoc = NotebookDocument.empty();
+    expect(emptyDoc.cells.length).toBe(1);
+    expect(emptyDoc.cells[0]?.id).toBe("cell-1");
+    expect(emptyDoc.revision.length).toBe(64);
+  });
+
+  it("parses notebook source into immutable document", () => {
+    const res = NotebookDocument.parse(source);
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.document === undefined) return;
+    const doc = res.document;
+    expect(doc.cells.length).toBe(2);
+    expect(doc.cell("first")?.type).toBe("prompt");
+    expect(doc.title("my-path.md")).toBe("Two cells");
+  });
+
+  it("immutably applies model and mode mutations", () => {
+    const res = NotebookDocument.parse(source);
+    if (!res.ok || res.document === undefined) throw new Error("parse failed");
+    const doc = res.document;
+
+    const withModel = doc.setModel("anthropic/claude-3-5-sonnet");
+    expect(withModel.ok).toBe(true);
+    if (!withModel.ok) return;
+    expect(withModel.document.model()).toBe("anthropic/claude-3-5-sonnet");
+    // Original document is unchanged (immutability)
+    expect(doc.model()).toBeUndefined();
+
+    const withMode = withModel.document.setMode("code");
+    expect(withMode.ok).toBe(true);
+    if (!withMode.ok) return;
+    expect(withMode.document.mode()).toBe("code");
+    expect(withMode.document.model()).toBe("anthropic/claude-3-5-sonnet");
+  });
+
+  it("branches document through a cell", () => {
+    const res = NotebookDocument.parse(source);
+    if (!res.ok || res.document === undefined) throw new Error("parse failed");
+    const doc = res.document;
+
+    const branched = doc.branchAt("first");
+    expect(branched).toBeDefined();
+    expect(branched?.cells.length).toBe(1);
+    expect(branched?.cells[0]?.id).toBe("first");
   });
 });

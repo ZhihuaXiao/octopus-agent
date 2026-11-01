@@ -24,8 +24,13 @@ import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-age
 import { stringify } from "yaml";
 
 import { noUsage } from "../agent/agent.js";
-import { type SegmentEdit, applyEdit } from "../notebook/edit.js";
-import { type Notebook, escapeReferences, parseNotebook } from "../notebook/notebook.js";
+import {
+  type Notebook,
+  type SegmentEdit,
+  applyEdit,
+  escapeReferences,
+  parseNotebook,
+} from "../notebook/notebook.js";
 import {
   failureOf,
   saidIn,
