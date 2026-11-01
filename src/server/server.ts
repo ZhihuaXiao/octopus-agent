@@ -50,8 +50,9 @@ import {
   userModes,
   userModesDirectory,
 } from "../mode/mode.js";
-import type { CellEdit, SegmentEdit } from "../notebook/edit.js";
 import {
+  type CellEdit,
+  type SegmentEdit,
   THINKING_LEVELS,
   formatDiagnostics,
   parseNotebook,
@@ -65,16 +66,10 @@ import { type Attempt, type Auth, type Credential, createAuth } from "./auth.js"
 import { type ChatsOptions, deleteChat, getChat, listChats, promoteChat } from "./chats.js";
 import {
   type DefaultEdit,
+  type ModelCatalog,
   type ProviderEdit,
-  isConfiguredModel,
-  readModelPage,
-  removeProviderKey,
-  saveDefaultModel,
-  saveModelEnabled,
-  saveProviderKey,
-  saveProviders,
-  testConfiguredModel,
-} from "./models.js";
+  createModelCatalog,
+} from "../model/catalog.js";
 import {
   branchNotebook,
   copyNotebook,
@@ -317,6 +312,8 @@ export interface ServerOptions {
    * can already reach, and `cellAccess([dir, ...])` names the range.
    */
   readonly access?: CellAccess;
+  /** The model catalog. Built from agentDirectory when absent. */
+  readonly catalog?: ModelCatalog | undefined;
 }
 
 export interface RunningServer {
@@ -491,14 +488,12 @@ async function deleteWorkspaceFile(
   name: string,
   response: ServerResponse,
 ): Promise<void> {
-  if (served.sessions.held(name)?.state().running) {
-    reply(response, 409, "This notebook is running; interrupt it or wait, then delete it.\n");
-    return;
-  }
-  const removed = await removeWorkspaceFile(served.directory, name, served.chats.chatDirectory);
+  const removed = await served.sessions.remove(name);
   switch (removed.kind) {
+    case "running":
+      reply(response, 409, "This notebook is running; interrupt it or wait, then delete it.\n");
+      return;
     case "removed":
-      await served.sessions.dropFile(removed.path);
       response.writeHead(204);
       response.end();
       return;
@@ -643,17 +638,17 @@ async function serveSkills(
 }
 
 /** Pi's models and the default a Run uses when a Notebook does not name one. */
-async function serveModels(agentDirectory: string, response: ServerResponse): Promise<void> {
-  const read = await readModelPage(agentDirectory);
+async function serveModels(served: Served, response: ServerResponse): Promise<void> {
+  const read = await served.catalog.page();
   if (!read.ok) {
-    reply(response, 422, `${read.problem}\n`);
+    reply(response, read.status ?? 422, `${read.problem}\n`);
     return;
   }
   json(response, 200, read.value);
 }
 
 async function saveModelsDefault(
-  agentDirectory: string,
+  served: Served,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -666,9 +661,9 @@ async function saveModelsDefault(
     );
     return;
   }
-  const saved = await saveDefaultModel(agentDirectory, edit);
+  const saved = await served.catalog.setDefault(edit);
   if (!saved.ok) {
-    reply(response, 422, `${saved.problem}\n`);
+    reply(response, saved.status ?? 422, `${saved.problem}\n`);
     return;
   }
   response.writeHead(204);
@@ -676,7 +671,7 @@ async function saveModelsDefault(
 }
 
 async function saveModelProviders(
-  agentDirectory: string,
+  served: Served,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -685,9 +680,9 @@ async function saveModelProviders(
     reply(response, 400, "The request must list the providers, as JSON.\n");
     return;
   }
-  const saved = await saveProviders(agentDirectory, edits);
+  const saved = await served.catalog.saveProviders(edits);
   if (!saved.ok) {
-    reply(response, 422, `${saved.problem}\n`);
+    reply(response, saved.status ?? 422, `${saved.problem}\n`);
     return;
   }
   response.writeHead(204);
@@ -696,7 +691,7 @@ async function saveModelProviders(
 
 /** Asks a configured model for one token and reports whether it answered. */
 async function testModel(
-  agentDirectory: string,
+  served: Served,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -710,16 +705,16 @@ async function testModel(
     reply(response, 400, "The request must name a provider and a model, as JSON.\n");
     return;
   }
-  const tested = await testConfiguredModel(agentDirectory, body.provider, body.model);
+  const tested = await served.catalog.test(body.provider, body.model);
   if (!tested.ok) {
-    reply(response, 422, `${tested.problem}\n`);
+    reply(response, tested.status ?? 422, `${tested.problem}\n`);
     return;
   }
   json(response, 200, tested.value);
 }
 
 async function saveModelKey(
-  agentDirectory: string,
+  served: Served,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -737,9 +732,9 @@ async function saveModelKey(
     request.method === "DELETE" ||
     (typeof body.apiKey === "string" && body.apiKey.trim() === "")
   ) {
-    const removed = await removeProviderKey(agentDirectory, body.provider);
+    const removed = await served.catalog.removeKey(body.provider);
     if (!removed.ok) {
-      reply(response, 422, `${removed.problem}\n`);
+      reply(response, removed.status ?? 422, `${removed.problem}\n`);
       return;
     }
     response.writeHead(204);
@@ -750,9 +745,9 @@ async function saveModelKey(
     reply(response, 400, "The request must name a provider and a key, as JSON.\n");
     return;
   }
-  const saved = await saveProviderKey(agentDirectory, body.provider, body.apiKey);
+  const saved = await served.catalog.saveKey(body.provider, body.apiKey);
   if (!saved.ok) {
-    reply(response, 422, `${saved.problem}\n`);
+    reply(response, saved.status ?? 422, `${saved.problem}\n`);
     return;
   }
   response.writeHead(204);
@@ -760,7 +755,7 @@ async function saveModelKey(
 }
 
 async function saveModelEnabledSetting(
-  agentDirectory: string,
+  served: Served,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -775,9 +770,9 @@ async function saveModelEnabledSetting(
     reply(response, 400, "The request must name a provider and a model, and say enabled.\n");
     return;
   }
-  const saved = await saveModelEnabled(agentDirectory, body.provider, body.model, body.enabled);
+  const saved = await served.catalog.setEnabled(body.provider, body.model, body.enabled);
   if (!saved.ok) {
-    reply(response, 422, `${saved.problem}\n`);
+    reply(response, saved.status ?? 422, `${saved.problem}\n`);
     return;
   }
   response.writeHead(204);
@@ -977,9 +972,9 @@ async function assignModel(
     return;
   }
   if (named !== "") {
-    const configured = await isConfiguredModel(served.agentDirectory, named.provider, named.id);
+    const configured = await served.catalog.isConfigured(named.provider, named.id);
     if (!configured.ok) {
-      reply(response, 422, `${configured.problem}\n`);
+      reply(response, configured.status ?? 422, `${configured.problem}\n`);
       return;
     }
     if (!configured.value) {
@@ -1937,6 +1932,7 @@ interface Served {
   readonly hosts: ReadonlySet<string>;
   /** Where a notebook's cells may operate. */
   readonly access: CellAccess;
+  readonly catalog: ModelCatalog;
 }
 
 /** The value of one cookie among those a request carries, or nothing. */
@@ -2131,36 +2127,36 @@ async function handle(
     return;
   }
   if (pathname === MODELS_ROUTE) {
-    if (permitted(READS, request, response)) await serveModels(served.agentDirectory, response);
+    if (permitted(READS, request, response)) await serveModels(served, response);
     return;
   }
   if (pathname === MODELS_DEFAULT_ROUTE) {
     if (permitted(WRITES, request, response)) {
-      await saveModelsDefault(served.agentDirectory, request, response);
+      await saveModelsDefault(served, request, response);
     }
     return;
   }
   if (pathname === MODELS_KEY_ROUTE) {
     if (permitted([...WRITES, "DELETE"], request, response)) {
-      await saveModelKey(served.agentDirectory, request, response);
+      await saveModelKey(served, request, response);
     }
     return;
   }
   if (pathname === MODELS_ENABLED_ROUTE) {
     if (permitted(WRITES, request, response)) {
-      await saveModelEnabledSetting(served.agentDirectory, request, response);
+      await saveModelEnabledSetting(served, request, response);
     }
     return;
   }
   if (pathname === MODELS_PROVIDERS_ROUTE) {
     if (permitted(WRITES, request, response)) {
-      await saveModelProviders(served.agentDirectory, request, response);
+      await saveModelProviders(served, request, response);
     }
     return;
   }
   if (pathname === MODELS_TEST_ROUTE) {
     if (permitted(WRITES, request, response)) {
-      await testModel(served.agentDirectory, request, response);
+      await testModel(served, request, response);
     }
     return;
   }
@@ -2293,6 +2289,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     host,
     hosts: allowedHosts(host),
     access,
+    catalog:
+      options.catalog ??
+      createModelCatalog({ agentDirectory: options.agentDirectory ?? getAgentDir() }),
   };
 
   const server = createServer((request, response) => {
