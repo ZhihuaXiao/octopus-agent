@@ -14,6 +14,8 @@ jobs:
   release:
     name: Build and Release
     runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,7 +42,8 @@ jobs:
 
       - name: Package npm distribution tarball
         run: |
-          TARBALL=$(npm pack)
+          npm pack
+          TARBALL=$(ls -t *.tgz | head -n 1)
           VERSION="${GITHUB_REF_NAME:-v0.1.0}"
           cp "$TARBALL" "octopus-agent-${VERSION}.tgz"
           echo "PACKAGED_TARBALL=octopus-agent-${VERSION}.tgz" >> $GITHUB_ENV
@@ -71,8 +74,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to npm (if NPM_TOKEN is configured)
+      - name: Publish to npm
         if: env.NODE_AUTH_TOKEN != ''
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
