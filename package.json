@@ -1,18 +1,40 @@
 {
-  "name": "octo",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@zhihuaxiao/octopus-agent",
+  "version": "0.1.0",
   "description": "A notebook environment for agents, built on pi",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZhihuaXiao/octopus-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZhihuaXiao/octopus-agent/issues"
+  },
+  "homepage": "https://github.com/ZhihuaXiao/octopus-agent#readme",
   "engines": {
     "node": ">=22.19.0"
   },
   "bin": {
-    "octo": "dist/cli/octo.js"
+    "octo": "dist/cli/octo.js",
+    "octopus-agent": "dist/cli/octo.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/*.map",
+    "client",
+    "modes",
+    "examples/*.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc && chmod +x dist/cli/octo.js",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit && tsc -p client",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

@@ -16,6 +16,7 @@ npm-debug.log*
 
 # Local audit notes, kept off the published history
 docs/security-audit.md
+docs/distribution.md
 test.md
 test1.md
 
@@ -29,3 +30,5 @@ reference/
 MISSION.md
 NOTES.md
 RESOURCES.md
+
+todo.txt

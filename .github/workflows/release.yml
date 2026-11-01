@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check code formatting and types
+        run: npm run lint
+
+      - name: Run test suite
+        run: npx vitest run --exclude src/pi/live.test.ts
+
+      - name: Build production package
+        run: npm run build
+
+      - name: Package npm distribution tarball
+        run: |
+          TARBALL=$(npm pack)
+          VERSION="${GITHUB_REF_NAME:-v0.1.0}"
+          cp "$TARBALL" "octopus-agent-${VERSION}.tgz"
+          echo "PACKAGED_TARBALL=octopus-agent-${VERSION}.tgz" >> $GITHUB_ENV
+
+      - name: Create standalone portable bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME:-v0.1.0}"
+          BUNDLE_DIR="octopus-agent-${VERSION}"
+          mkdir -p "$BUNDLE_DIR"
+          cp -r dist client modes examples package.json package-lock.json README.md LICENSE "$BUNDLE_DIR/"
+          # Install production dependencies inside bundle
+          (cd "$BUNDLE_DIR" && npm ci --omit=dev)
+          # Create zip archive
+          zip -r "octopus-agent-${VERSION}-portable.zip" "$BUNDLE_DIR"
+          # Create tar.gz archive
+          tar -czf "octopus-agent-${VERSION}-portable.tar.gz" "$BUNDLE_DIR"
+          echo "BUNDLE_ZIP=octopus-agent-${VERSION}-portable.zip" >> $GITHUB_ENV
+          echo "BUNDLE_TAR=octopus-agent-${VERSION}-portable.tar.gz" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ env.PACKAGED_TARBALL }}
+            ${{ env.BUNDLE_ZIP }}
+            ${{ env.BUNDLE_TAR }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm (if NPM_TOKEN is configured)
+        if: env.NODE_AUTH_TOKEN != ''
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -178,7 +178,26 @@ Mark that follow-up `isolated` when it must not be coloured by the first convers
 
 ## Install
 
+### Global install via npm or npx
 ```sh
+# Run directly without installation
+npx @zhihuaxiao/octopus-agent --web
+
+# Or install globally
+npm install -g @zhihuaxiao/octopus-agent
+octo --web
+```
+
+### Install directly from GitHub
+```sh
+npm install -g git+https://github.com/ZhihuaXiao/octopus-agent.git
+octo --web
+```
+
+### Install from source checkout
+```sh
+git clone https://github.com/ZhihuaXiao/octopus-agent.git
+cd octopus-agent
 npm install
 npm run build
 ```
