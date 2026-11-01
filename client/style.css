@@ -2007,6 +2007,7 @@ h1 a {
 .file-toolbar button,
 #tree-new,
 #list-new,
+#list-import-bundle,
 #settings-button {
   box-sizing: border-box;
   height: 1.625rem;
@@ -2022,6 +2023,7 @@ h1 a {
 .file-toolbar button,
 #tree-new,
 #list-new,
+#list-import-bundle,
 #settings-button {
   display: inline-flex;
   align-items: center;
