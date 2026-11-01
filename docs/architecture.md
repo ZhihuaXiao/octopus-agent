@@ -16,6 +16,8 @@ flowchart TB
   subgraph process [One Node process]
     Server["Server<br/>src/server"]
     Session["Notebook Session<br/>+ Journal"]
+    Workspace["Workspace<br/>src/workspace"]
+    ModelCatalog["Model Catalog<br/>src/model"]
     Runner["Runner<br/>src/run"]
     Notebook["Notebook format<br/>src/notebook"]
     Agent["Agent boundary<br/>src/agent"]
@@ -31,6 +33,9 @@ flowchart TB
   Browser -->|HTTP commands| Server
   Browser -->|WebSocket events| Server
   Server --> Session
+  Server --> Workspace
+  Server --> ModelCatalog
+  Session --> Workspace
   Session --> Runner
   Runner --> Notebook
   Runner --> Agent
@@ -38,6 +43,7 @@ flowchart TB
   Agent --> Pi
   Runner --> Disk
   Session --> Disk
+  Workspace --> Disk
 ```
 
 Three entry points share one engine:
@@ -55,12 +61,14 @@ TypeScript on Node 22.19 or newer, ESM. `tsc` compiles `src/` to `dist/`. The br
 | Path | Owns |
 | --- | --- |
 | `src/cli/` | The command line. `launcher.ts` decides what was asked. `octo.ts` does it. |
-| `src/notebook/` | The document: parse, serialise, Inputs, the Graph, durations, and edits that keep the author's bytes. |
+| `src/notebook/` | The document: `NotebookDocument` immutable value-object, parse, serialise, Inputs, the Graph, durations, and byte-preserving edits. |
 | `src/mode/` | Modes as files. Shipped ones live in `modes/`; a user's own live in `~/.octo/modes/`. |
+| `src/model/` | Model catalog: custom providers, model preferences, API key storage in `auth.json`, and probe verification. |
+| `src/workspace/` | The Workspace: file and tree storage, path containment jail, atomic notebook CRUD and run record pruning, and Workspace Reviews (baselines, diffs, and decisions). |
 | `src/run/` | One Run: order, schedule, bash, anchors, staleness, the Run Record, and where it is stored. |
 | `src/agent/` | The agent boundary, the pi implementation, a scripted implementation for tests, and the Declared Environment check. |
 | `src/pi/` | The parts of pi this program reads: streaming text, one turn's summary, Workspace Trust, the version pin, and handing the terminal to pi. |
-| `src/server/` | HTTP, the WebSocket, auth, Notebook Sessions, the Journal, line diffing and text reviews, the notebook list, and Promote. |
+| `src/server/` | HTTP, the WebSocket, auth, Notebook Sessions coordinating with the Workspace, the Journal, and Promote. |
 | `src/import/` | A Chat copied into a Notebook and a Run Record. |
 | `src/export/` | A Notebook and one Run written as a single HTML or Markdown document, with credentials struck out; or a self-contained `.octo.zip` bundle holding the notebook, its full run history, artifacts, and sessions. |
 | `client/` | Author View, Run View, Preview View, and subtab text and HTML/Markdown file previews. |
@@ -71,11 +79,25 @@ TypeScript on Node 22.19 or newer, ESM. `tsc` compiles `src/` to `dist/`. The br
 
 A Notebook is Markdown with YAML frontmatter, fenced Cells, and Prose between them. The fence tag is the Cell type: `prompt` or `bash`. A prompt cell may include markdown image references (`![alt](data:image/...;base64,...)`) representing pasted screenshots, graphs, or presentation slides. A `bash` fence with no `id` stays Prose, so a shell snippet in documentation is not a Cell. Attributes on the fence are `id`, `uses`, `isolated`, `approach`, `model`, `thinking`, and `timeout`. A `type` attribute may only restate the tag. `approach` is how a Prompt Cell takes its turn (`agent`, `plan`, or `ask`), and agent is left unwritten. It is not the Notebook's Mode. `thinking` sets the thinking level for a prompt cell turn (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
 
-Parsing keeps the source in two places: the verbatim text of Prose and Cell bodies, and the verbatim lines that frame them. Serialising replays those bytes. An edit describes the whole Notebook and rewrites only what changed, so a diff of the file is the author's change. The Graph is checked at parse time: every `uses` edge is written by the author, every edge names a Cell, and no chain of edges closes. Document order breaks ties in the run order, so a Cell may be written after the Cell it uses and still run first.
+Parsing keeps the source in two places: the verbatim text of Prose and Cell bodies, and the verbatim lines that frame them. Serialising replays those bytes. An edit describes the whole Notebook and rewrites only what changed, so a diff of the file is the author's change. The `NotebookDocument` module (`src/notebook/document.ts`) encapsulates parsing, byte-preserving edits, AST inspection, frontmatter mutation, and branch slicing as an immutable value-object. The Graph is checked at parse time: every `uses` edge is written by the author, every edge names a Cell, and no chain of edges closes. Document order breaks ties in the run order, so a Cell may be written after the Cell it uses and still run first.
 
 Inputs are declared in frontmatter (`string`, `number`, `boolean`). A Cell body names one as `{{name}}`. `{{artifacts}}` is reserved: it is the directory the Run gives that Cell. `trust` and `no-trust` are reserved too, because those words are the Run's own flags.
 
 A Mode is a Markdown file of its own: frontmatter for a default model, tools, and skills, and a body that is the system prompt. `bare: true` with an empty body sends no system prompt. The Notebook names it. A Run resolves that name and cannot choose another. A user file that collides with a shipped Mode name is refused. A Cell's `model` wins over the Notebook's, which wins over the Mode's. The Notebook's `tools` replace the Mode's when the Notebook lists any. Skills are required either way: a Skill the Notebook declares must be loaded. When the Mode names a skill set, that set plus the Notebook's Skills is the only set the agent is given. When the Mode names none, the agent gets every Skill pi loads.
+
+## The Workspace and Reviews
+
+The `Workspace` module (`src/workspace/workspace.ts`) manages the files, directory tree, and notebook lifecycle under a root directory:
+- **Path security jail**: Guarantees all file reads, writes, and uploads stay contained within the workspace boundary and filters out null-byte injection attempts.
+- **Atomic notebook lifecycle**: Creating, copying, branching, renaming, or removing a notebook is handled through `Workspace`. Removing a notebook automatically prunes its `.octo/runs` history, artifacts, and journals behind the seam.
+- **Workspace Reviews**: The `WorkspaceReview` module (`src/workspace/review.ts`) tracks text file changes made by a Run relative to a baseline taken before the Run began. It encapsulates line-by-line diffing, hunk calculation, and partial or complete decisions (accepting lines into the baseline or reverting lines on disk). All review operations serialize through an internal mutex queue, emitting `text-changed` journal events deterministically.
+
+## Model Catalog
+
+The `ModelCatalog` module (`src/model/catalog.ts`) manages LLM configurations under pi's agent directory (`~/.pi/agent`):
+- **Custom providers**: Manages OpenAI-compatible, Google, and Anthropic provider endpoints, context window configurations, and model preferences.
+- **Credentials**: Stores and removes provider API keys securely in `auth.json`.
+- **Probe verification**: Probes configured models using a 1-token test turn. An optional probe runtime adapter at the module seam enables deterministic testing without live network connections.
 
 ## A Run
 

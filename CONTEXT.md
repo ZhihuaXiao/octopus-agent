@@ -142,6 +142,12 @@ A file or image a Cell left in the directory the Run gave it for the purpose, wr
 path. Never the Notebook itself, and never embedded in it.
 _Avoid_: output, attachment, blob, asset
 
+**Workspace Review**:
+The pending changes to text files in a Workspace made by a Run, compared against the
+baseline before the Run began. Allowed to be accepted or rejected whole or by line from
+the Author View before or after subsequent runs.
+_Avoid_: diff, pending changes, staging, uncommitted changes
+
 **Anchor**:
 The pi entry id a Cell's turn ended on, recorded so a re-run can fork the Agent Session
 where that Cell began. Only ever meaningful inside the Agent Session that produced it.
