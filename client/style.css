@@ -2006,7 +2006,6 @@ h1 a {
 .output-format button,
 .file-toolbar button,
 #tree-new,
-#list-new,
 #list-import-bundle,
 #settings-button {
   box-sizing: border-box;
@@ -2022,7 +2021,6 @@ h1 a {
 .output-format button,
 .file-toolbar button,
 #tree-new,
-#list-new,
 #list-import-bundle,
 #settings-button {
   display: inline-flex;

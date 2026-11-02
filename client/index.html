@@ -85,18 +85,9 @@
       <main id="list">
         <div class="list-header">
           <h2>Notebooks</h2>
-          <div style="display: flex; gap: 0.5rem; align-items: center">
-            <button
-              id="list-import-bundle"
-              type="button"
-              title="Import a .octo.zip notebook bundle"
-            >
-              Import bundle
-            </button>
-            <button id="list-new" type="button" title="Make a new notebook in this directory">
-              New notebook
-            </button>
-          </div>
+          <button id="list-import-bundle" type="button" title="Import a .octo.zip notebook bundle">
+            Import bundle
+          </button>
         </div>
         <input id="bundle-file-input" type="file" accept=".zip,.octo.zip" hidden />
         <p id="status" class="status">Looking for notebooks…</p>

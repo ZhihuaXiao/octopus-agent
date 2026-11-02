@@ -9430,7 +9430,6 @@ element("bundle-import-close").addEventListener("click", () => {
 element("bundle-import-confirm").addEventListener("click", () => {
   void submitBundleImport();
 });
-element("list-new").addEventListener("click", () => void newNotebook(element("status")));
 element("editor").addEventListener("submit", (event) => {
   event.preventDefault();
   void saveDraft();
