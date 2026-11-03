@@ -273,8 +273,9 @@ function askToConnect(method) {
   element("models").hidden = true;
   element("header-actions").hidden = true;
   if (watching !== undefined) {
-    watching.socket.close();
+    const toClose = watching.socket;
     watching = undefined;
+    toClose.close();
   }
   draft = undefined;
   pendingNewCell = undefined;
@@ -9052,12 +9053,32 @@ function addProvider() {
   renderProviders();
 }
 
+/**
+ * Disconnects the current browser session from the server, clearing credentials
+ * and presenting the connect form.
+ */
+async function disconnect() {
+  closeSettingsMenu();
+  for (const dialog of document.querySelectorAll("dialog[open]")) {
+    /** @type {HTMLDialogElement} */ (dialog).close();
+  }
+  try {
+    const response = await fetch("/api/disconnect", { method: "POST" });
+    /** @type {{ authenticate?: Method }} */
+    const told = await response.json().catch(() => ({}));
+    void askToConnect(told.authenticate ?? "password");
+  } catch {
+    void askToConnect("password");
+  }
+}
+
 element("settings-button").addEventListener("click", () => {
   const list = element("settings-list");
   const opening = list.hidden;
   list.hidden = !opening;
   element("settings-button").setAttribute("aria-expanded", opening ? "true" : "false");
 });
+element("disconnect-button").addEventListener("click", () => void disconnect());
 element("menu-modes").addEventListener("click", () => void openModes());
 element("menu-models").addEventListener("click", () => void openModels());
 element("home").addEventListener("click", () => {

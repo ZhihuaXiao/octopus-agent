@@ -190,6 +190,8 @@ const SHELL = "index.html";
 const API_ROUTE = "/api/";
 /** Where the shell presents the password, or a pasted token, to open a Connection; the one thing under the API that needs none. */
 const CONNECT_ROUTE = "/api/connect";
+/** Where the shell disconnects or logs out, clearing the browser's Connection. */
+const DISCONNECT_ROUTE = "/api/disconnect";
 const NOTEBOOKS_ROUTE = "/api/notebooks";
 /** The served directory as folders and files, for the sidebar. */
 const TREE_ROUTE = "/api/tree";
@@ -371,8 +373,13 @@ async function serveClient(pathname: string, response: ServerResponse): Promise<
   }
 }
 
-function json(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+function json(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {},
+): void {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers });
   response.end(JSON.stringify(body));
 }
 
@@ -2042,6 +2049,30 @@ async function openConnection(
   response.end();
 }
 
+/** How a Connection is cleared in the browser. */
+const clearConnectionCookie = () =>
+  `${CONNECTION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+
+/**
+ * Closes the browser's Connection and clears its cookie.
+ */
+async function closeConnection(
+  auth: Auth,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const connection = cookie(request, CONNECTION_COOKIE);
+  if (connection !== undefined) {
+    auth.disconnect(connection);
+  }
+  json(
+    response,
+    200,
+    { disconnected: true, authenticate: auth.method },
+    { "set-cookie": clearConnectionCookie() },
+  );
+}
+
 async function handle(
   served: Served,
   request: IncomingMessage,
@@ -2059,6 +2090,10 @@ async function handle(
   }
   if (pathname === CONNECT_ROUTE) {
     if (permitted(WRITES, request, response)) await openConnection(served.auth, request, response);
+    return;
+  }
+  if (pathname === DISCONNECT_ROUTE) {
+    if (permitted(WRITES, request, response)) await closeConnection(served.auth, request, response);
     return;
   }
   if (pathname.startsWith(API_ROUTE)) {

@@ -55,6 +55,8 @@ export interface Auth {
   connect(): string;
   /** Whether a Connection id is one this server opened. */
   connected(id: string): boolean;
+  /** Closes a Connection, forgetting the id so it no longer authenticates. */
+  disconnect(id: string): boolean;
 }
 
 /** Bytes of a token or a Connection id: 256 bits, which is beyond guessing. */
@@ -125,5 +127,6 @@ export function createAuth(options: AuthOptions = {}): Auth {
       return id;
     },
     connected: (id) => connections.has(id),
+    disconnect: (id) => connections.delete(id),
   };
 }

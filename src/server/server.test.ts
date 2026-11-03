@@ -625,9 +625,12 @@ describe("authenticating with the token", () => {
 
     expect(page).toContain('id="connect"');
     expect(page).toContain('id="connect-form"');
+    expect(page).toContain('id="disconnect-button"');
     expect(script).toContain('"/api/connect"');
+    expect(script).toContain('"/api/disconnect"');
     expect(script).toContain('element("connect")');
     expect(script).toContain('element("connect-form")');
+    expect(script).toContain('element("disconnect-button")');
   });
 });
 
@@ -637,6 +640,13 @@ const connect = (server: RunningServer, body: unknown) =>
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+  });
+
+/** Disconnects the shell the way the Disconnect button does. */
+const disconnect = (server: RunningServer, cookie?: string) =>
+  fetch(new URL("/api/disconnect", server.url), {
+    method: "POST",
+    ...(cookie !== undefined ? { headers: { cookie } } : {}),
   });
 
 describe("authenticating with the password", () => {
@@ -767,6 +777,52 @@ describe("authenticating with the password", () => {
 
     const response = await fetch(new URL("/api/connect", server.url));
 
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+});
+
+describe("disconnecting", () => {
+  it("clears the connection cookie and invalidates the session", async () => {
+    const server = await serve();
+    const token = new URL(server.url).searchParams.get("token") ?? "";
+    const followed = await fetch(new URL(`/?token=${token}`, server.url), { redirect: "manual" });
+    const cookie = cookieOf(followed);
+
+    // Verify authenticated before disconnect
+    const before = await fetch(new URL("/api/notebooks", server.url), {
+      headers: { cookie },
+    });
+    expect(before.status).toBe(200);
+
+    // Disconnect
+    const disconnected = await disconnect(server, cookie);
+    expect(disconnected.status).toBe(200);
+    expect(await disconnected.json()).toEqual({ disconnected: true, authenticate: "token" });
+    expect(disconnected.headers.get("set-cookie")).toMatch(
+      /^octo_connection=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/,
+    );
+
+    // Using the invalidated connection cookie now fails
+    const after = await fetch(new URL("/api/notebooks", server.url), {
+      headers: { cookie },
+    });
+    expect(after.status).toBe(401);
+  });
+
+  it("succeeds and clears the cookie even when called without a valid connection", async () => {
+    const server = await serve();
+    const disconnected = await disconnect(server);
+    expect(disconnected.status).toBe(200);
+    expect(await disconnected.json()).toEqual({ disconnected: true, authenticate: "token" });
+    expect(disconnected.headers.get("set-cookie")).toMatch(
+      /^octo_connection=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/,
+    );
+  });
+
+  it("is asked for with POST, never GET", async () => {
+    const server = await serve();
+    const response = await fetch(new URL("/api/disconnect", server.url));
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");
   });

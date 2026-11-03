@@ -77,6 +77,8 @@ The left column is the directory. Click a folder to open it and list what is in 
 
 Below the notebooks, the page lists chats from interactive octo CLI runs in this directory, when there are any (agent sessions run by notebook prompt cells are omitted). Clicking a chat or its **Details** button opens a dialog showing executed commands, outputs, prompts, model thinking, and tool call results. **Promote** turns one into a notebook, immediately restores its previous running results, cell outputs, thinking, and tool calls from the latest run record, and leaves pi's session file as it is. **Delete** removes that file, after you confirm; a notebook already made from the chat is kept. See [Make a notebook from a chat](#make-a-notebook-from-a-chat).
 
+**Disconnect**, beside **Settings** at the top right, logs out or disconnects the notebook and returns to the connect panel, clearing the authentication cookie.
+
 A background check regularly tests the connection. If the server restarted or the authentication cookie is no longer valid, the page closes active sessions and shows the connect panel automatically, asking for the token from the new URL, or for the password if the server was started with `--password`. Reconnecting returns to whichever notebook, modes, or models view was open.
 
 ### Author view
