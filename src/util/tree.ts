@@ -27,7 +27,7 @@ export const isSkipped = (name: string) => name === "node_modules" || name.start
  * here, so a link that loops back is never followed.
  */
 export async function markdownFiles(directory: string): Promise<string[]> {
-  const dirents = await readdir(directory, { withFileTypes: true });
+  const dirents = await readdir(directory, { withFileTypes: true }).catch(() => []);
   const files: string[] = [];
 
   for (const dirent of dirents) {

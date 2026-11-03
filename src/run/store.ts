@@ -220,7 +220,7 @@ export async function notebookAgentSessions(directory: string): Promise<Set<stri
   const runsRoot = join(directory, OCTO_DIRECTORY, "runs");
   const notebookDirs = await readdir(runsRoot, { withFileTypes: true }).catch(
     (cause: NodeJS.ErrnoException) => {
-      if (cause.code === "ENOENT") return [];
+      if (cause.code === "ENOENT" || cause.code === "EACCES" || cause.code === "EPERM") return [];
       throw cause;
     },
   );
@@ -228,7 +228,7 @@ export async function notebookAgentSessions(directory: string): Promise<Set<stri
     if (!dir.isDirectory()) continue;
     const runDirs = await readdir(join(runsRoot, dir.name), { withFileTypes: true }).catch(
       (cause: NodeJS.ErrnoException) => {
-        if (cause.code === "ENOENT") return [];
+        if (cause.code === "ENOENT" || cause.code === "EACCES" || cause.code === "EPERM") return [];
         throw cause;
       },
     );

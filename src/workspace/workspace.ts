@@ -103,7 +103,13 @@ function entryOf(directory: string, file: string, notebook: Notebook): NotebookE
 }
 
 async function readEntry(directory: string, file: string): Promise<NotebookEntry | undefined> {
-  const parsed = parseNotebook(await readFile(file, "utf8"));
+  let source: string;
+  try {
+    source = await readFile(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const parsed = parseNotebook(source);
   if (!parsed.ok || cellsOf(parsed.notebook).length === 0) return undefined;
   return entryOf(directory, file, parsed.notebook);
 }
@@ -113,7 +119,13 @@ const isThere = (path: string) =>
   stat(path).then(
     () => true,
     (cause: NodeJS.ErrnoException) => {
-      if (cause.code === "ENOENT" || cause.code === "ENOTDIR") return false;
+      if (
+        cause.code === "ENOENT" ||
+        cause.code === "ENOTDIR" ||
+        cause.code === "EACCES" ||
+        cause.code === "EPERM"
+      )
+        return false;
       throw cause;
     },
   );
@@ -216,7 +228,8 @@ async function walkFile(directory: string, file: string): Promise<"file" | "fold
       info = await lstat(current);
     } catch (cause) {
       const code = (cause as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR") return "missing";
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM")
+        return "missing";
       throw cause;
     }
     if (info.isSymbolicLink()) return "missing";
@@ -491,7 +504,7 @@ export async function cleanNotebookRunsAndSessions(
 }
 
 async function readTree(directory: string, root: string): Promise<TreeEntry[]> {
-  const dirents = await readdir(directory, { withFileTypes: true });
+  const dirents = await readdir(directory, { withFileTypes: true }).catch(() => []);
   const entries: TreeEntry[] = [];
 
   for (const dirent of dirents) {

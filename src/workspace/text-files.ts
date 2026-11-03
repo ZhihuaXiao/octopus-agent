@@ -211,17 +211,21 @@ export async function readTextFiles(directory: string): Promise<Map<string, stri
 }
 
 async function walk(directory: string, root: string, into: Map<string, string>): Promise<void> {
-  const dirents = await readdir(directory, { withFileTypes: true });
+  const dirents = await readdir(directory, { withFileTypes: true }).catch(() => []);
   for (const dirent of dirents) {
     if (isSkipped(dirent.name)) continue;
     const path = join(directory, dirent.name);
     if (dirent.isDirectory()) await walk(path, root, into);
     else if (dirent.isFile() && isTextFile(dirent.name)) {
-      const info = await lstat(path);
-      if (!info.isFile() || info.size > LONGEST_TEXT) continue;
-      const bytes = await readFile(path);
-      if (bytes.includes(0)) continue;
-      into.set(relative(root, path).split(sep).join("/"), bytes.toString("utf8"));
+      try {
+        const info = await lstat(path);
+        if (!info.isFile() || info.size > LONGEST_TEXT) continue;
+        const bytes = await readFile(path);
+        if (bytes.includes(0)) continue;
+        into.set(relative(root, path).split(sep).join("/"), bytes.toString("utf8"));
+      } catch {
+        continue;
+      }
     }
   }
 }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +15,11 @@ describe("Workspace", () => {
   });
 
   afterEach(async () => {
+    try {
+      await chmod(join(tempDir, "restricted"), 0o755);
+    } catch {
+      // ignore
+    }
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -208,6 +213,40 @@ describe("Workspace", () => {
 
       // Matching journal is cleaned up
       await expect(readFile(join(journalDir, "j1.jsonl"), "utf8")).rejects.toThrow();
+    });
+
+    it("tolerates permission-denied directories without failing listing or tree operations", async () => {
+      await workspace.createNotebook("accessible.md");
+      const restrictedDir = join(tempDir, "restricted");
+      await mkdir(restrictedDir, { recursive: true });
+      await writeFile(
+        join(restrictedDir, "secret.md"),
+        `# Secret\n\n\`\`\`prompt id="cell-1"\nhidden\n\`\`\`\n`,
+        "utf8",
+      );
+
+      await chmod(restrictedDir, 0o000);
+
+      // listNotebooks should not throw and should list accessible notebooks
+      const notebooks = await workspace.listNotebooks();
+      expect(notebooks.map((n) => n.path)).toEqual(["accessible.md"]);
+
+      // listTree should not throw and should list accessible files and empty restricted dir
+      const tree = await workspace.listTree();
+      const names = tree.map((t) => t.name);
+      expect(names).toContain("accessible.md");
+      expect(names).toContain("restricted");
+      const restrictedEntry = tree.find((t) => t.name === "restricted");
+      expect(restrictedEntry).toEqual({
+        kind: "directory",
+        name: "restricted",
+        path: "restricted",
+        children: [],
+      });
+
+      // readFile on a file in the restricted dir returns absent rather than throwing
+      const readResult = await workspace.readFile("restricted/secret.md");
+      expect(readResult).toEqual({ kind: "absent" });
     });
   });
 });

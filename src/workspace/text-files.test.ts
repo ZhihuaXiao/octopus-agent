@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -160,5 +160,26 @@ describe("text files", () => {
 
     expect(await readTextFile(directory, "big.py")).toEqual({ kind: "too-large" });
     expect([...(await readTextFiles(directory)).keys()]).toEqual(["small.py"]);
+  });
+
+  it("tolerates permission-denied directories when reading text files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "octo-text-"));
+    try {
+      await writeFile(join(directory, "small.py"), "x = 1\n", "utf8");
+      const restricted = join(directory, "restricted");
+      await mkdir(restricted, { recursive: true });
+      await writeFile(join(restricted, "hidden.py"), "secret = 2\n", "utf8");
+      await chmod(restricted, 0o000);
+
+      const files = await readTextFiles(directory);
+      expect([...files.keys()]).toEqual(["small.py"]);
+    } finally {
+      try {
+        await chmod(join(directory, "restricted"), 0o755);
+      } catch {
+        // ignore
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
