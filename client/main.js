@@ -2035,6 +2035,97 @@ function cellItem(id) {
   );
 }
 
+/** Whether the window view automatically tracks and scrolls to the latest information from the running agent. */
+let autoFollowAgent = true;
+
+/** Counter of pending programmatic scrolls so programmatic scrolls are not confused with user manual scrolling. */
+let programmaticScrollCount = 0;
+
+/** Animation frame request ID for throttling scrolling to the latest output. */
+let followRafId = 0;
+
+/** ID of the currently running cell being tracked. */
+let currentRunningCellId = "";
+
+/**
+ * Focuses the window view on the running prompt cell when it starts.
+ * @param {string} cellId
+ */
+function focusRunningPrompt(cellId) {
+  if (followRafId !== 0) {
+    cancelAnimationFrame(followRafId);
+    followRafId = 0;
+  }
+  currentRunningCellId = cellId;
+  autoFollowAgent = true;
+  const item = cellItem(cellId);
+  if (item === null) return;
+  const rect = item.getBoundingClientRect();
+  if (rect.top < 0 || rect.bottom > window.innerHeight) {
+    programmaticScrollCount++;
+    const topOffset = Math.max(0, window.scrollY + rect.top - 24);
+    window.scrollTo({ top: topOffset, behavior: "auto" });
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (programmaticScrollCount > 0) programmaticScrollCount--;
+      }, 50);
+    });
+  }
+}
+
+/**
+ * Keeps the window view focused on the latest information from the running AI agent.
+ * Throttled via requestAnimationFrame.
+ * @param {string} cellId
+ */
+function followLatestAgent(cellId) {
+  if (!autoFollowAgent) return;
+  currentRunningCellId = cellId;
+  if (followRafId !== 0) return;
+  followRafId = requestAnimationFrame(() => {
+    followRafId = 0;
+    if (!autoFollowAgent) return;
+    const item = cellItem(cellId);
+    if (item === null) return;
+    const stream = item.querySelector(".cell-stream, .run-step-stream");
+    const target = stream?.lastElementChild instanceof HTMLElement ? stream.lastElementChild : item;
+    const rect = target.getBoundingClientRect();
+    const overflow = rect.bottom - window.innerHeight + 24;
+    if (overflow > 0) {
+      programmaticScrollCount++;
+      window.scrollBy({ top: overflow, behavior: "auto" });
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (programmaticScrollCount > 0) programmaticScrollCount--;
+        }, 50);
+      });
+    }
+  });
+}
+
+/**
+ * Checks whether the user has scrolled away from the latest running output or scrolled back to it.
+ */
+function handleUserScroll() {
+  if (currentRunningCellId === "") return;
+  const item = cellItem(currentRunningCellId);
+  if (item === null) return;
+  const stream = item.querySelector(".cell-stream, .run-step-stream");
+  const target = stream?.lastElementChild instanceof HTMLElement ? stream.lastElementChild : item;
+  const rect = target.getBoundingClientRect();
+
+  const atPageBottom =
+    window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 60;
+  const targetInView = rect.top < window.innerHeight && rect.bottom >= 0;
+  const targetNearBottom = rect.bottom <= window.innerHeight + 60;
+
+  if (atPageBottom || (targetInView && targetNearBottom)) {
+    autoFollowAgent = true;
+  } else {
+    autoFollowAgent = false;
+  }
+}
+
 /** The files the server serves as pictures, which the page draws rather than links. */
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
 
@@ -5496,6 +5587,7 @@ function apply(event) {
       if (running?.run !== undefined) watching.run = running.run;
       else delete watching.run;
       renderSession();
+      if (running !== undefined) focusRunningPrompt(running.id);
       return;
     }
     case "run-started":
@@ -5503,6 +5595,7 @@ function apply(event) {
       watching.run = event.run;
       delete watching.refused;
       status.textContent = "";
+      autoFollowAgent = true;
       renderSession();
       return;
     case "cell-started": {
@@ -5526,6 +5619,7 @@ function apply(event) {
         if (watching.run !== undefined) cell.run = watching.run;
       }
       renderSession();
+      focusRunningPrompt(event.cell);
       return;
     }
     case "cell-text": {
@@ -5535,6 +5629,7 @@ function apply(event) {
         pushPart(cell, "text", event.text);
       }
       appendText(event.cell, event.text);
+      followLatestAgent(event.cell);
       return;
     }
     case "cell-thinking": {
@@ -5544,6 +5639,7 @@ function apply(event) {
         pushPart(cell, "thinking", event.thinking);
       }
       appendThinking(event.cell, event.thinking);
+      followLatestAgent(event.cell);
       return;
     }
     case "cell-tool-call": {
@@ -5559,6 +5655,7 @@ function apply(event) {
         });
       }
       appendToolCall(event.cell, event.call);
+      followLatestAgent(event.cell);
       return;
     }
     case "cell-ended": {
@@ -5599,11 +5696,20 @@ function apply(event) {
         else delete cell.service;
       }
       renderSession();
+      if (event.record.id === currentRunningCellId) {
+        followLatestAgent(event.record.id);
+        currentRunningCellId = "";
+      }
       return;
     }
     case "run-ended":
       state.running = false;
       delete watching.run;
+      if (followRafId !== 0) {
+        cancelAnimationFrame(followRafId);
+        followRafId = 0;
+      }
+      currentRunningCellId = "";
       for (const id of event.record.stale) {
         const cell = cellNamed(id);
         if (cell !== undefined) cell.status = "stale";
@@ -5624,6 +5730,11 @@ function apply(event) {
     case "run-refused":
       state.running = false;
       delete watching.run;
+      if (followRafId !== 0) {
+        cancelAnimationFrame(followRafId);
+        followRafId = 0;
+      }
+      currentRunningCellId = "";
       // The Author View shows the runner's words as they are; the Run View
       // says what they mean, and keeps them until the next Run starts.
       watching.refused = {
@@ -5712,6 +5823,7 @@ function serviceStopButton(id) {
  */
 async function startRun(cells, inputs) {
   if (watching === undefined) return;
+  autoFollowAgent = true;
   const { state } = watching;
   try {
     const answered = /** @type {NotebookSessionState} */ (
@@ -9459,6 +9571,54 @@ window.addEventListener("hashchange", () => {
   sessionStorage.setItem("activeTab", "notebook");
   route();
 });
+window.addEventListener(
+  "scroll",
+  () => {
+    if (programmaticScrollCount > 0) return;
+    handleUserScroll();
+  },
+  { passive: true },
+);
+window.addEventListener(
+  "wheel",
+  (event) => {
+    if (event.deltaY < 0 && autoFollowAgent) {
+      autoFollowAgent = false;
+    }
+  },
+  { passive: true },
+);
+window.addEventListener(
+  "touchmove",
+  () => {
+    setTimeout(() => {
+      if (programmaticScrollCount === 0) handleUserScroll();
+    }, 0);
+  },
+  { passive: true },
+);
+window.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      (event.key === "PageUp" || event.key === "Home" || event.key === "ArrowUp") &&
+      autoFollowAgent &&
+      !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+    ) {
+      autoFollowAgent = false;
+    }
+  },
+  { passive: true },
+);
+element("sidebar").addEventListener(
+  "scroll",
+  () => {
+    if (autoFollowAgent && currentRunningCellId !== "") {
+      autoFollowAgent = false;
+    }
+  },
+  { passive: true },
+);
 route();
 
 /** How often to check that the Connection is still known to the server. */
