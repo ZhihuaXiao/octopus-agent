@@ -1901,6 +1901,7 @@ h1 a {
   flex-wrap: wrap;
   justify-content: flex-end;
   min-width: 0;
+  gap: 0.3rem 0.85rem;
 }
 
 /* A file open on its own has no notebook commands, and an empty row would
@@ -1961,11 +1962,13 @@ h1 a {
 }
 
 /* A row of commands, shorter than a button that stands on its own. */
-.export-menu {
+.export-menu,
+.view-menu {
   position: relative;
 }
 
-.export-list {
+.export-list,
+.view-list {
   position: absolute;
   top: calc(100% + 0.2rem);
   right: 0;
@@ -1980,22 +1983,35 @@ h1 a {
   box-shadow: 0 0.35rem 0.8rem color-mix(in srgb, black 18%, transparent);
 }
 
-.export-list button {
+.export-list button,
+.view-list a {
   display: block;
   width: 100%;
+  box-sizing: border-box;
   height: auto;
   margin: 0;
   padding: 0.25rem 0.55rem;
   border: none;
   border-radius: 0.25rem;
   background: transparent;
+  color: CanvasText;
+  text-decoration: none;
   text-align: left;
   font-size: 0.85rem;
   line-height: 1.4;
+  cursor: pointer;
 }
 
 .export-list button:hover,
-.export-list button:focus {
+.export-list button:focus,
+.view-list a:hover,
+.view-list a:focus {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.view-list a[aria-current="page"],
+.view-list a[aria-current] {
+  font-weight: 600;
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
@@ -2030,7 +2046,8 @@ h1 a {
   justify-content: center;
 }
 
-.session-actions .export-list button {
+.session-actions .export-list button,
+.session-actions .view-list a {
   display: block;
   height: auto;
   padding: 0.25rem 0.55rem;

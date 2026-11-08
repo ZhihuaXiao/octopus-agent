@@ -542,6 +542,7 @@ function modelButton(notebook, model) {
 }
 
 async function showList() {
+  closeViewMenu();
   element("session").hidden = true;
   const list = element("list");
   list.hidden = false;
@@ -4596,6 +4597,8 @@ function openText(path) {
     element("session").hidden = false;
     element("author-controls").hidden = true;
     element("run-controls").hidden = true;
+    element("preview-controls").hidden = true;
+    element("view-controls").hidden = true;
     element("segments").hidden = true;
     element("editor").hidden = true;
     element("add-cells").hidden = true;
@@ -5270,9 +5273,10 @@ function renderSession() {
   const authoring = view === "author";
   const running = view === "run";
   const previewing = view === "preview";
-  element("author-controls").hidden = !authoring;
+  element("author-controls").hidden = !authoring || openPane !== "notebook";
   element("run-controls").hidden = !running;
   element("preview-controls").hidden = !previewing;
+  element("view-controls").hidden = openPane !== "notebook";
   /** @type {HTMLAnchorElement} */ (element("to-run-view")).href = hashFor(state.notebook, "run");
   /** @type {HTMLAnchorElement} */ (element("to-preview-view")).href = hashFor(
     state.notebook,
@@ -5282,18 +5286,12 @@ function renderSession() {
     state.notebook,
     "author",
   );
-  /** @type {HTMLAnchorElement} */ (element("to-preview-from-run")).href = hashFor(
-    state.notebook,
-    "preview",
-  );
-  /** @type {HTMLAnchorElement} */ (element("to-author-from-preview")).href = hashFor(
-    state.notebook,
-    "author",
-  );
-  /** @type {HTMLAnchorElement} */ (element("to-run-from-preview")).href = hashFor(
-    state.notebook,
-    "run",
-  );
+  if (authoring) element("to-author-view").setAttribute("aria-current", "page");
+  else element("to-author-view").removeAttribute("aria-current");
+  if (running) element("to-run-view").setAttribute("aria-current", "page");
+  else element("to-run-view").removeAttribute("aria-current");
+  if (previewing) element("to-preview-view").setAttribute("aria-current", "page");
+  else element("to-preview-view").removeAttribute("aria-current");
   element("run-view").hidden = !running || openPane !== "notebook";
   element("preview-view").hidden = !previewing || openPane !== "notebook";
   // While editing, Insert below on each cell adds the next one, so the pair
@@ -7774,9 +7772,11 @@ async function showSession(notebook) {
   element("editor").hidden = true;
   element("segments").hidden = view !== "author";
   element("add-cells").hidden = view !== "author";
+  closeViewMenu();
   element("author-controls").hidden = view !== "author";
   element("run-controls").hidden = view !== "run";
   element("preview-controls").hidden = view !== "preview";
+  element("view-controls").hidden = false;
   element("preview-view").hidden = view !== "preview";
   // Drawn once the Notebook is open; a Run button with no form yet says nothing.
   element("run-view").hidden = true;
@@ -9322,6 +9322,15 @@ element("export-bundle").addEventListener("click", () => {
   closeExportMenu();
   void exportCurrentBundle();
 });
+element("view-button").addEventListener("click", () => {
+  const list = element("view-list");
+  const opening = list.hidden;
+  list.hidden = !opening;
+  element("view-button").setAttribute("aria-expanded", opening ? "true" : "false");
+});
+element("to-author-view").addEventListener("click", closeViewMenu);
+element("to-run-view").addEventListener("click", closeViewMenu);
+element("to-preview-view").addEventListener("click", closeViewMenu);
 element("cancel").addEventListener("click", stopEditing);
 element("add-prompt").addEventListener("click", () => addCell("prompt"));
 element("add-bash").addEventListener("click", () => addCell("bash"));
@@ -9377,6 +9386,14 @@ document.addEventListener("click", (event) => {
   closeSettingsMenu();
 });
 document.addEventListener("click", (event) => {
+  const list = element("view-list");
+  if (list.hidden) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (list.contains(target) || element("view-button").contains(target)) return;
+  closeViewMenu();
+});
+document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Node)) return;
   for (const list of document.querySelectorAll(".cell-add-list:not([hidden])")) {
@@ -9391,6 +9408,7 @@ document.addEventListener("keydown", (event) => {
     closeExportMenu();
     closeCellAddMenus();
     closeSettingsMenu();
+    closeViewMenu();
   }
 });
 
@@ -9398,6 +9416,12 @@ document.addEventListener("keydown", (event) => {
 function closeSettingsMenu() {
   element("settings-list").hidden = true;
   element("settings-button").setAttribute("aria-expanded", "false");
+}
+
+/** Closes the View list, when it is open. */
+function closeViewMenu() {
+  element("view-list").hidden = true;
+  element("view-button").setAttribute("aria-expanded", "false");
 }
 
 /** Closes any cell add dropdown menus that are open. */

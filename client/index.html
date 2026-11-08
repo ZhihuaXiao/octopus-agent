@@ -212,37 +212,41 @@
                   </div>
                 </div>
               </div>
+            </div>
+            <div id="view-controls" class="controls">
               <div class="control-group">
-                <a id="to-run-view" class="button" href="#" title="Switch to Run view">Run view</a>
-                <a
-                  id="to-preview-view"
-                  class="button"
-                  href="#"
-                  title="Preview notebook as a readable document"
-                  >Preview</a
-                >
+                <div class="view-menu">
+                  <button
+                    id="view-button"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                    aria-controls="view-list"
+                    title="Switch notebook view mode"
+                  >
+                    View
+                  </button>
+                  <div id="view-list" class="view-list" role="menu" hidden>
+                    <a id="to-author-view" role="menuitem" href="#" title="Switch to Author view">
+                      Author view
+                    </a>
+                    <a id="to-run-view" role="menuitem" href="#" title="Switch to Run view">
+                      Run view
+                    </a>
+                    <a
+                      id="to-preview-view"
+                      role="menuitem"
+                      href="#"
+                      title="Preview notebook as a readable document"
+                    >
+                      Preview
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
-            <div id="run-controls" class="controls" hidden>
-              <a id="to-author-view" class="button" href="#" title="Switch to Author view"
-                >Author view</a
-              >
-              <a
-                id="to-preview-from-run"
-                class="button"
-                href="#"
-                title="Preview notebook as a readable document"
-                >Preview</a
-              >
-            </div>
-            <div id="preview-controls" class="controls" hidden>
-              <a id="to-author-from-preview" class="button" href="#" title="Switch to Author view"
-                >Author view</a
-              >
-              <a id="to-run-from-preview" class="button" href="#" title="Switch to Run view"
-                >Run view</a
-              >
-            </div>
+            <div id="run-controls" class="controls" hidden></div>
+            <div id="preview-controls" class="controls" hidden></div>
           </div>
         </div>
         <p id="session-status" class="status"></p>
