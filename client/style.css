@@ -1879,14 +1879,11 @@ h1 a {
   text-decoration: none;
 }
 
-/* The name keeps the row. How a reply is shown sits opposite it, and the
-   commands take the full width underneath so they are not squeezed into a
-   ragged wrap beside the name. */
+/* The name keeps the row, and the commands take the full width underneath
+   so they are not squeezed into a ragged wrap beside the name. */
 .session-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 1rem;
+  grid-template-columns: 1fr;
   row-gap: 0.4rem;
 }
 
@@ -1908,32 +1905,6 @@ h1 a {
    leave a gap under the name. */
 .session-actions:not(:has(> :not([hidden]))) {
   display: none;
-}
-
-.output-format {
-  display: flex;
-}
-
-.output-format button {
-  border-radius: 0;
-}
-
-.output-format button:first-child {
-  border-radius: 0.3rem 0 0 0.3rem;
-}
-
-.output-format button + button {
-  margin-left: -1px;
-  border-radius: 0 0.3rem 0.3rem 0;
-}
-
-.output-format button[aria-pressed="true"] {
-  border-color: #3b82f6;
-  font-weight: 600;
-}
-
-.output-format button[aria-pressed="true"]:hover {
-  border-color: #3b82f6;
 }
 
 .session-header h2 {
@@ -2019,7 +1990,6 @@ h1 a {
 .session-actions a.button,
 .session-actions select,
 #notebook-mode,
-.output-format button,
 .file-toolbar button,
 #tree-new,
 #list-import-bundle,
@@ -2035,7 +2005,6 @@ h1 a {
 
 .session-actions button,
 .session-actions a.button,
-.output-format button,
 .file-toolbar button,
 #tree-new,
 #list-import-bundle,
@@ -2394,6 +2363,22 @@ button.symbol-button.cell-run:disabled {
   background: #dc2626;
   border-color: #b91c1c;
   color: #ffffff;
+}
+
+/* Format switch button on each cell */
+button.symbol-button.cell-format {
+  color: inherit;
+}
+
+button.symbol-button.cell-format[aria-pressed="true"] {
+  color: #3b82f6;
+  background: color-mix(in srgb, #3b82f6 12%, transparent);
+  border-color: color-mix(in srgb, #3b82f6 45%, transparent);
+}
+
+button.symbol-button.cell-format[aria-pressed="true"]:hover {
+  background: color-mix(in srgb, #3b82f6 20%, transparent);
+  border-color: color-mix(in srgb, #3b82f6 65%, transparent);
 }
 
 /* The left sidebar/column bar of a cell. Double-clicking it collapses or expands the cell. */
@@ -3262,19 +3247,27 @@ button.context-ring svg {
   opacity: 0.5;
 }
 
+.cell-body.markdown,
 .cell-output.markdown {
   white-space: normal;
   font-family: inherit;
 }
 
+.cell-body.markdown > :first-child,
 .cell-output.markdown > :first-child {
   margin-top: 0;
 }
 
+.cell-body.markdown > :last-child,
 .cell-output.markdown > :last-child {
   margin-bottom: 0;
 }
 
+.cell-body.markdown p,
+.cell-body.markdown ul,
+.cell-body.markdown ol,
+.cell-body.markdown blockquote,
+.cell-body.markdown pre,
 .cell-output.markdown p,
 .cell-output.markdown ul,
 .cell-output.markdown ol,
@@ -3545,6 +3538,20 @@ button.context-ring svg {
   border-radius: 4px;
 }
 
+.preview-cell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.preview-cell-id {
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
 .preview-cell-prompt {
   border-left-color: var(--accent, #6366f1);
 }
@@ -3557,6 +3564,18 @@ button.context-ring svg {
 .preview-prompt {
   font-weight: 500;
   margin-bottom: 0.75rem;
+}
+
+.preview-prompt-plain,
+.preview-reply-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  margin: 0.5rem 0;
 }
 
 .preview-reply {

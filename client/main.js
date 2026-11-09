@@ -1846,9 +1846,10 @@ function renderThought(thinking) {
  * that is what a fragment of the reply is appended to as it arrives.
  * @param {CellPart} part
  * @param {number} index
+ * @param {OutputFormat} [format]
  * @returns {HTMLElement}
  */
-function renderPart(part, index) {
+function renderPart(part, index, format = "markdown") {
   /** @type {HTMLElement} */
   let node;
   if (part.kind === "thinking") node = renderThought(part.text);
@@ -1861,7 +1862,7 @@ function renderPart(part, index) {
     });
   } else {
     node = make("div", "cell-part cell-output streamed");
-    fillOutput(node, part.text);
+    fillOutput(node, part.text, format);
   }
   node.dataset.part = String(index);
   return node;
@@ -1905,10 +1906,11 @@ function partsOf(cell) {
  * @param {{ tools?: boolean }} [options]
  */
 function fillStream(node, cell, options = {}) {
+  const format = cellFormat(cell.id);
   const nodes = partsOf(cell)
     .map((part, index) => ({ part, index }))
     .filter(({ part }) => options.tools !== false || part.kind !== "tool")
-    .map(({ part, index }) => renderPart(part, index));
+    .map(({ part, index }) => renderPart(part, index, format));
   node.replaceChildren(...nodes);
 }
 
@@ -1950,16 +1952,17 @@ function continues(stream, index, kind) {
 function appendText(id, text) {
   const stream = streamOf(id);
   if (stream === null) return;
+  const format = cellFormat(id);
   const cell = cellNamed(id);
   const parts = cell?.parts;
   if (parts === undefined) {
     const last = stream.lastElementChild;
     if (last !== null && last.classList.contains("streamed")) {
-      fillOutput(last, `${last.textContent ?? ""}${text}`);
+      fillOutput(last, `${last.textContent ?? ""}${text}`, format);
       return;
     }
     const output = make("div", "cell-part cell-output streamed");
-    fillOutput(output, text);
+    fillOutput(output, text, format);
     stream.append(output);
     return;
   }
@@ -1967,10 +1970,10 @@ function appendText(id, text) {
   const last = parts[index];
   const said = last?.kind === "text" ? last.text : "";
   if (continues(stream, index, "streamed")) {
-    fillOutput(/** @type {HTMLElement} */ (stream.lastElementChild), said);
+    fillOutput(/** @type {HTMLElement} */ (stream.lastElementChild), said, format);
     return;
   }
-  stream.append(renderPart({ kind: "text", text: said }, index));
+  stream.append(renderPart({ kind: "text", text: said }, index, format));
 }
 
 /**
@@ -2172,7 +2175,7 @@ function renderArtifact(session, run, path) {
   return item;
 }
 
-/** How a Cell's reply is drawn. Kept in this browser. */
+/** How a Cell's content is drawn. Default preference kept in this browser. */
 const OUTPUT_FORMAT_KEY = "octo-output-format";
 
 /** @typedef {"plain" | "markdown"} OutputFormat */
@@ -2180,49 +2183,162 @@ const OUTPUT_FORMAT_KEY = "octo-output-format";
 /** @returns {OutputFormat} */
 function storedOutputFormat() {
   try {
-    return localStorage.getItem(OUTPUT_FORMAT_KEY) === "markdown" ? "markdown" : "plain";
+    return localStorage.getItem(OUTPUT_FORMAT_KEY) === "plain" ? "plain" : "markdown";
   } catch {
-    return "plain";
+    return "markdown";
   }
 }
 
-/** @type {OutputFormat} */
-let outputFormat = storedOutputFormat();
+/** Per-cell format overrides: cellId -> "plain" | "markdown" */
+/** @type {Map<string, OutputFormat>} */
+const cellFormats = new Map();
 
-function syncFormatButtons() {
-  /** @type {HTMLButtonElement} */ (element("format-plain")).setAttribute(
-    "aria-pressed",
-    outputFormat === "plain" ? "true" : "false",
-  );
-  /** @type {HTMLButtonElement} */ (element("format-markdown")).setAttribute(
-    "aria-pressed",
-    outputFormat === "markdown" ? "true" : "false",
-  );
+/**
+ * @param {string} cellId
+ * @returns {OutputFormat}
+ */
+function cellFormat(cellId) {
+  return cellFormats.get(cellId) ?? storedOutputFormat();
 }
 
-/** @param {OutputFormat} format */
-function setOutputFormat(format) {
-  outputFormat = format;
+/**
+ * @param {string} cellId
+ * @param {OutputFormat} format
+ */
+function setCellFormat(cellId, format) {
+  cellFormats.set(cellId, format);
   try {
     localStorage.setItem(OUTPUT_FORMAT_KEY, format);
   } catch {
     // A browser that refuses storage still switches for this page.
   }
-  syncFormatButtons();
-  repaintOutputs();
 }
 
-/** Draws every visible reply again, in the format now chosen. */
-function repaintOutputs() {
-  if (watching === undefined) return;
-  for (const cell of watching.state.cells) {
-    const stream = streamOf(cell.id);
-    if (stream === null) continue;
-    partsOf(cell).forEach((part, index) => {
-      if (part.kind !== "text") return;
-      const node = stream.querySelector(`[data-part="${index}"]`);
-      if (node !== null) fillOutput(node, part.text);
-    });
+/**
+ * @param {HTMLButtonElement} button
+ * @param {OutputFormat} format
+ */
+function updateFormatButtonElement(button, format) {
+  const isMarkdown = format === "markdown";
+  button.setAttribute("aria-pressed", isMarkdown ? "true" : "false");
+  const title = isMarkdown
+    ? "Markdown format (click to show as plain text)"
+    : "Plain text format (click to render as Markdown)";
+  button.title = title;
+  button.dataset.tooltip = title;
+  button.setAttribute("aria-label", title);
+  button.replaceChildren(isMarkdown ? markdownIcon() : plainIcon());
+}
+
+/**
+ * @param {Element} container
+ * @param {OutputFormat} format
+ */
+function syncCellFormatButton(container, format) {
+  const btn = container.querySelector(".cell-format");
+  if (btn instanceof HTMLButtonElement) {
+    updateFormatButtonElement(btn, format);
+  }
+}
+
+/**
+ * Button to toggle a cell's content format between Plain and Markdown.
+ * @param {string} cellId
+ * @returns {HTMLButtonElement}
+ */
+function formatButton(cellId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "symbol-button cell-format";
+  button.dataset.cellFormat = cellId;
+  updateFormatButtonElement(button, cellFormat(cellId));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const next = cellFormat(cellId) === "markdown" ? "plain" : "markdown";
+    setCellFormat(cellId, next);
+    updateCellFormatting(cellId);
+  });
+  return button;
+}
+
+/**
+ * Updates rendered format of prompt body and reply stream for a specific cell.
+ * @param {string} cellId
+ */
+function updateCellFormatting(cellId) {
+  const cell = cellNamed(cellId);
+  if (cell === undefined) return;
+  const format = cellFormat(cellId);
+
+  // Author view
+  const authorItem = document
+    .getElementById("segments")
+    ?.querySelector(`[data-cell="${CSS.escape(cellId)}"]`);
+  if (authorItem instanceof HTMLElement) {
+    const key = cellFoldKey(cellId);
+    if (authorItem.classList.contains("folded")) {
+      const foldBtn = authorItem.querySelector("button.fold");
+      if (foldBtn instanceof HTMLButtonElement) {
+        setFolded(authorItem, key, false, foldBtn, `this ${cell.type} cell`);
+      }
+    }
+    syncCellFormatButton(authorItem, format);
+    if (cell.id !== editingCellId) {
+      const oldBody = authorItem.querySelector(".cell-body, .cell-body-with-images");
+      if (oldBody !== null) {
+        oldBody.replaceWith(renderCellBodyView(cell));
+      }
+    }
+    const stream = authorItem.querySelector(".cell-stream");
+    if (stream instanceof HTMLElement) {
+      partsOf(cell).forEach((part, index) => {
+        if (part.kind !== "text") return;
+        const node = stream.querySelector(`[data-part="${index}"]`);
+        if (node !== null) fillOutput(node, part.text, format);
+      });
+    }
+  }
+
+  // Run view
+  const runItem = document
+    .getElementById("run-steps")
+    ?.querySelector(`[data-cell="${CSS.escape(cellId)}"]`);
+  if (runItem instanceof HTMLElement) {
+    syncCellFormatButton(runItem, format);
+    const stream = runItem.querySelector(".run-step-stream");
+    if (stream instanceof HTMLElement) {
+      partsOf(cell).forEach((part, index) => {
+        if (part.kind !== "text") return;
+        const node = stream.querySelector(`[data-part="${index}"]`);
+        if (node !== null) fillOutput(node, part.text, format);
+      });
+    }
+  }
+
+  // Preview view
+  const previewItem = document
+    .getElementById("preview-view")
+    ?.querySelector(`[data-cell="${CSS.escape(cellId)}"]`);
+  if (previewItem instanceof HTMLElement) {
+    syncCellFormatButton(previewItem, format);
+    const promptBlock = previewItem.querySelector(".preview-prompt");
+    if (promptBlock !== null) {
+      if (format === "markdown") {
+        promptBlock.replaceChildren(...markdownBlocks(cell.body));
+      } else {
+        promptBlock.replaceChildren(make("pre", "preview-prompt-plain", cell.body));
+      }
+    }
+    const replyBlock = previewItem.querySelector(".preview-reply, .preview-bash-output");
+    if (replyBlock !== null) {
+      if (format === "markdown") {
+        replyBlock.className = "preview-reply markdown";
+        replyBlock.replaceChildren(...markdownBlocks(cell.text));
+      } else {
+        replyBlock.className = cell.type === "bash" ? "preview-bash-output" : "preview-reply-plain";
+        replyBlock.textContent = cell.text;
+      }
+    }
   }
 }
 
@@ -2705,6 +2821,16 @@ function stopIcon() {
 /** Two pages: copy. */
 function copyIcon() {
   return symbolIcon(["M6 2.5h7.2v8.2H6z", "M2.8 5.3v8.2h7.2"]);
+}
+
+/** A stylized "M" with a down arrow: Markdown format. */
+function markdownIcon() {
+  return symbolIcon(["M2.5 11.5V4.5l3 3.5 3-3.5v7", "M12.5 4.5v7", "M10.2 9.2l2.3 2.3 2.3-2.3"]);
+}
+
+/** A capital T: Plain text format. */
+function plainIcon() {
+  return symbolIcon(["M3 4.5h10", "M8 4.5v7.5", "M5.5 12h5"]);
 }
 
 /** A pencil: edit. */
@@ -3412,9 +3538,10 @@ function contextList(usage) {
  * Puts a Cell's reply into `node`: the characters as written, or Markdown.
  * @param {Element} node
  * @param {string} text
+ * @param {OutputFormat} [format]
  */
-function fillOutput(node, text) {
-  const markdown = outputFormat === "markdown" && text.trim() !== "";
+function fillOutput(node, text, format = "markdown") {
+  const markdown = format === "markdown" && text.trim() !== "";
   node.classList.toggle("markdown", markdown);
   if (!markdown) {
     node.textContent = text;
@@ -3446,13 +3573,19 @@ function openedForNotebook() {
 }
 
 /** @param {string} id */
-const cellFoldKey = (id) => `cell:${id}`;
+function cellFoldKey(id) {
+  return `cell:${id}`;
+}
 
 /** @param {number} index */
-const proseFoldKey = (index) => `prose:${index}`;
+function proseFoldKey(index) {
+  return `prose:${index}`;
+}
 
 /** @param {string} key */
-const isFolded = (key) => !openedForNotebook().has(key);
+function isFolded(key) {
+  return !openedForNotebook().has(key);
+}
 
 /**
  * Keys of the pieces that fold: each cell, and each block of prose that is
@@ -3699,6 +3832,7 @@ function renderCell(cell, session, running) {
   }
   heading.append(editBtn, addBtn, removeBtn, runOrStop);
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
+  heading.append(formatButton(cell.id));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
   heading.append(make("span", "cell-preview", foldPreview(cell.body)));
@@ -3959,22 +4093,39 @@ function attachImagePaste(field, cell, wrap, initialImages, onImagesChange) {
 }
 
 /**
+ * Formats a prompt body as Markdown or plain preformatted text.
+ * @param {string} text
+ * @param {OutputFormat} format
+ * @returns {HTMLElement}
+ */
+function formatPromptBody(text, format) {
+  const clean = text.replace(/\r?\n$/, "");
+  if (format === "markdown" && clean.trim() !== "") {
+    const el = make("div", "cell-body markdown");
+    el.append(...markdownBlocks(clean));
+    return el;
+  }
+  return make("pre", "cell-body", clean);
+}
+
+/**
  * Renders a cell's body when not editing.
  * For prompt cells with images, shows the clean text and image preview cards.
  * @param {CellView} cell
  * @returns {HTMLElement}
  */
 function renderCellBodyView(cell) {
+  const format = cellFormat(cell.id);
   if (cell.type !== "prompt") {
     return make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
   }
   const { text, images } = parsePromptAndImages(cell.body);
   if (images.length === 0) {
-    return make("pre", "cell-body", cell.body.replace(/\r?\n$/, ""));
+    return formatPromptBody(text, format);
   }
   const container = make("div", "cell-body-with-images");
   if (text !== "") {
-    container.append(make("pre", "cell-body", text));
+    container.append(formatPromptBody(text, format));
   }
   const gallery = make("div", "cell-prompt-images");
   for (const img of images) {
@@ -5383,11 +5534,22 @@ function renderNotebookPreview(state) {
     if (cell === undefined) continue;
 
     const section = make("section", `preview-cell preview-cell-${cell.type}`);
+    section.dataset.cell = cell.id;
+
+    const cellHeader = make("div", "preview-cell-header");
+    cellHeader.append(make("span", "preview-cell-id", cell.id), formatButton(cell.id));
+    section.append(cellHeader);
+
+    const format = cellFormat(cell.id);
 
     if (cell.type === "prompt") {
       if (cell.body.trim()) {
         const promptBlock = make("div", "preview-prompt");
-        promptBlock.append(...markdownBlocks(cell.body));
+        if (format === "markdown") {
+          promptBlock.append(...markdownBlocks(cell.body));
+        } else {
+          promptBlock.append(make("pre", "preview-prompt-plain", cell.body));
+        }
         section.append(promptBlock);
       }
       if (cell.thinking && cell.thinking.trim()) {
@@ -5428,7 +5590,11 @@ function renderNotebookPreview(state) {
       }
       if (cell.text && cell.text.trim()) {
         const replyBlock = make("div", "preview-reply");
-        replyBlock.append(...markdownBlocks(cell.text));
+        if (format === "markdown") {
+          replyBlock.append(...markdownBlocks(cell.text));
+        } else {
+          replyBlock.append(make("pre", "preview-reply-plain", cell.text));
+        }
         section.append(replyBlock);
       }
       if (cell.artifacts && cell.artifacts.length > 0) {
@@ -5458,8 +5624,14 @@ function renderNotebookPreview(state) {
       const bashCmd = make("pre", "preview-bash", `$ ${cell.body.trim()}`);
       section.append(bashCmd);
       if (cell.text && cell.text.trim()) {
-        const out = make("pre", "preview-bash-output", cell.text);
-        section.append(out);
+        if (format === "markdown") {
+          const replyBlock = make("div", "preview-reply");
+          replyBlock.append(...markdownBlocks(cell.text));
+          section.append(replyBlock);
+        } else {
+          const out = make("pre", "preview-bash-output", cell.text);
+          section.append(out);
+        }
       }
       if (cell.error) {
         const err = make("pre", "preview-bash-error status error", cell.error);
@@ -7550,6 +7722,7 @@ function renderStep(cell, session, running) {
     heading.append(serviceStopButton(cell.id));
   heading.append(cellRemoveButton(cell, running));
   heading.append(copyButton(() => cellCopy(cell.body, cell.text), true));
+  heading.append(formatButton(cell.id));
   const usageButton = contextButton(cell);
   if (usageButton !== undefined) heading.append(usageButton);
   const stream = make("div", "run-step-stream");
@@ -9258,9 +9431,6 @@ element("models-save-providers").addEventListener("click", () => void saveModelP
 element("models-add").addEventListener("click", addProvider);
 element("models-form").addEventListener("submit", (event) => event.preventDefault());
 
-element("format-plain").addEventListener("click", () => setOutputFormat("plain"));
-element("format-markdown").addEventListener("click", () => setOutputFormat("markdown"));
-syncFormatButtons();
 element("fold-all").addEventListener("click", () => setAllFolded(allExpanded()));
 element("run-all").addEventListener("click", () => void startRun());
 element("interrupt").addEventListener("click", () => void interrupt());
