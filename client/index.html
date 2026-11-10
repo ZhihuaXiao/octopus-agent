@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>octo</title>
     <link rel="stylesheet" href="/client/style.css" />
+    <script>
+      (function () {
+        try {
+          const theme = localStorage.getItem("octo-ui-theme");
+          const mode = localStorage.getItem("octo-ui-mode");
+          if (theme && ["minimalist", "terminal", "editorial", "bento"].includes(theme)) {
+            document.documentElement.setAttribute("data-theme", theme);
+            const defaultMode = theme === "minimalist" || theme === "terminal" ? "dark" : "light";
+            document.documentElement.setAttribute(
+              "data-mode",
+              mode === "dark" || mode === "light" ? mode : defaultMode,
+            );
+          }
+        } catch {}
+      })();
+    </script>
   </head>
   <body>
     <header>
@@ -13,6 +29,15 @@
       <div id="header-actions" class="header-actions">
         <button id="tree-new" type="button" title="Make a new notebook in this directory">
           New notebook
+        </button>
+        <button
+          id="theme-mode-toggle"
+          type="button"
+          class="theme-mode-toggle"
+          title="Toggle Dark / Light mode"
+        >
+          <span id="mode-icon">🌙</span>
+          <span id="mode-label">Dark</span>
         </button>
         <div class="settings-menu">
           <button
@@ -36,6 +61,62 @@
               title="Configure model providers and defaults"
             >
               Models
+            </button>
+            <div class="settings-divider" role="separator"></div>
+            <div class="settings-header">UI Style</div>
+            <button
+              id="theme-original"
+              type="button"
+              role="menuitemradio"
+              aria-checked="true"
+              title="Original notebook style"
+            >
+              Original
+            </button>
+            <button
+              id="theme-minimalist"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Modern Minimalist style (Linear / Zed aesthetic)"
+            >
+              Minimalist
+            </button>
+            <button
+              id="theme-terminal"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Terminal IDE style (CLI aesthetic)"
+            >
+              Terminal
+            </button>
+            <button
+              id="theme-editorial"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Editorial Research style (Craft / Publication aesthetic)"
+            >
+              Editorial
+            </button>
+            <button
+              id="theme-bento"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Bento Dev style (Modular Grid aesthetic)"
+            >
+              Bento
+            </button>
+            <div id="settings-mode-divider" class="settings-divider" role="separator"></div>
+            <button
+              id="menu-mode-toggle"
+              type="button"
+              role="menuitem"
+              title="Toggle Dark / Light mode"
+            >
+              Mode: <span id="menu-mode-text">Dark 🌙</span>
             </button>
           </div>
         </div>

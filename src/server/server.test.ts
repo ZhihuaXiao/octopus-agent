@@ -233,6 +233,27 @@ describe("the client shell", () => {
     }
   });
 
+  it("includes the UI style choices in the settings menu", async () => {
+    const server = await serve();
+    const html = await (await fetch(new URL("/", server.url))).text();
+
+    expect(html).toContain('id="theme-original"');
+    expect(html).toContain('id="theme-minimalist"');
+    expect(html).toContain('id="theme-terminal"');
+    expect(html).toContain('id="theme-editorial"');
+    expect(html).toContain('id="theme-bento"');
+  });
+
+  it("serves CSS with definitions for each UI theme", async () => {
+    const server = await serve();
+    const css = await (await fetch(new URL("/client/style.css", server.url))).text();
+
+    expect(css).toContain('html[data-theme="minimalist"]');
+    expect(css).toContain('html[data-theme="terminal"]');
+    expect(css).toContain('html[data-theme="editorial"]');
+    expect(css).toContain('html[data-theme="bento"]');
+  });
+
   it("refuses a request that names some other host", async () => {
     const server = await serve();
 

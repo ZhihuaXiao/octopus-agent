@@ -7704,7 +7704,7 @@ const STATE_WORDS = {
  * @param {boolean} running
  */
 function renderStep(cell, session, running) {
-  const item = make("li", `run-step ${cell.status}`);
+  const item = make("li", `run-step ${cell.type} ${cell.status}`);
   item.dataset.cell = cell.id;
   const heading = make("div", "run-step-header");
   heading.append(
@@ -9357,6 +9357,145 @@ async function disconnect() {
   }
 }
 
+const THEMES = /** @type {const} */ (["original", "minimalist", "terminal", "editorial", "bento"]);
+/** @typedef {(typeof THEMES)[number]} UITheme */
+
+const THEME_STORAGE_KEY = "octo-ui-theme";
+const MODE_STORAGE_KEY = "octo-ui-mode";
+
+/**
+ * Default color mode for a theme.
+ * @param {UITheme} theme
+ * @returns {"dark" | "light"}
+ */
+function defaultModeForTheme(theme) {
+  return theme === "minimalist" || theme === "terminal" ? "dark" : "light";
+}
+
+/**
+ * Sets the active UI mode (dark or light).
+ * @param {"dark" | "light"} mode
+ */
+function setUIMode(mode) {
+  document.documentElement.setAttribute("data-mode", mode);
+  try {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  } catch {
+    // Local storage might be blocked in restricted iframe environments.
+  }
+  updateModeDisplays(mode);
+}
+
+/**
+ * Toggles between dark and light mode.
+ */
+function toggleUIMode() {
+  const current = document.documentElement.getAttribute("data-mode") === "light" ? "light" : "dark";
+  const next = current === "dark" ? "light" : "dark";
+  setUIMode(next);
+}
+
+/**
+ * Updates UI mode toggle buttons/labels.
+ * @param {"dark" | "light"} mode
+ */
+function updateModeDisplays(mode) {
+  const icon = document.getElementById("mode-icon");
+  const label = document.getElementById("mode-label");
+  const menuText = document.getElementById("menu-mode-text");
+  if (icon instanceof HTMLElement) {
+    icon.textContent = mode === "dark" ? "🌙" : "☀️";
+  }
+  if (label instanceof HTMLElement) {
+    label.textContent = mode === "dark" ? "Dark" : "Light";
+  }
+  if (menuText instanceof HTMLElement) {
+    menuText.textContent = mode === "dark" ? "Dark 🌙" : "Light ☀️";
+  }
+}
+
+/**
+ * Sets the active UI theme, updating the DOM dataset, localStorage, and menu state.
+ * @param {UITheme} theme
+ */
+function setUITheme(theme) {
+  if (theme === "original") {
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-mode");
+  } else {
+    document.documentElement.setAttribute("data-theme", theme);
+    let savedMode = "";
+    try {
+      savedMode = localStorage.getItem(MODE_STORAGE_KEY) ?? "";
+    } catch {
+      // Ignore storage errors.
+    }
+    const mode =
+      savedMode === "dark" || savedMode === "light"
+        ? /** @type {"dark" | "light"} */ (savedMode)
+        : defaultModeForTheme(theme);
+    setUIMode(mode);
+  }
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Local storage might be blocked in restricted iframe environments.
+  }
+  updateThemeMenuItems(theme);
+}
+
+/**
+ * Updates aria-checked on theme radio buttons.
+ * @param {UITheme} activeTheme
+ */
+function updateThemeMenuItems(activeTheme) {
+  for (const t of THEMES) {
+    const btn = document.getElementById(`theme-${t}`);
+    if (btn instanceof HTMLElement) {
+      btn.setAttribute("aria-checked", t === activeTheme ? "true" : "false");
+    }
+  }
+}
+
+/**
+ * Initializes the UI theme switcher and binds click handlers to settings menu items.
+ */
+function initUITheme() {
+  let saved = "";
+  try {
+    saved = localStorage.getItem(THEME_STORAGE_KEY) ?? "";
+  } catch {
+    // Ignore storage errors.
+  }
+  const theme = THEMES.includes(/** @type {UITheme} */ (saved))
+    ? /** @type {UITheme} */ (saved)
+    : "original";
+  setUITheme(theme);
+
+  const toggleBtn = document.getElementById("theme-mode-toggle");
+  if (toggleBtn instanceof HTMLElement) {
+    toggleBtn.addEventListener("click", () => toggleUIMode());
+  }
+
+  const menuToggleBtn = document.getElementById("menu-mode-toggle");
+  if (menuToggleBtn instanceof HTMLElement) {
+    menuToggleBtn.addEventListener("click", () => {
+      toggleUIMode();
+      closeSettingsMenu();
+    });
+  }
+
+  for (const t of THEMES) {
+    const btn = document.getElementById(`theme-${t}`);
+    if (btn instanceof HTMLElement) {
+      btn.addEventListener("click", () => {
+        setUITheme(t);
+        closeSettingsMenu();
+      });
+    }
+  }
+}
+
 element("settings-button").addEventListener("click", () => {
   const list = element("settings-list");
   const opening = list.hidden;
@@ -9366,6 +9505,7 @@ element("settings-button").addEventListener("click", () => {
 element("disconnect-button").addEventListener("click", () => void disconnect());
 element("menu-modes").addEventListener("click", () => void openModes());
 element("menu-models").addEventListener("click", () => void openModels());
+initUITheme();
 element("home").addEventListener("click", () => {
   if (location.hash === "" || location.hash === "#") {
     showNotebook();

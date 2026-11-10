@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Space+Mono:wght@400;700&display=swap");
+
 :root {
   color-scheme: light dark;
   font-family:
@@ -379,7 +381,7 @@ header .header-actions {
   top: calc(100% + 0.2rem);
   right: 0;
   z-index: 20;
-  min-width: 8rem;
+  min-width: 9.5rem;
   margin: 0;
   padding: 0.2rem;
   border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
@@ -413,6 +415,38 @@ header .header-actions {
 .settings-list button[aria-current="page"] {
   font-weight: 600;
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.settings-divider {
+  height: 1px;
+  margin: 0.25rem 0.2rem;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.settings-header {
+  padding: 0.25rem 0.55rem 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+.settings-list button[role="menuitemradio"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-list button[role="menuitemradio"][aria-checked="true"] {
+  font-weight: 600;
+}
+
+.settings-list button[role="menuitemradio"][aria-checked="true"]::after {
+  content: "✓";
+  font-size: 0.8rem;
+  opacity: 0.9;
+  margin-left: 0.5rem;
 }
 
 .tabs {
@@ -3627,4 +3661,1548 @@ button.context-ring svg {
   max-width: 100%;
   border-radius: 4px;
   border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+/* ==========================================================================
+   UI STYLES (PROTOTYPES 1-4 with DARK / LIGHT MODE)
+   ========================================================================== */
+
+/* Dark / Light mode toggle button */
+#theme-mode-toggle {
+  display: none;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.25rem 0.65rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-subtle, currentColor);
+  background: var(--bg-surface, transparent);
+  color: var(--text-main, inherit);
+  transition: all 0.15s ease;
+}
+
+#theme-mode-toggle:hover {
+  background: var(--bg-surface-elevated);
+  border-color: var(--border-strong);
+}
+
+#settings-mode-divider,
+#menu-mode-toggle {
+  display: none;
+}
+
+html[data-theme="minimalist"] #theme-mode-toggle,
+html[data-theme="terminal"] #theme-mode-toggle,
+html[data-theme="editorial"] #theme-mode-toggle,
+html[data-theme="bento"] #theme-mode-toggle {
+  display: inline-flex;
+}
+
+html[data-theme="minimalist"] #settings-mode-divider,
+html[data-theme="terminal"] #settings-mode-divider,
+html[data-theme="editorial"] #settings-mode-divider,
+html[data-theme="bento"] #settings-mode-divider {
+  display: block;
+}
+
+html[data-theme="minimalist"] #menu-mode-toggle,
+html[data-theme="terminal"] #menu-mode-toggle,
+html[data-theme="editorial"] #menu-mode-toggle,
+html[data-theme="bento"] #menu-mode-toggle {
+  display: flex;
+}
+
+/* --------------------------------------------------------------------------
+   DESIGN TOKENS (8 combinations from prototypes/index.html)
+   -------------------------------------------------------------------------- */
+
+/* 1. Minimalist (Dark fallback & Dark mode) */
+html[data-theme="minimalist"],
+html[data-theme="minimalist"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #090a0f;
+  --bg-surface: #11131a;
+  --bg-surface-elevated: #181a24;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --banner-bg: #0e1017;
+  --tag-bg: #151822;
+  --tag-text: #38bdf8;
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+  --border-subtle: #1e2230;
+  --border-strong: #2e3549;
+  --accent: #38bdf8;
+  --accent-hover: #0284c7;
+  --accent-glow: rgba(56, 189, 248, 0.15);
+  --accent-contrast: #0f172a;
+  --font-body: "Inter", -apple-system, sans-serif;
+  --font-heading: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-popup: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --cell-border: 1px solid #1e2230;
+  --cell-bg: #11131a;
+  --cell-active-border: #38bdf8;
+  --badge-bg: rgba(56, 189, 248, 0.1);
+  --badge-text: #38bdf8;
+}
+
+/* 1. Minimalist (Light mode) */
+html[data-theme="minimalist"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f1f5f9;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --banner-bg: #f1f5f9;
+  --tag-bg: #e0f2fe;
+  --tag-text: #0284c7;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --accent: #0284c7;
+  --accent-hover: #0369a1;
+  --accent-glow: rgba(2, 132, 199, 0.12);
+  --accent-contrast: #ffffff;
+  --font-body: "Inter", -apple-system, sans-serif;
+  --font-heading: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-popup: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --cell-border: 1px solid #e2e8f0;
+  --cell-bg: #ffffff;
+  --cell-active-border: #0284c7;
+  --badge-bg: #e0f2fe;
+  --badge-text: #0284c7;
+}
+
+/* 2. Terminal (Dark fallback & Dark mode) */
+html[data-theme="terminal"],
+html[data-theme="terminal"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #0a0c10;
+  --bg-surface: #0f141c;
+  --bg-surface-elevated: #161c27;
+  --bg-hover: rgba(16, 185, 129, 0.08);
+  --banner-bg: #10141d;
+  --tag-bg: rgba(16, 185, 129, 0.15);
+  --tag-text: #34d399;
+  --text-main: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-faint: #475569;
+  --border-subtle: #1e2633;
+  --border-strong: #334155;
+  --accent: #10b981;
+  --accent-hover: #059669;
+  --accent-glow: rgba(16, 185, 129, 0.2);
+  --accent-contrast: #042f2e;
+  --font-body: "Fira Code", "JetBrains Mono", monospace;
+  --font-heading: "Fira Code", monospace;
+  --font-mono: "Fira Code", monospace;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --shadow-card: 0 0 0 1px #1e2633, 0 4px 12px rgba(0, 0, 0, 0.6);
+  --shadow-popup: 0 0 0 1px #334155, 0 16px 36px rgba(0, 0, 0, 0.8);
+  --cell-border: 1px solid #1e2633;
+  --cell-bg: #0f141c;
+  --cell-active-border: #10b981;
+  --badge-bg: rgba(16, 185, 129, 0.15);
+  --badge-text: #34d399;
+}
+
+/* 2. Terminal (Light mode) */
+html[data-theme="terminal"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #e2e8f0;
+  --bg-hover: rgba(5, 150, 105, 0.06);
+  --banner-bg: #e2e8f0;
+  --tag-bg: #d1fae5;
+  --tag-text: #065f46;
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --text-faint: #94a3b8;
+  --border-subtle: #cbd5e1;
+  --border-strong: #94a3b8;
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-glow: rgba(5, 150, 105, 0.15);
+  --accent-contrast: #ffffff;
+  --font-body: "Fira Code", "JetBrains Mono", monospace;
+  --font-heading: "Fira Code", monospace;
+  --font-mono: "Fira Code", monospace;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --shadow-card: 0 0 0 1px #cbd5e1;
+  --shadow-popup: 0 0 0 1px #94a3b8, 0 12px 28px rgba(0, 0, 0, 0.15);
+  --cell-border: 1px solid #cbd5e1;
+  --cell-bg: #ffffff;
+  --cell-active-border: #059669;
+  --badge-bg: #d1fae5;
+  --badge-text: #065f46;
+}
+
+/* 3. Editorial (Dark mode) */
+html[data-theme="editorial"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #181716;
+  --bg-surface: #22201e;
+  --bg-surface-elevated: #2b2825;
+  --bg-hover: rgba(245, 158, 11, 0.08);
+  --banner-bg: #1f1d1b;
+  --tag-bg: #332d27;
+  --tag-text: #fbbf24;
+  --text-main: #f5f2ed;
+  --text-muted: #a8a29e;
+  --text-faint: #78716c;
+  --border-subtle: #383430;
+  --border-strong: #524b45;
+  --accent: #d97706;
+  --accent-hover: #b45309;
+  --accent-glow: rgba(217, 119, 6, 0.15);
+  --accent-contrast: #ffffff;
+  --font-body: "Newsreader", Georgia, serif;
+  --font-heading: "Newsreader", Georgia, serif;
+  --font-mono: "Space Mono", monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --cell-border: 1px solid #383430;
+  --cell-bg: #22201e;
+  --cell-active-border: #d97706;
+  --badge-bg: #332d27;
+  --badge-text: #fbbf24;
+}
+
+/* 3. Editorial (Light fallback & Light mode) */
+html[data-theme="editorial"],
+html[data-theme="editorial"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #fbf9f5;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f4efe6;
+  --bg-hover: rgba(180, 83, 9, 0.05);
+  --banner-bg: #f4efe6;
+  --tag-bg: #fef3c7;
+  --tag-text: #92400e;
+  --text-main: #292524;
+  --text-muted: #78716c;
+  --text-faint: #a8a29e;
+  --border-subtle: #e7e2d9;
+  --border-strong: #d3cbbf;
+  --accent: #b45309;
+  --accent-hover: #92400e;
+  --accent-glow: rgba(180, 83, 9, 0.1);
+  --accent-contrast: #ffffff;
+  --font-body: "Newsreader", Georgia, serif;
+  --font-heading: "Newsreader", Georgia, serif;
+  --font-mono: "Space Mono", monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-popup: 0 12px 28px rgba(0, 0, 0, 0.08);
+  --cell-border: 1px solid #e7e2d9;
+  --cell-bg: #ffffff;
+  --cell-active-border: #b45309;
+  --badge-bg: #fef3c7;
+  --badge-text: #92400e;
+}
+
+/* 4. Bento (Dark mode) */
+html[data-theme="bento"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #09090b;
+  --bg-surface: #121217;
+  --bg-surface-elevated: #1a1a23;
+  --bg-hover: rgba(168, 85, 247, 0.1);
+  --banner-bg: #101015;
+  --tag-bg: #2e1065;
+  --tag-text: #c084fc;
+  --text-main: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-faint: #71717a;
+  --border-subtle: #272733;
+  --border-strong: #3f3f50;
+  --accent: #a855f7;
+  --accent-hover: #9333ea;
+  --accent-glow: rgba(168, 85, 247, 0.25);
+  --accent-contrast: #ffffff;
+  --font-body: "Plus Jakarta Sans", sans-serif;
+  --font-heading: "Plus Jakarta Sans", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-card: 3px 3px 0px #272733;
+  --shadow-popup: 4px 4px 0px #3f3f50, 0 12px 24px rgba(0, 0, 0, 0.5);
+  --cell-border: 1.5px solid #272733;
+  --cell-bg: #121217;
+  --cell-active-border: #a855f7;
+  --badge-bg: #2e1065;
+  --badge-text: #d8b4fe;
+}
+
+/* 4. Bento (Light fallback & Light mode) */
+html[data-theme="bento"],
+html[data-theme="bento"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #f4f4f5;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #e4e4e7;
+  --bg-hover: rgba(147, 51, 234, 0.08);
+  --banner-bg: #e4e4e7;
+  --tag-bg: #f3e8ff;
+  --tag-text: #7e22ce;
+  --text-main: #18181b;
+  --text-muted: #71717a;
+  --text-faint: #a1a1aa;
+  --border-subtle: #d4d4d8;
+  --border-strong: #a1a1aa;
+  --accent: #7e22ce;
+  --accent-hover: #6b21a8;
+  --accent-glow: rgba(126, 34, 206, 0.15);
+  --accent-contrast: #ffffff;
+  --font-body: "Plus Jakarta Sans", sans-serif;
+  --font-heading: "Plus Jakarta Sans", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-card: 3px 3px 0px #d4d4d8;
+  --shadow-popup: 4px 4px 0px #a1a1aa, 0 8px 16px rgba(0, 0, 0, 0.1);
+  --cell-border: 1.5px solid #d4d4d8;
+  --cell-bg: #ffffff;
+  --cell-active-border: #7e22ce;
+  --badge-bg: #f3e8ff;
+  --badge-text: #7e22ce;
+}
+
+/* --------------------------------------------------------------------------
+   THEME COMPONENT RULES (Applies only when data-theme is set)
+   -------------------------------------------------------------------------- */
+
+html[data-theme="minimalist"] body,
+html[data-theme="terminal"] body,
+html[data-theme="editorial"] body,
+html[data-theme="bento"] body {
+  background-color: var(--bg-canvas);
+  color: var(--text-main);
+  font-family: var(--font-body);
+}
+
+/* Header */
+html[data-theme="minimalist"] header,
+html[data-theme="terminal"] header,
+html[data-theme="editorial"] header,
+html[data-theme="bento"] header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+html[data-theme="minimalist"] #home,
+html[data-theme="terminal"] #home,
+html[data-theme="editorial"] #home,
+html[data-theme="bento"] #home {
+  font-family: var(--font-heading);
+  color: var(--text-main);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+html[data-theme="minimalist"] #home::after,
+html[data-theme="terminal"] #home::after,
+html[data-theme="editorial"] #home::after,
+html[data-theme="bento"] #home::after {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+html[data-theme="minimalist"] #home::after {
+  content: "Linear";
+}
+html[data-theme="terminal"] #home::after {
+  content: "CLI";
+}
+html[data-theme="editorial"] #home::after {
+  content: "Editorial";
+}
+html[data-theme="bento"] #home::after {
+  content: "Bento";
+}
+
+html[data-theme="minimalist"] .directory,
+html[data-theme="minimalist"] .path,
+html[data-theme="terminal"] .directory,
+html[data-theme="terminal"] .path,
+html[data-theme="editorial"] .directory,
+html[data-theme="editorial"] .path,
+html[data-theme="bento"] .directory,
+html[data-theme="bento"] .path {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* Standard Buttons & Controls */
+html[data-theme="minimalist"] button,
+html[data-theme="minimalist"] a.button,
+html[data-theme="minimalist"] select,
+html[data-theme="minimalist"] input,
+html[data-theme="minimalist"] textarea,
+html[data-theme="terminal"] button,
+html[data-theme="terminal"] a.button,
+html[data-theme="terminal"] select,
+html[data-theme="terminal"] input,
+html[data-theme="terminal"] textarea,
+html[data-theme="editorial"] button,
+html[data-theme="editorial"] a.button,
+html[data-theme="editorial"] select,
+html[data-theme="editorial"] input,
+html[data-theme="editorial"] textarea,
+html[data-theme="bento"] button,
+html[data-theme="bento"] a.button,
+html[data-theme="bento"] select,
+html[data-theme="bento"] input,
+html[data-theme="bento"] textarea {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-main);
+  transition: all 0.15s ease;
+}
+
+html[data-theme="minimalist"] button:hover:not(:disabled),
+html[data-theme="minimalist"] a.button:hover,
+html[data-theme="minimalist"] select:hover:not(:disabled),
+html[data-theme="terminal"] button:hover:not(:disabled),
+html[data-theme="terminal"] a.button:hover,
+html[data-theme="terminal"] select:hover:not(:disabled),
+html[data-theme="editorial"] button:hover:not(:disabled),
+html[data-theme="editorial"] a.button:hover,
+html[data-theme="editorial"] select:hover:not(:disabled),
+html[data-theme="bento"] button:hover:not(:disabled),
+html[data-theme="bento"] a.button:hover,
+html[data-theme="bento"] select:hover:not(:disabled) {
+  background: var(--bg-surface-elevated);
+  border-color: var(--border-strong);
+}
+
+html[data-theme="minimalist"] input:focus,
+html[data-theme="minimalist"] textarea:focus,
+html[data-theme="minimalist"] select:focus,
+html[data-theme="terminal"] input:focus,
+html[data-theme="terminal"] textarea:focus,
+html[data-theme="terminal"] select:focus,
+html[data-theme="editorial"] input:focus,
+html[data-theme="editorial"] textarea:focus,
+html[data-theme="editorial"] select:focus,
+html[data-theme="bento"] input:focus,
+html[data-theme="bento"] textarea:focus,
+html[data-theme="bento"] select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Header button icons matching referring webpage */
+html[data-theme] #tree-new::before {
+  content: "+ ";
+  font-weight: 700;
+  margin-right: 0.25rem;
+}
+
+html[data-theme] #settings-button::before {
+  content: "⚙️ ";
+  font-size: 0.85rem;
+  margin-right: 0.25rem;
+}
+
+html[data-theme] #settings-button::after {
+  content: " ▾";
+  font-size: 0.75rem;
+  margin-left: 0.25rem;
+  opacity: 0.8;
+}
+
+html[data-theme] #disconnect-button::before {
+  content: "⏻ ";
+  font-size: 0.85rem;
+  margin-right: 0.25rem;
+}
+
+/* Primary buttons */
+html[data-theme="minimalist"] #tree-new,
+html[data-theme="minimalist"] #run-all,
+html[data-theme="minimalist"] .primary,
+html[data-theme="minimalist"] button[type="submit"],
+html[data-theme="minimalist"] .cell-inline-actions button.cell-run,
+html[data-theme="minimalist"] .cell-inline-actions button.cell-save,
+html[data-theme="terminal"] #tree-new,
+html[data-theme="terminal"] #run-all,
+html[data-theme="terminal"] .primary,
+html[data-theme="terminal"] button[type="submit"],
+html[data-theme="terminal"] .cell-inline-actions button.cell-run,
+html[data-theme="terminal"] .cell-inline-actions button.cell-save,
+html[data-theme="editorial"] #tree-new,
+html[data-theme="editorial"] #run-all,
+html[data-theme="editorial"] .primary,
+html[data-theme="editorial"] button[type="submit"],
+html[data-theme="editorial"] .cell-inline-actions button.cell-run,
+html[data-theme="editorial"] .cell-inline-actions button.cell-save,
+html[data-theme="bento"] #tree-new,
+html[data-theme="bento"] #run-all,
+html[data-theme="bento"] .primary,
+html[data-theme="bento"] button[type="submit"],
+html[data-theme="bento"] .cell-inline-actions button.cell-run,
+html[data-theme="bento"] .cell-inline-actions button.cell-save {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+html[data-theme="minimalist"] #tree-new:hover:not(:disabled),
+html[data-theme="minimalist"] #run-all:hover:not(:disabled),
+html[data-theme="minimalist"] .primary:hover:not(:disabled),
+html[data-theme="minimalist"] button[type="submit"]:hover:not(:disabled),
+html[data-theme="terminal"] #tree-new:hover:not(:disabled),
+html[data-theme="terminal"] #run-all:hover:not(:disabled),
+html[data-theme="terminal"] .primary:hover:not(:disabled),
+html[data-theme="terminal"] button[type="submit"]:hover:not(:disabled),
+html[data-theme="editorial"] #tree-new:hover:not(:disabled),
+html[data-theme="editorial"] #run-all:hover:not(:disabled),
+html[data-theme="editorial"] .primary:hover:not(:disabled),
+html[data-theme="editorial"] button[type="submit"]:hover:not(:disabled),
+html[data-theme="bento"] #tree-new:hover:not(:disabled),
+html[data-theme="bento"] #run-all:hover:not(:disabled),
+html[data-theme="bento"] .primary:hover:not(:disabled),
+html[data-theme="bento"] button[type="submit"]:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-contrast);
+}
+
+/* Danger buttons */
+html[data-theme="minimalist"] #interrupt,
+html[data-theme="minimalist"] .danger,
+html[data-theme="terminal"] #interrupt,
+html[data-theme="terminal"] .danger,
+html[data-theme="editorial"] #interrupt,
+html[data-theme="editorial"] .danger,
+html[data-theme="bento"] #interrupt,
+html[data-theme="bento"] .danger {
+  color: #ef4444;
+  border-color: var(--border-subtle);
+  background: transparent;
+}
+
+html[data-theme="minimalist"] #interrupt:hover:not(:disabled),
+html[data-theme="minimalist"] .danger:hover:not(:disabled),
+html[data-theme="terminal"] #interrupt:hover:not(:disabled),
+html[data-theme="terminal"] .danger:hover:not(:disabled),
+html[data-theme="editorial"] #interrupt:hover:not(:disabled),
+html[data-theme="editorial"] .danger:hover:not(:disabled),
+html[data-theme="bento"] #interrupt:hover:not(:disabled),
+html[data-theme="bento"] .danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+/* ==========================================================================
+   CELL ACTION BUTTONS (Symbol buttons: fold, run, edit, add, delete, etc.)
+   Fixes the disappearing cell buttons across Terminal, Editorial, and Bento
+   ========================================================================== */
+
+html[data-theme="minimalist"] button.symbol-button,
+html[data-theme="terminal"] button.symbol-button,
+html[data-theme="editorial"] button.symbol-button,
+html[data-theme="bento"] button.symbol-button {
+  width: 1.6rem !important;
+  height: 1.6rem !important;
+  min-width: 1.6rem !important;
+  min-height: 1.6rem !important;
+  max-width: 1.6rem !important;
+  max-height: 1.6rem !important;
+  padding: 0 !important;
+  margin: 0;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: none !important;
+  box-sizing: border-box !important;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+html[data-theme="minimalist"] button.symbol-button:hover:not(:disabled),
+html[data-theme="terminal"] button.symbol-button:hover:not(:disabled),
+html[data-theme="editorial"] button.symbol-button:hover:not(:disabled),
+html[data-theme="bento"] button.symbol-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+html[data-theme="minimalist"] button.symbol-button svg,
+html[data-theme="terminal"] button.symbol-button svg,
+html[data-theme="editorial"] button.symbol-button svg,
+html[data-theme="bento"] button.symbol-button svg {
+  width: 0.95rem !important;
+  height: 0.95rem !important;
+  min-width: 0.95rem !important;
+  min-height: 0.95rem !important;
+  display: block !important;
+  pointer-events: none;
+}
+
+html[data-theme="minimalist"] button.symbol-button path,
+html[data-theme="terminal"] button.symbol-button path,
+html[data-theme="editorial"] button.symbol-button path,
+html[data-theme="bento"] button.symbol-button path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+html[data-theme="minimalist"] button.symbol-button path.symbol-fill,
+html[data-theme="terminal"] button.symbol-button path.symbol-fill,
+html[data-theme="editorial"] button.symbol-button path.symbol-fill,
+html[data-theme="bento"] button.symbol-button path.symbol-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* Run icon button */
+html[data-theme="minimalist"] button.symbol-button.cell-run,
+html[data-theme="terminal"] button.symbol-button.cell-run,
+html[data-theme="editorial"] button.symbol-button.cell-run,
+html[data-theme="bento"] button.symbol-button.cell-run {
+  color: var(--accent);
+  background: var(--tag-bg);
+  border-color: var(--accent);
+}
+
+html[data-theme="minimalist"] button.symbol-button.cell-run:hover:not(:disabled),
+html[data-theme="terminal"] button.symbol-button.cell-run:hover:not(:disabled),
+html[data-theme="editorial"] button.symbol-button.cell-run:hover:not(:disabled),
+html[data-theme="bento"] button.symbol-button.cell-run:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* Delete / remove / stop buttons */
+html[data-theme="minimalist"] button.symbol-button.cell-stop:hover:not(:disabled),
+html[data-theme="minimalist"] button.symbol-button.cell-remove:hover:not(:disabled),
+html[data-theme="minimalist"] button.symbol-button.cell-delete:hover:not(:disabled),
+html[data-theme="terminal"] button.symbol-button.cell-stop:hover:not(:disabled),
+html[data-theme="terminal"] button.symbol-button.cell-remove:hover:not(:disabled),
+html[data-theme="terminal"] button.symbol-button.cell-delete:hover:not(:disabled),
+html[data-theme="editorial"] button.symbol-button.cell-stop:hover:not(:disabled),
+html[data-theme="editorial"] button.symbol-button.cell-remove:hover:not(:disabled),
+html[data-theme="editorial"] button.symbol-button.cell-delete:hover:not(:disabled),
+html[data-theme="bento"] button.symbol-button.cell-stop:hover:not(:disabled),
+html[data-theme="bento"] button.symbol-button.cell-remove:hover:not(:disabled),
+html[data-theme="bento"] button.symbol-button.cell-delete:hover:not(:disabled) {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* Format switch button */
+html[data-theme="minimalist"] button.symbol-button.cell-format[aria-pressed="true"],
+html[data-theme="terminal"] button.symbol-button.cell-format[aria-pressed="true"],
+html[data-theme="editorial"] button.symbol-button.cell-format[aria-pressed="true"],
+html[data-theme="bento"] button.symbol-button.cell-format[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--tag-bg);
+  border-color: var(--accent);
+}
+
+/* Chevron fold button */
+html[data-theme="minimalist"] button.symbol-button.fold,
+html[data-theme="terminal"] button.symbol-button.fold,
+html[data-theme="editorial"] button.symbol-button.fold,
+html[data-theme="bento"] button.symbol-button.fold {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+html[data-theme="minimalist"] button.symbol-button.fold:hover:not(:disabled),
+html[data-theme="terminal"] button.symbol-button.fold:hover:not(:disabled),
+html[data-theme="editorial"] button.symbol-button.fold:hover:not(:disabled),
+html[data-theme="bento"] button.symbol-button.fold:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+/* Pen shape in each cell matching referring webpage */
+button.symbol-button.cell-edit svg {
+  display: none !important;
+}
+
+button.symbol-button.cell-edit::after {
+  content: "✎";
+  font-size: 0.95rem;
+  line-height: 1;
+  display: block;
+}
+
+/* Sidebar & Tree */
+html[data-theme="minimalist"] .sidebar,
+html[data-theme="terminal"] .sidebar,
+html[data-theme="editorial"] .sidebar,
+html[data-theme="bento"] .sidebar {
+  border-right-color: var(--border-subtle);
+}
+
+html[data-theme="bento"] .sidebar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 0.85rem;
+}
+
+/* Remove black triangle disclosure marker from folders */
+html[data-theme] .tree summary {
+  list-style: none;
+}
+
+html[data-theme] .tree summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Sidebar icons beside folders, files, and notebooks matching referring webpage */
+html[data-theme] .tree-folder-name::before {
+  content: "📁 ";
+  font-size: 0.95rem;
+  margin-right: 0.25rem;
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+html[data-theme] .tree-notebook a::before {
+  content: "📓 ";
+  font-size: 0.95rem;
+  margin-right: 0.25rem;
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+html[data-theme] .tree-open::before,
+html[data-theme] .tree-file-name::before {
+  content: "📄 ";
+  font-size: 0.95rem;
+  margin-right: 0.25rem;
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+/* Notebook star in tree and lists matching referring webpage */
+html[data-theme] .octo-mark {
+  font-size: 0 !important;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+html[data-theme] .octo-mark::after {
+  content: "★";
+  color: #eab308;
+  font-size: 0.85rem;
+  line-height: 1;
+  margin-left: 0.35rem;
+  vertical-align: baseline;
+}
+
+html[data-theme] .tree-notebook a {
+  display: flex;
+  align-items: center;
+}
+
+html[data-theme] .tree-notebook .octo-name {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+
+html[data-theme] .tree-notebook .octo-name .octo-mark {
+  margin-left: auto;
+}
+
+html[data-theme] .notebooks .octo-mark {
+  font-size: 0 !important;
+  vertical-align: middle;
+}
+
+html[data-theme] .notebooks .octo-mark::after {
+  content: "★";
+  color: #eab308;
+  font-size: 0.85rem;
+  margin-left: 0.35rem;
+}
+
+html[data-theme="minimalist"] .tree-root,
+html[data-theme="terminal"] .tree-root,
+html[data-theme="editorial"] .tree-root,
+html[data-theme="bento"] .tree-root {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+html[data-theme="minimalist"] .tree-notebook a,
+html[data-theme="minimalist"] .tree-open,
+html[data-theme="terminal"] .tree-notebook a,
+html[data-theme="terminal"] .tree-open,
+html[data-theme="editorial"] .tree-notebook a,
+html[data-theme="editorial"] .tree-open,
+html[data-theme="bento"] .tree-notebook a,
+html[data-theme="bento"] .tree-open {
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+html[data-theme="minimalist"] .tree-notebook a:hover,
+html[data-theme="minimalist"] .tree-open:hover,
+html[data-theme="terminal"] .tree-notebook a:hover,
+html[data-theme="terminal"] .tree-open:hover,
+html[data-theme="editorial"] .tree-notebook a:hover,
+html[data-theme="editorial"] .tree-open:hover,
+html[data-theme="bento"] .tree-notebook a:hover,
+html[data-theme="bento"] .tree-open:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+html[data-theme="minimalist"] .tree-notebook a[aria-current="page"],
+html[data-theme="minimalist"] .tree-open[aria-current="page"],
+html[data-theme="terminal"] .tree-notebook a[aria-current="page"],
+html[data-theme="terminal"] .tree-open[aria-current="page"],
+html[data-theme="editorial"] .tree-notebook a[aria-current="page"],
+html[data-theme="editorial"] .tree-open[aria-current="page"],
+html[data-theme="bento"] .tree-notebook a[aria-current="page"],
+html[data-theme="bento"] .tree-open[aria-current="page"] {
+  background: var(--tag-bg);
+  color: var(--tag-text);
+  font-weight: 600;
+}
+
+html[data-theme="minimalist"] .column-toggle,
+html[data-theme="terminal"] .column-toggle,
+html[data-theme="editorial"] .column-toggle,
+html[data-theme="bento"] .column-toggle {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+}
+
+html[data-theme="minimalist"] .column-toggle:hover,
+html[data-theme="terminal"] .column-toggle:hover,
+html[data-theme="editorial"] .column-toggle:hover,
+html[data-theme="bento"] .column-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+/* Session Header */
+html[data-theme="minimalist"] .session-header,
+html[data-theme="terminal"] .session-header,
+html[data-theme="editorial"] .session-header,
+html[data-theme="bento"] .session-header {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="minimalist"] #title,
+html[data-theme="terminal"] #title,
+html[data-theme="editorial"] #title,
+html[data-theme="bento"] #title {
+  color: var(--text-main);
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+html[data-theme="minimalist"] #notebook.path,
+html[data-theme="terminal"] #notebook.path,
+html[data-theme="editorial"] #notebook.path,
+html[data-theme="bento"] #notebook.path {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+/* Subtabs */
+html[data-theme="minimalist"] .subtabs,
+html[data-theme="terminal"] .subtabs,
+html[data-theme="editorial"] .subtabs,
+html[data-theme="bento"] .subtabs {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+html[data-theme="minimalist"] .subtab,
+html[data-theme="terminal"] .subtab,
+html[data-theme="editorial"] .subtab,
+html[data-theme="bento"] .subtab {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-family: var(--font-body);
+}
+
+html[data-theme="minimalist"] .subtab[aria-current="page"],
+html[data-theme="minimalist"] .subtab-wrap[aria-current="page"] .subtab,
+html[data-theme="terminal"] .subtab[aria-current="page"],
+html[data-theme="terminal"] .subtab-wrap[aria-current="page"] .subtab,
+html[data-theme="editorial"] .subtab[aria-current="page"],
+html[data-theme="editorial"] .subtab-wrap[aria-current="page"] .subtab,
+html[data-theme="bento"] .subtab[aria-current="page"],
+html[data-theme="bento"] .subtab-wrap[aria-current="page"] .subtab {
+  background: var(--bg-surface-elevated);
+  color: var(--accent);
+  border-bottom-color: var(--bg-surface-elevated);
+  font-weight: 600;
+}
+
+/* Prose block */
+html[data-theme="minimalist"] .prose,
+html[data-theme="minimalist"] .preview-view,
+html[data-theme="terminal"] .prose,
+html[data-theme="terminal"] .preview-view,
+html[data-theme="editorial"] .prose,
+html[data-theme="editorial"] .preview-view,
+html[data-theme="bento"] .prose,
+html[data-theme="bento"] .preview-view {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  color: var(--text-main);
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="minimalist"] .prose h1,
+html[data-theme="minimalist"] .prose h2,
+html[data-theme="minimalist"] .prose h3,
+html[data-theme="minimalist"] .preview-view h1,
+html[data-theme="minimalist"] .preview-view h2,
+html[data-theme="minimalist"] .preview-view h3,
+html[data-theme="terminal"] .prose h1,
+html[data-theme="terminal"] .prose h2,
+html[data-theme="terminal"] .prose h3,
+html[data-theme="terminal"] .preview-view h1,
+html[data-theme="terminal"] .preview-view h2,
+html[data-theme="terminal"] .preview-view h3,
+html[data-theme="editorial"] .prose h1,
+html[data-theme="editorial"] .prose h2,
+html[data-theme="editorial"] .prose h3,
+html[data-theme="editorial"] .preview-view h1,
+html[data-theme="editorial"] .preview-view h2,
+html[data-theme="editorial"] .preview-view h3,
+html[data-theme="bento"] .prose h1,
+html[data-theme="bento"] .prose h2,
+html[data-theme="bento"] .prose h3,
+html[data-theme="bento"] .preview-view h1,
+html[data-theme="bento"] .preview-view h2,
+html[data-theme="bento"] .preview-view h3 {
+  color: var(--text-main);
+  font-family: var(--font-heading);
+}
+
+/* Cells */
+html[data-theme="minimalist"] .cell,
+html[data-theme="terminal"] .cell,
+html[data-theme="editorial"] .cell,
+html[data-theme="bento"] .cell {
+  background: var(--cell-bg);
+  border: var(--cell-border);
+  border-left-width: 4px !important;
+  border-left-style: solid !important;
+  border-left-color: var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 1.25rem;
+  padding: 0;
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+html[data-theme="minimalist"] .cell:hover,
+html[data-theme="terminal"] .cell:hover,
+html[data-theme="editorial"] .cell:hover,
+html[data-theme="bento"] .cell:hover {
+  border-color: var(--border-strong);
+}
+
+/* Distinct color bar at the left border of each cell (by type and status) */
+html[data-theme] .cell.prompt {
+  border-left-color: var(--accent) !important;
+}
+
+html[data-theme] .cell.bash {
+  border-left-color: #10b981 !important;
+}
+
+html[data-theme] .cell.ok {
+  border-left-color: #10b981 !important;
+}
+
+html[data-theme] .cell.running {
+  border-left-color: var(--cell-active-border, #38bdf8) !important;
+}
+
+html[data-theme] .cell.stale {
+  border-left-color: #8b5cf6 !important;
+}
+
+html[data-theme] .cell.error,
+html[data-theme] .cell.timeout {
+  border-left-color: #ef4444 !important;
+}
+
+html[data-theme] .cell.interrupted {
+  border-left-color: #f59e0b !important;
+}
+
+/* Cell edit mode: comfortable gap from the left border */
+html[data-theme] .cell.editing,
+html[data-theme] .cell-inline-editor {
+  padding: 0.85rem 1.15rem;
+}
+
+html[data-theme] .cell-inline-editor .draft-declaration {
+  margin-bottom: 0.75rem;
+  gap: 0.5rem 0.8rem;
+}
+
+html[data-theme] .cell-inline-editor textarea {
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+html[data-theme] .editor .draft-segment {
+  padding: 0.85rem 1.15rem;
+}
+
+html[data-theme="minimalist"] .cell-header,
+html[data-theme="terminal"] .cell-header,
+html[data-theme="editorial"] .cell-header,
+html[data-theme="bento"] .cell-header {
+  background: var(--bg-surface-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+html[data-theme="minimalist"] .cell-id,
+html[data-theme="terminal"] .cell-id,
+html[data-theme="editorial"] .cell-id,
+html[data-theme="bento"] .cell-id {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+html[data-theme="minimalist"] .cell-type,
+html[data-theme="terminal"] .cell-type,
+html[data-theme="editorial"] .cell-type,
+html[data-theme="bento"] .cell-type {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: 9999px;
+  background: var(--tag-bg);
+  color: var(--tag-text);
+}
+
+html[data-theme="minimalist"] .cell-attribute,
+html[data-theme="terminal"] .cell-attribute,
+html[data-theme="editorial"] .cell-attribute,
+html[data-theme="bento"] .cell-attribute {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--text-main) !important;
+  opacity: 1 !important;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.12rem 0.45rem;
+  line-height: 1.3;
+}
+
+html[data-theme="minimalist"] .cell-status,
+html[data-theme="terminal"] .cell-status,
+html[data-theme="editorial"] .cell-status,
+html[data-theme="bento"] .cell-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+html[data-theme="minimalist"] .cell.ok .cell-status,
+html[data-theme="terminal"] .cell.ok .cell-status,
+html[data-theme="editorial"] .cell.ok .cell-status,
+html[data-theme="bento"] .cell.ok .cell-status {
+  color: #10b981;
+}
+
+html[data-theme="minimalist"] .cell.running .cell-status,
+html[data-theme="terminal"] .cell.running .cell-status,
+html[data-theme="editorial"] .cell.running .cell-status,
+html[data-theme="bento"] .cell.running .cell-status {
+  color: var(--accent);
+}
+
+html[data-theme="minimalist"] .cell.stale .cell-status,
+html[data-theme="terminal"] .cell.stale .cell-status,
+html[data-theme="editorial"] .cell.stale .cell-status,
+html[data-theme="bento"] .cell.stale .cell-status {
+  color: #8b5cf6;
+}
+
+html[data-theme="minimalist"] .cell.error .cell-status,
+html[data-theme="minimalist"] .cell.timeout .cell-status,
+html[data-theme="terminal"] .cell.error .cell-status,
+html[data-theme="terminal"] .cell.timeout .cell-status,
+html[data-theme="editorial"] .cell.error .cell-status,
+html[data-theme="editorial"] .cell.timeout .cell-status,
+html[data-theme="bento"] .cell.error .cell-status,
+html[data-theme="bento"] .cell.timeout .cell-status {
+  color: #ef4444;
+}
+
+html[data-theme="minimalist"] .cell.interrupted .cell-status,
+html[data-theme="terminal"] .cell.interrupted .cell-status,
+html[data-theme="editorial"] .cell.interrupted .cell-status,
+html[data-theme="bento"] .cell.interrupted .cell-status {
+  color: #f59e0b;
+}
+
+html[data-theme="minimalist"] .cell-body,
+html[data-theme="terminal"] .cell-body,
+html[data-theme="editorial"] .cell-body,
+html[data-theme="bento"] .cell-body {
+  background: var(--cell-bg);
+  padding: 1rem 1.25rem;
+  margin: 0;
+  color: var(--text-main);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+html[data-theme="editorial"] .cell.prompt .cell-body {
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+}
+
+html[data-theme="minimalist"] .cell.bash .cell-body,
+html[data-theme="terminal"] .cell.bash .cell-body,
+html[data-theme="editorial"] .cell.bash .cell-body,
+html[data-theme="bento"] .cell.bash .cell-body {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+}
+
+html[data-theme="terminal"] .cell.bash .cell-body::before {
+  content: "$ ";
+  color: var(--accent);
+}
+
+html[data-theme="minimalist"] .cell-stream,
+html[data-theme="terminal"] .cell-stream,
+html[data-theme="editorial"] .cell-stream,
+html[data-theme="bento"] .cell-stream {
+  padding: 0 1.25rem 1rem;
+}
+
+html[data-theme="minimalist"] .cell-thinking pre,
+html[data-theme="terminal"] .cell-thinking pre,
+html[data-theme="editorial"] .cell-thinking pre,
+html[data-theme="bento"] .cell-thinking pre {
+  margin: 0.8rem 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+  padding: 0.65rem 0.85rem;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  font-style: italic;
+}
+
+html[data-theme="minimalist"] .tool-call,
+html[data-theme="terminal"] .tool-call,
+html[data-theme="editorial"] .tool-call,
+html[data-theme="bento"] .tool-call {
+  background: var(--bg-surface-elevated);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  padding: 0.45rem 0.75rem;
+}
+
+html[data-theme="minimalist"] .cell-output,
+html[data-theme="terminal"] .cell-output,
+html[data-theme="editorial"] .cell-output,
+html[data-theme="bento"] .cell-output {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+}
+
+html[data-theme="minimalist"] pre,
+html[data-theme="minimalist"] code,
+html[data-theme="terminal"] pre,
+html[data-theme="terminal"] code,
+html[data-theme="editorial"] pre,
+html[data-theme="editorial"] code,
+html[data-theme="bento"] pre,
+html[data-theme="bento"] code {
+  font-family: var(--font-mono);
+}
+
+html[data-theme="minimalist"] .cell pre,
+html[data-theme="minimalist"] .cell code,
+html[data-theme="terminal"] .cell pre,
+html[data-theme="terminal"] .cell code,
+html[data-theme="editorial"] .cell pre,
+html[data-theme="editorial"] .cell code,
+html[data-theme="bento"] .cell pre,
+html[data-theme="bento"] .cell code {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+}
+
+html[data-theme="minimalist"] .artifacts,
+html[data-theme="terminal"] .artifacts,
+html[data-theme="editorial"] .artifacts,
+html[data-theme="bento"] .artifacts {
+  background: var(--bg-surface-elevated);
+  border-top: 1px solid var(--border-subtle);
+  padding: 0.5rem 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+html[data-theme="minimalist"] .artifact,
+html[data-theme="terminal"] .artifact,
+html[data-theme="editorial"] .artifact,
+html[data-theme="bento"] .artifact {
+  color: var(--accent);
+  background: var(--tag-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+/* Add cells bar */
+html[data-theme="minimalist"] .add-cells,
+html[data-theme="terminal"] .add-cells,
+html[data-theme="editorial"] .add-cells,
+html[data-theme="bento"] .add-cells {
+  border: 1.5px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  justify-content: center;
+  background: var(--bg-surface);
+}
+
+/* Notebooks List & Chats */
+html[data-theme="minimalist"] .notebooks li,
+html[data-theme="terminal"] .notebooks li,
+html[data-theme="editorial"] .notebooks li,
+html[data-theme="bento"] .notebooks li {
+  border-bottom-color: var(--border-subtle);
+}
+
+html[data-theme="minimalist"] .notebooks a:hover .title,
+html[data-theme="terminal"] .notebooks a:hover .title,
+html[data-theme="editorial"] .notebooks a:hover .title,
+html[data-theme="bento"] .notebooks a:hover .title {
+  color: var(--accent);
+}
+
+html[data-theme="minimalist"] .notebooks .path,
+html[data-theme="terminal"] .notebooks .path,
+html[data-theme="editorial"] .notebooks .path,
+html[data-theme="bento"] .notebooks .path {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+html[data-theme="minimalist"] .chats-section h2,
+html[data-theme="terminal"] .chats-section h2,
+html[data-theme="editorial"] .chats-section h2,
+html[data-theme="bento"] .chats-section h2 {
+  color: var(--text-main);
+  font-family: var(--font-heading);
+}
+
+html[data-theme="minimalist"] .hint,
+html[data-theme="terminal"] .hint,
+html[data-theme="editorial"] .hint,
+html[data-theme="bento"] .hint {
+  color: var(--text-muted);
+}
+
+/* Run view steps - Distinct left color bar matching original UI functionality */
+html[data-theme="minimalist"] .run-step,
+html[data-theme="terminal"] .run-step,
+html[data-theme="editorial"] .run-step,
+html[data-theme="bento"] .run-step {
+  background: var(--cell-bg, var(--bg-surface));
+  border: var(--cell-border, 1px solid var(--border-subtle));
+  border-left-width: 4px !important;
+  border-left-style: solid !important;
+  border-left-color: var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1.15rem;
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+html[data-theme="minimalist"] .run-step:hover,
+html[data-theme="terminal"] .run-step:hover,
+html[data-theme="editorial"] .run-step:hover,
+html[data-theme="bento"] .run-step:hover {
+  border-color: var(--border-strong);
+}
+
+/* Distinct color bar at the left border of each run-step (by type and status) */
+html[data-theme] .run-step.prompt {
+  border-left-color: var(--accent) !important;
+}
+
+html[data-theme] .run-step.bash {
+  border-left-color: #10b981 !important;
+}
+
+html[data-theme] .run-step.ok {
+  border-left-color: #10b981 !important;
+}
+
+html[data-theme] .run-step.running {
+  border-left-color: var(--cell-active-border, #38bdf8) !important;
+}
+
+html[data-theme] .run-step.stale {
+  border-left-color: #8b5cf6 !important;
+}
+
+html[data-theme] .run-step.error,
+html[data-theme] .run-step.timeout {
+  border-left-color: #ef4444 !important;
+}
+
+html[data-theme] .run-step.interrupted {
+  border-left-color: #f59e0b !important;
+}
+
+html[data-theme] .run-step-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+html[data-theme] .run-step-name {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+html[data-theme] .run-step-state {
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+html[data-theme] .run-step.ok .run-step-state {
+  color: #10b981;
+}
+
+html[data-theme] .run-step.running .run-step-state {
+  color: var(--accent);
+}
+
+html[data-theme] .run-step.stale .run-step-state {
+  color: #8b5cf6;
+}
+
+html[data-theme] .run-step.error .run-step-state,
+html[data-theme] .run-step.timeout .run-step-state {
+  color: #ef4444;
+}
+
+html[data-theme] .run-step.interrupted .run-step-state {
+  color: #f59e0b;
+}
+
+html[data-theme] .run-step-duration {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+
+html[data-theme] .run-outcome {
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  border-left-color: #10b981;
+  padding: 1rem 1.25rem;
+}
+
+html[data-theme] .run-outcome.failed {
+  border-left-color: #ef4444;
+}
+
+html[data-theme] .run-outcome.stopped {
+  border-left-color: #f59e0b;
+}
+
+/* Tooltip */
+html[data-theme="minimalist"] .app-tooltip,
+html[data-theme="terminal"] .app-tooltip,
+html[data-theme="editorial"] .app-tooltip,
+html[data-theme="bento"] .app-tooltip {
+  background: var(--bg-surface-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-popup);
+}
+
+/* Dialogs & Popovers */
+html[data-theme="minimalist"] dialog,
+html[data-theme="minimalist"] .models,
+html[data-theme="terminal"] dialog,
+html[data-theme="terminal"] .models,
+html[data-theme="editorial"] dialog,
+html[data-theme="editorial"] .models,
+html[data-theme="bento"] dialog,
+html[data-theme="bento"] .models {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-main);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popup);
+}
+
+html[data-theme="minimalist"] dialog::backdrop,
+html[data-theme="terminal"] dialog::backdrop,
+html[data-theme="editorial"] dialog::backdrop,
+html[data-theme="bento"] dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+html[data-theme="minimalist"] .settings-list,
+html[data-theme="minimalist"] .export-list,
+html[data-theme="minimalist"] .view-list,
+html[data-theme="minimalist"] .tree-menu,
+html[data-theme="minimalist"] .cell-add-list,
+html[data-theme="terminal"] .settings-list,
+html[data-theme="terminal"] .export-list,
+html[data-theme="terminal"] .view-list,
+html[data-theme="terminal"] .tree-menu,
+html[data-theme="terminal"] .cell-add-list,
+html[data-theme="editorial"] .settings-list,
+html[data-theme="editorial"] .export-list,
+html[data-theme="editorial"] .view-list,
+html[data-theme="editorial"] .tree-menu,
+html[data-theme="editorial"] .cell-add-list,
+html[data-theme="bento"] .settings-list,
+html[data-theme="bento"] .export-list,
+html[data-theme="bento"] .view-list,
+html[data-theme="bento"] .tree-menu,
+html[data-theme="bento"] .cell-add-list {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-popup);
+}
+
+html[data-theme="minimalist"] .settings-list button:hover,
+html[data-theme="minimalist"] .export-list button:hover,
+html[data-theme="minimalist"] .view-list a:hover,
+html[data-theme="minimalist"] .tree-menu button:hover,
+html[data-theme="minimalist"] .cell-add-list button:hover,
+html[data-theme="terminal"] .settings-list button:hover,
+html[data-theme="terminal"] .export-list button:hover,
+html[data-theme="terminal"] .view-list a:hover,
+html[data-theme="terminal"] .tree-menu button:hover,
+html[data-theme="terminal"] .cell-add-list button:hover,
+html[data-theme="editorial"] .settings-list button:hover,
+html[data-theme="editorial"] .export-list button:hover,
+html[data-theme="editorial"] .view-list a:hover,
+html[data-theme="editorial"] .tree-menu button:hover,
+html[data-theme="editorial"] .cell-add-list button:hover,
+html[data-theme="bento"] .settings-list button:hover,
+html[data-theme="bento"] .export-list button:hover,
+html[data-theme="bento"] .view-list a:hover,
+html[data-theme="bento"] .tree-menu button:hover,
+html[data-theme="bento"] .cell-add-list button:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
 }
