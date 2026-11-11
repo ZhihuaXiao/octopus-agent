@@ -9409,15 +9409,11 @@ function toggleUIMode() {
 function updateModeDisplays(mode) {
   const icon = document.getElementById("mode-icon");
   const label = document.getElementById("mode-label");
-  const menuText = document.getElementById("menu-mode-text");
   if (icon instanceof HTMLElement) {
     icon.textContent = mode === "dark" ? "🌙" : "☀️";
   }
   if (label instanceof HTMLElement) {
     label.textContent = mode === "dark" ? "Dark" : "Light";
-  }
-  if (menuText instanceof HTMLElement) {
-    menuText.textContent = mode === "dark" ? "Dark 🌙" : "Light ☀️";
   }
 }
 
@@ -9484,11 +9480,24 @@ function initUITheme() {
     toggleBtn.addEventListener("click", () => toggleUIMode());
   }
 
-  const menuToggleBtn = document.getElementById("menu-mode-toggle");
-  if (menuToggleBtn instanceof HTMLElement) {
-    menuToggleBtn.addEventListener("click", () => {
-      toggleUIMode();
-      closeSettingsMenu();
+  const uiSubmenu = document.getElementById("menu-ui-style-submenu");
+  const uiStyleBtn = document.getElementById("menu-ui-style");
+  if (uiSubmenu && uiStyleBtn) {
+    uiStyleBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const list = document.getElementById("ui-styles-list");
+      if (list && list.hidden) {
+        openUISubmenu();
+      } else {
+        closeUISubmenu();
+      }
+    });
+
+    uiSubmenu.addEventListener("mouseenter", () => {
+      openUISubmenu();
+    });
+    uiSubmenu.addEventListener("mouseleave", () => {
+      closeUISubmenu();
     });
   }
 
@@ -9508,6 +9517,9 @@ element("settings-button").addEventListener("click", () => {
   const opening = list.hidden;
   list.hidden = !opening;
   element("settings-button").setAttribute("aria-expanded", opening ? "true" : "false");
+  if (!opening) {
+    closeUISubmenu();
+  }
 });
 element("disconnect-button").addEventListener("click", () => void disconnect());
 element("menu-modes").addEventListener("click", () => void openModes());
@@ -9733,6 +9745,27 @@ document.addEventListener("keydown", (event) => {
 function closeSettingsMenu() {
   element("settings-list").hidden = true;
   element("settings-button").setAttribute("aria-expanded", "false");
+  closeUISubmenu();
+}
+
+/** Opens the UI Style submenu, when it is closed. */
+function openUISubmenu() {
+  const list = document.getElementById("ui-styles-list");
+  const btn = document.getElementById("menu-ui-style");
+  if (list && btn) {
+    list.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+  }
+}
+
+/** Closes the UI Style submenu, when it is open. */
+function closeUISubmenu() {
+  const list = document.getElementById("ui-styles-list");
+  const btn = document.getElementById("menu-ui-style");
+  if (list && btn) {
+    list.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+  }
 }
 
 /** Closes the View list, when it is open. */

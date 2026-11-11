@@ -237,6 +237,8 @@ describe("the client shell", () => {
     const server = await serve();
     const html = await (await fetch(new URL("/", server.url))).text();
 
+    expect(html).toContain('id="menu-ui-style"');
+    expect(html).not.toContain('id="menu-mode-toggle"');
     expect(html).toContain('id="theme-original"');
     expect(html).toContain('id="theme-minimalist"');
     expect(html).toContain('id="theme-terminal"');

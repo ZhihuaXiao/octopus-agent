@@ -75,106 +75,113 @@
               Models
             </button>
             <div class="settings-divider" role="separator"></div>
-            <div class="settings-header">UI Style</div>
-            <button
-              id="theme-original"
-              type="button"
-              role="menuitemradio"
-              aria-checked="true"
-              title="Original notebook style"
-            >
-              Original
-            </button>
-            <button
-              id="theme-minimalist"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Modern Minimalist style (Linear / Zed aesthetic)"
-            >
-              Minimalist
-            </button>
-            <button
-              id="theme-terminal"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Terminal IDE style (CLI aesthetic)"
-            >
-              Terminal
-            </button>
-            <button
-              id="theme-editorial"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Editorial Research style (Craft / Publication aesthetic)"
-            >
-              Editorial
-            </button>
-            <button
-              id="theme-bento"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Bento Dev style (Modular Grid aesthetic)"
-            >
-              Bento
-            </button>
-            <button
-              id="theme-monochrome"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Modern Monochrome style (High contrast AI lab aesthetic)"
-            >
-              Modern Monochrome
-            </button>
-            <button
-              id="theme-warm-paper"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Warm Paper style (Craft & organic paper aesthetic)"
-            >
-              Warm Paper
-            </button>
-            <button
-              id="theme-operator"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Operator Studio style (Technical developer IDE workbench)"
-            >
-              Operator Studio
-            </button>
-            <button
-              id="theme-espresso"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Espresso Terminal style (Warm coffee & amber CLI workstation)"
-            >
-              Espresso Terminal
-            </button>
-            <button
-              id="theme-cybernetic"
-              type="button"
-              role="menuitemradio"
-              aria-checked="false"
-              title="Cybernetic Obsidian style (HUD-style telemetry & electric cyan)"
-            >
-              Cybernetic Obsidian
-            </button>
-            <div id="settings-mode-divider" class="settings-divider" role="separator"></div>
-            <button
-              id="menu-mode-toggle"
-              type="button"
-              role="menuitem"
-              title="Toggle Dark / Light mode"
-            >
-              Mode: <span id="menu-mode-text">Dark 🌙</span>
-            </button>
+            <div class="settings-submenu" id="menu-ui-style-submenu">
+              <button
+                id="menu-ui-style"
+                class="settings-submenu-trigger"
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="ui-styles-list"
+                title="Select UI style"
+              >
+                <span>UI Style</span>
+                <span class="submenu-arrow">▸</span>
+              </button>
+              <div id="ui-styles-list" class="settings-list settings-submenu-list" role="menu" hidden>
+                <button
+                  id="theme-original"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="true"
+                  title="Original notebook style"
+                >
+                  Original
+                </button>
+                <button
+                  id="theme-minimalist"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Modern Minimalist style (Linear / Zed aesthetic)"
+                >
+                  Minimalist
+                </button>
+                <button
+                  id="theme-terminal"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Terminal IDE style (CLI aesthetic)"
+                >
+                  Terminal
+                </button>
+                <button
+                  id="theme-editorial"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Editorial Research style (Craft / Publication aesthetic)"
+                >
+                  Editorial
+                </button>
+                <button
+                  id="theme-bento"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Bento Dev style (Modular Grid aesthetic)"
+                >
+                  Bento
+                </button>
+                <button
+                  id="theme-monochrome"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Modern Monochrome style (High contrast AI lab aesthetic)"
+                >
+                  Modern Monochrome
+                </button>
+                <button
+                  id="theme-warm-paper"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Warm Paper style (Craft & organic paper aesthetic)"
+                >
+                  Warm Paper
+                </button>
+                <button
+                  id="theme-operator"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Operator Studio style (Technical developer IDE workbench)"
+                >
+                  Operator Studio
+                </button>
+                <button
+                  id="theme-espresso"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Espresso Terminal style (Warm coffee & amber CLI workstation)"
+                >
+                  Espresso Terminal
+                </button>
+                <button
+                  id="theme-cybernetic"
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked="false"
+                  title="Cybernetic Obsidian style (HUD-style telemetry & electric cyan)"
+                >
+                  Cybernetic Obsidian
+                </button>
+              </div>
+            </div>
           </div>
         </div>
         <button id="disconnect-button" type="button" title="Disconnect or log out">

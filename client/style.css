@@ -449,6 +449,46 @@ header .header-actions {
   margin-left: 0.5rem;
 }
 
+/* Submenu inside Settings */
+.settings-submenu {
+  position: relative;
+}
+
+.settings-submenu-trigger {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.submenu-arrow {
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.settings-submenu:hover > .settings-submenu-trigger .submenu-arrow,
+.settings-submenu-trigger[aria-expanded="true"] .submenu-arrow {
+  opacity: 1;
+}
+
+.settings-submenu-list {
+  position: absolute;
+  top: -0.2rem;
+  right: calc(100% + 0.25rem);
+  z-index: 21;
+  min-width: 12rem;
+  white-space: nowrap;
+}
+
+.settings-submenu-list::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -0.35rem;
+  width: 0.35rem;
+}
+
 .tabs {
   display: flex;
   gap: 0.25rem;
@@ -3688,21 +3728,8 @@ button.context-ring svg {
   border-color: var(--border-strong);
 }
 
-#settings-mode-divider,
-#menu-mode-toggle {
-  display: none;
-}
-
 html[data-theme] #theme-mode-toggle {
   display: inline-flex;
-}
-
-html[data-theme] #settings-mode-divider {
-  display: block;
-}
-
-html[data-theme] #menu-mode-toggle {
-  display: flex;
 }
 
 .logo-notebook {
