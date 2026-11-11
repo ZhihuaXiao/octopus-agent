@@ -4343,7 +4343,8 @@ html[data-theme="cybernetic"][data-mode="light"] {
   --accent-contrast: #ffffff;
   --accent-green: #10b981;
   --accent-purple: #7c3aed;
-  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-body:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
   --font-heading: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --radius-sm: 6px;
@@ -5487,7 +5488,9 @@ html[data-theme="warm-paper"] .sidebar .tree-file-name {
   border: 1px solid transparent !important;
   background: transparent !important;
   text-decoration: none;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 html[data-theme="warm-paper"] .sidebar .tree-notebook a:hover,
@@ -5530,7 +5533,10 @@ html[data-theme="warm-paper"] .sidebar .tree-menu-button {
   line-height: 1 !important;
   cursor: pointer;
   opacity: 0.65;
-  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
 }
 
 html[data-theme="warm-paper"] .sidebar .tree-menu-button:hover,
@@ -5673,7 +5679,9 @@ html[data-theme="warm-paper"] .cell {
   border: 1.5px solid var(--border-strong);
   border-radius: 14px;
   overflow: hidden;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 html[data-theme="warm-paper"] .cell:hover {
@@ -6449,7 +6457,9 @@ html[data-theme="operator"] .cell {
   box-shadow: 0 4px 12px rgba(20, 20, 19, 0.04);
   overflow: hidden;
   margin-bottom: 1.25rem;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 html[data-theme="operator"] .cell:hover {
@@ -6604,7 +6614,6 @@ html[data-theme="operator"] .danger:hover:not(:disabled) {
   background: #fef2f2 !important;
   border-color: #b91c1c !important;
 }
-
 
 /* ==========================================================================
    CYBERNETIC OBSIDIAN THEME REFINEMENTS (from design-directions-magpie.html)
@@ -7018,7 +7027,9 @@ html[data-theme="cybernetic"] .cell {
   box-shadow: var(--shadow-card);
   overflow: hidden;
   margin-bottom: 1.25rem;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 html[data-theme="cybernetic"] .cell.ok,
@@ -7144,4 +7155,3 @@ html[data-theme="cybernetic"] .danger {
   border-color: var(--border-subtle) !important;
   background: var(--bg-surface) !important;
 }
-
