@@ -4121,70 +4121,74 @@ html[data-theme="warm-paper"][data-mode="light"] {
   --badge-text: #b85c3e;
 }
 
-/* 7. Operator Studio (from design-directions-magpie.html Dir 1) */
+/* 7. Operator Studio (from design-directions-unknowns.html Dir 1: Warm Paper Workbench) */
 html[data-theme="operator"][data-mode="dark"] {
   color-scheme: dark;
-  --bg-canvas: #0e0e11;
-  --bg-surface: #16161b;
-  --bg-surface-elevated: #202027;
-  --bg-hover: rgba(59, 130, 246, 0.08);
-  --banner-bg: #141419;
-  --tag-bg: #202027;
-  --tag-text: #60a5fa;
-  --text-main: #f4f4f6;
-  --text-muted: #9fa0aa;
-  --text-faint: #6b6c75;
-  --border-subtle: #272730;
-  --border-strong: #383845;
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
+  --bg-canvas: #191917;
+  --bg-surface: #22221f;
+  --bg-surface-elevated: #2b2b27;
+  --bg-hover: rgba(217, 119, 87, 0.08);
+  --banner-bg: #1f1f1c;
+  --tag-bg: #2e2b26;
+  --tag-text: #e89578;
+  --text-main: #faf9f5;
+  --text-muted: #c5c2b8;
+  --text-faint: #87867f;
+  --border-subtle: #383833;
+  --border-strong: #4a4a44;
+  --accent: #d97757;
+  --accent-hover: #b85c3e;
   --accent-contrast: #ffffff;
-  --font-body: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
-  --font-heading: "Inter", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --olive: #8fa770;
+  --purple-stale: #a855f7;
+  --font-body: system-ui, -apple-system, sans-serif;
+  --font-heading: ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", monospace;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-popup: 0 14px 36px rgba(0, 0, 0, 0.7);
-  --cell-border: 1px solid #272730;
-  --cell-bg: #16161b;
-  --cell-active-border: #3b82f6;
-  --badge-bg: rgba(59, 130, 246, 0.15);
-  --badge-text: #3b82f6;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-popup: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --cell-border: 1.5px solid #383833;
+  --cell-bg: #22221f;
+  --cell-active-border: #d97757;
+  --badge-bg: #d97757;
+  --badge-text: #ffffff;
 }
 
 html[data-theme="operator"],
 html[data-theme="operator"][data-mode="light"] {
   color-scheme: light;
-  --bg-canvas: #fafafa;
+  --bg-canvas: #faf9f5;
   --bg-surface: #ffffff;
-  --bg-surface-elevated: #f1f1f2;
-  --bg-hover: rgba(37, 99, 235, 0.05);
-  --banner-bg: #f1f1f2;
-  --tag-bg: rgba(37, 99, 235, 0.08);
-  --tag-text: #2563eb;
-  --text-main: #111112;
-  --text-muted: #4a4a50;
-  --text-faint: #85858c;
-  --border-subtle: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --bg-surface-elevated: #f0eee6;
+  --bg-hover: rgba(217, 119, 87, 0.06);
+  --banner-bg: #f0eee6;
+  --tag-bg: #f0eee6;
+  --tag-text: #b85c3e;
+  --text-main: #141413;
+  --text-muted: #3d3d3a;
+  --text-faint: #87867f;
+  --border-subtle: #e6e3da;
+  --border-strong: #d1cfc5;
+  --accent: #d97757;
+  --accent-hover: #b85c3e;
   --accent-contrast: #ffffff;
-  --font-body: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
-  --font-heading: "Inter", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --olive: #788c5d;
+  --purple-stale: #7e22ce;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-heading: ui-serif, Georgia, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 8px 20px rgba(0, 0, 0, 0.04);
-  --shadow-popup: 0 12px 30px rgba(0, 0, 0, 0.09);
-  --cell-border: 1px solid #e4e4e7;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --shadow-card: 0 4px 12px rgba(20, 20, 19, 0.04);
+  --shadow-popup: 0 12px 32px rgba(20, 20, 19, 0.1);
+  --cell-border: 1.5px solid #d1cfc5;
   --cell-bg: #ffffff;
-  --cell-active-border: #2563eb;
-  --badge-bg: #111112;
-  --badge-text: #fafafa;
+  --cell-active-border: #d97757;
+  --badge-bg: #d97757;
+  --badge-text: #ffffff;
 }
 
 /* 8. Espresso Terminal (from design-directions-unknowns.html Dir 3: Dark Coffee Roast & Amber Phosphor) */
@@ -4255,7 +4259,7 @@ html[data-theme="espresso"][data-mode="light"] {
   --badge-text: #faf6ee;
 }
 
-/* 9. Cybernetic Obsidian (from design-directions-magpie.html Dir 3) */
+/* 9. Cybernetic Obsidian (from design-directions-magpie.html Dir 1 Light & Dir 3 Dark) */
 html[data-theme="cybernetic"],
 html[data-theme="cybernetic"][data-mode="dark"] {
   color-scheme: dark;
@@ -4275,12 +4279,14 @@ html[data-theme="cybernetic"][data-mode="dark"] {
   --accent-hover: #0284c7;
   --accent-glow: rgba(56, 189, 248, 0.25);
   --accent-contrast: #090a0f;
-  --font-body: "JetBrains Mono", monospace;
+  --accent-green: #10b981;
+  --accent-purple: #818cf8;
+  --font-body: "JetBrains Mono", ui-monospace, monospace;
   --font-heading: "JetBrains Mono", monospace;
   --font-mono: "JetBrains Mono", monospace;
   --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
   --shadow-card: 0 0 0 1px #26262b, 0 4px 16px rgba(0, 0, 0, 0.7);
   --shadow-popup: 0 0 0 1px #3f3f46, 0 16px 40px rgba(0, 0, 0, 0.85);
   --cell-border: 1px solid #26262b;
@@ -4292,35 +4298,37 @@ html[data-theme="cybernetic"][data-mode="dark"] {
 
 html[data-theme="cybernetic"][data-mode="light"] {
   color-scheme: light;
-  --bg-canvas: #f4f4f6;
+  --bg-canvas: #fafafa;
   --bg-surface: #ffffff;
-  --bg-surface-elevated: #e4e4e7;
-  --bg-hover: rgba(2, 132, 199, 0.06);
-  --banner-bg: #e4e4e7;
-  --tag-bg: #e0f2fe;
-  --tag-text: #0284c7;
-  --text-main: #090a0f;
-  --text-muted: #52525b;
-  --text-faint: #71717a;
-  --border-subtle: #d4d4d8;
-  --border-strong: #a1a1aa;
-  --accent: #0284c7;
-  --accent-hover: #0369a1;
-  --accent-glow: rgba(2, 132, 199, 0.15);
+  --bg-surface-elevated: #f1f1f2;
+  --bg-hover: rgba(37, 99, 235, 0.06);
+  --banner-bg: #f1f1f2;
+  --tag-bg: #f1f1f2;
+  --tag-text: #2563eb;
+  --text-main: #111112;
+  --text-muted: #4a4a50;
+  --text-faint: #85858c;
+  --border-subtle: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-glow: rgba(37, 99, 235, 0.15);
   --accent-contrast: #ffffff;
-  --font-body: "JetBrains Mono", monospace;
-  --font-heading: "JetBrains Mono", monospace;
-  --font-mono: "JetBrains Mono", monospace;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --shadow-card: 0 0 0 1px #d4d4d8, 0 2px 8px rgba(0, 0, 0, 0.05);
-  --shadow-popup: 0 0 0 1px #a1a1aa, 0 12px 28px rgba(0, 0, 0, 0.12);
-  --cell-border: 1px solid #d4d4d8;
+  --accent-green: #10b981;
+  --accent-purple: #7c3aed;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-heading: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-popup: 0 12px 30px rgba(0, 0, 0, 0.09);
+  --cell-border: 1px solid #e4e4e7;
   --cell-bg: #ffffff;
-  --cell-active-border: #0284c7;
-  --badge-bg: #e0f2fe;
-  --badge-text: #0284c7;
+  --cell-active-border: #2563eb;
+  --badge-bg: #111112;
+  --badge-text: #fafafa;
 }
 
 /* --------------------------------------------------------------------------
@@ -4391,31 +4399,21 @@ html[data-theme="cybernetic"] #home::after {
 
 /* Webpage layout container widths & fonts */
 html[data-theme="monochrome"] body,
-html[data-theme="warm-paper"] body,
-html[data-theme="operator"] body {
+html[data-theme="warm-paper"] body {
   max-width: 1200px;
   padding: 1.5rem 1.5rem 5rem;
 }
 
-html[data-theme="espresso"] body,
-html[data-theme="cybernetic"] body {
+html[data-theme="espresso"] body {
   max-width: 1040px;
   padding: 1.25rem 1.25rem 5rem;
   font-size: 13.5px;
   line-height: 1.5;
 }
 
-html[data-theme="operator"] body {
-  padding: 1.25rem 1.25rem 4rem;
-  font-size: 0.85rem;
-  line-height: 1.45;
-}
-
 html[data-theme="monochrome"] .layout,
 html[data-theme="warm-paper"] .layout,
-html[data-theme="operator"] .layout,
-html[data-theme="espresso"] .layout,
-html[data-theme="cybernetic"] .layout {
+html[data-theme="espresso"] .layout {
   grid-template-columns: 240px 1.25rem minmax(0, 1fr);
   column-gap: 1.25rem;
 }
@@ -4437,9 +4435,7 @@ html[data-theme="warm-paper"] .thought-block {
 }
 
 /* Header styling */
-html[data-theme="operator"] header,
-html[data-theme="espresso"] header,
-html[data-theme="cybernetic"] header {
+html[data-theme="espresso"] header {
   height: 48px;
   padding-bottom: 0;
   margin-bottom: 1.25rem;
@@ -4472,26 +4468,11 @@ html[data-theme="warm-paper"] .sidebar {
   padding: 1rem;
 }
 
-html[data-theme="operator"] .sidebar {
-  background: var(--bg-surface-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 0.85rem;
-}
-
 html[data-theme="espresso"] .sidebar {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 0.85rem;
-}
-
-html[data-theme="cybernetic"] .sidebar {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 0.85rem;
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.08);
 }
 
 /* Card container shapes & radii */
@@ -4512,29 +4493,12 @@ html[data-theme="warm-paper"] .preview-view {
   border-width: 1.5px;
 }
 
-html[data-theme="operator"] .cell,
-html[data-theme="operator"] .session-header,
-html[data-theme="operator"] .run-step,
-html[data-theme="operator"] .prose,
-html[data-theme="operator"] .preview-view {
-  border-radius: 10px;
-}
-
 html[data-theme="espresso"] .cell,
 html[data-theme="espresso"] .session-header,
 html[data-theme="espresso"] .run-step,
 html[data-theme="espresso"] .prose,
 html[data-theme="espresso"] .preview-view {
   border-radius: 8px;
-}
-
-html[data-theme="cybernetic"] .cell,
-html[data-theme="cybernetic"] .session-header,
-html[data-theme="cybernetic"] .run-step,
-html[data-theme="cybernetic"] .prose,
-html[data-theme="cybernetic"] .preview-view {
-  border-radius: 8px;
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.08);
 }
 
 /* Pill-shaped buttons for the 5 prototype styles */
@@ -4562,9 +4526,7 @@ html[data-theme="cybernetic"] button.symbol-button {
 
 html[data-theme="monochrome"] .subtab,
 html[data-theme="warm-paper"] .subtab,
-html[data-theme="operator"] .subtab,
-html[data-theme="espresso"] .subtab,
-html[data-theme="cybernetic"] .subtab {
+html[data-theme="espresso"] .subtab {
   border-radius: 999px !important;
   padding: 0.25rem 0.8rem;
   font-size: 0.78rem;
@@ -4573,9 +4535,7 @@ html[data-theme="cybernetic"] .subtab {
 
 html[data-theme="monochrome"] .subtabs,
 html[data-theme="warm-paper"] .subtabs,
-html[data-theme="operator"] .subtabs,
-html[data-theme="espresso"] .subtabs,
-html[data-theme="cybernetic"] .subtabs {
+html[data-theme="espresso"] .subtabs {
   display: flex;
   gap: 0.4rem;
   border-bottom: 1px solid var(--border-subtle);
@@ -6050,3 +6010,1111 @@ html[data-theme="warm-paper"] .cell-add-list {
   border-radius: 12px;
   box-shadow: var(--shadow-popup);
 }
+
+/* ==========================================================================
+   OPERATOR STUDIO THEME REFINEMENTS (from design-directions-unknowns.html Dir 1)
+   ========================================================================== */
+
+/* Full-bleed IDE Workbench Layout */
+html[data-theme="operator"] body {
+  max-width: none !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  color: var(--text-main);
+  font-family: var(--font-body);
+}
+
+/* Fixed 48px Header */
+html[data-theme="operator"] header {
+  width: 100% !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  margin: 0 !important;
+  padding: 0 1rem !important;
+  border-bottom: 1.5px solid var(--border-strong) !important;
+  background: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 0 !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="operator"] #home {
+  font-family: var(--font-heading);
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+html[data-theme="operator"] #home::before {
+  content: "🐙";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-weight: 900;
+}
+
+html[data-theme="operator"] #home::after {
+  content: "Operator" !important;
+  display: inline-block !important;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  background: var(--bg-surface-elevated);
+  color: var(--tag-text);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  vertical-align: middle;
+  margin-left: 0.45rem;
+}
+
+html[data-theme="operator"] .directory,
+html[data-theme="operator"] #directory {
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  margin: 0 0 0 0.5rem;
+}
+
+/* Docked Left Sidebar & Gutter Grid Layout */
+html[data-theme="operator"] .layout {
+  display: grid !important;
+  grid-template-columns: 240px 18px minmax(0, 1fr) !important;
+  column-gap: 0 !important;
+  row-gap: 0 !important;
+  flex: 1;
+  min-height: calc(100vh - 48px);
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  align-items: stretch !important;
+}
+
+html[data-theme="operator"] .layout.folders-hidden {
+  grid-template-columns: 0px 18px minmax(0, 1fr) !important;
+}
+
+html[data-theme="operator"] .sidebar {
+  grid-column: 1;
+  grid-row: 1;
+  position: sticky;
+  top: 0;
+  height: calc(100vh - 48px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  background: var(--bg-surface);
+  border-right: 1.5px solid var(--border-strong) !important;
+  border-left: none !important;
+  border-top: none !important;
+  border-bottom: none !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="operator"] .sidebar-header {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1.5px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+}
+
+html[data-theme="operator"] .tree-root {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin: 0;
+}
+
+html[data-theme="operator"] .tree-root::before {
+  display: none !important;
+}
+
+html[data-theme="operator"] .sidebar .tree {
+  list-style: none;
+  padding: 0.4rem 0.35rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+html[data-theme="operator"] .sidebar button,
+html[data-theme="operator"] .sidebar a {
+  border-radius: 6px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-height: unset !important;
+}
+
+html[data-theme="operator"] .sidebar .tree-notebook a,
+html[data-theme="operator"] .sidebar .tree-open,
+html[data-theme="operator"] .sidebar .tree-file-name {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  padding: 0.35rem 0.6rem;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: all 120ms ease;
+}
+
+html[data-theme="operator"] .sidebar .tree-notebook a:hover,
+html[data-theme="operator"] .sidebar .tree-open:hover,
+html[data-theme="operator"] .sidebar summary:hover {
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main);
+}
+
+html[data-theme="operator"] .sidebar .tree-notebook a[aria-current="page"],
+html[data-theme="operator"] .sidebar .tree-open[aria-current="page"] {
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main) !important;
+  font-weight: 600 !important;
+  border: 1px solid var(--border-strong) !important;
+}
+
+html[data-theme="operator"] .sidebar .tree-menu-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem !important;
+  height: 1.35rem !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-faint) !important;
+  font-size: 0.85rem !important;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: all 120ms ease;
+}
+
+html[data-theme="operator"] .sidebar .tree-menu-button:hover {
+  opacity: 1;
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main) !important;
+}
+
+/* 18px Vertical Gutter Column Divider */
+html[data-theme="operator"] .column-toggle {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  position: sticky !important;
+  top: 0 !important;
+  height: calc(100vh - 48px) !important;
+  width: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  border: none !important;
+  border-right: 1.5px solid var(--border-strong) !important;
+  border-radius: 0 !important;
+  background: var(--bg-surface) !important;
+  color: var(--text-faint) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0.75rem !important;
+  cursor: pointer !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  z-index: 5;
+  transition: all 120ms ease;
+}
+
+html[data-theme="operator"] .column-toggle:hover {
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main) !important;
+}
+
+/* Main Column & Subtabs */
+html[data-theme="operator"] .layout > main {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: var(--bg-canvas) !important;
+}
+
+html[data-theme="operator"] #session {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+html[data-theme="operator"] #subtabs {
+  order: 1 !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  margin: 0 !important;
+  padding: 0 0.5rem !important;
+  display: flex !important;
+  align-items: center !important;
+  background: var(--bg-surface) !important;
+  border-bottom: 1.5px solid var(--border-strong) !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="operator"] .subtab {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1.5px solid var(--border-strong) !important;
+  border-radius: 0 !important;
+  height: 100% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0 0.85rem !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.78rem !important;
+  color: var(--text-faint) !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="operator"] .subtab[aria-current="page"],
+html[data-theme="operator"] .subtab-wrap[aria-current="page"] .subtab {
+  background: var(--bg-canvas) !important;
+  color: var(--text-main) !important;
+  border-top: 2px solid var(--accent) !important;
+  font-weight: 600 !important;
+}
+
+html[data-theme="operator"] .session-header {
+  order: 2 !important;
+  margin: 0 !important;
+  padding: 0.65rem 1.25rem !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 0.75rem !important;
+  border-radius: 0 !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 1.5px solid var(--border-strong) !important;
+  box-shadow: none !important;
+  background: var(--bg-surface) !important;
+}
+
+html[data-theme="operator"] #title {
+  font-family: var(--font-heading);
+  font-size: 1.15rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
+  margin: 0;
+}
+
+html[data-theme="operator"] #notebook.path {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  margin: 0;
+}
+
+html[data-theme="operator"] #session-status {
+  order: 3 !important;
+  padding: 0.25rem 1.25rem !important;
+  margin: 0 !important;
+}
+
+html[data-theme="operator"] #file-view {
+  order: 4 !important;
+}
+
+html[data-theme="operator"] #preview-view {
+  order: 5 !important;
+}
+
+html[data-theme="operator"] #segments {
+  order: 6 !important;
+}
+
+html[data-theme="operator"] #editor {
+  order: 7 !important;
+}
+
+html[data-theme="operator"] #add-cells {
+  order: 8 !important;
+}
+
+html[data-theme="operator"] #run-view {
+  order: 9 !important;
+}
+
+/* Centered Canvas for Notebook Content */
+html[data-theme="operator"] #segments,
+html[data-theme="operator"] #add-cells,
+html[data-theme="operator"] #run-view,
+html[data-theme="operator"] #editor,
+html[data-theme="operator"] #preview-view,
+html[data-theme="operator"] #list {
+  max-width: 960px !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="operator"] #segments {
+  padding: 1.5rem 1.25rem 0 !important;
+}
+
+html[data-theme="operator"] #add-cells {
+  display: flex !important;
+  justify-content: center !important;
+  gap: 0.75rem !important;
+  padding: 0.75rem !important;
+  border: 1.5px dashed var(--border-strong) !important;
+  border-radius: 10px !important;
+  background: var(--bg-surface) !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 4rem !important;
+}
+
+html[data-theme="operator"] #list {
+  padding: 2rem 1.5rem !important;
+}
+
+/* Cell Cards & Left Stripes */
+html[data-theme="operator"] .cell {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(20, 20, 19, 0.04);
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+html[data-theme="operator"] .cell:hover {
+  border-color: var(--text-main);
+  box-shadow: 0 8px 24px rgba(20, 20, 19, 0.08);
+}
+
+html[data-theme="operator"] .cell.ok,
+html[data-theme="operator"] .run-step.ok {
+  border-left: 4px solid var(--olive, #788c5d) !important;
+}
+
+html[data-theme="operator"] .cell.running,
+html[data-theme="operator"] .run-step.running {
+  border-left: 4px solid var(--accent, #d97757) !important;
+}
+
+html[data-theme="operator"] .cell.stale,
+html[data-theme="operator"] .run-step.stale {
+  border-left: 4px solid var(--purple-stale, #7e22ce) !important;
+}
+
+html[data-theme="operator"] .cell.interrupted,
+html[data-theme="operator"] .run-step.interrupted {
+  border-left: 4px solid var(--accent, #d97757) !important;
+}
+
+html[data-theme="operator"] .cell.error,
+html[data-theme="operator"] .cell.timeout,
+html[data-theme="operator"] .run-step.error,
+html[data-theme="operator"] .run-step.timeout {
+  border-left: 4px solid #b91c1c !important;
+}
+
+html[data-theme="operator"] .cell-header {
+  background: var(--bg-surface-elevated);
+  border-bottom: 1.5px solid var(--border-subtle);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
+html[data-theme="operator"] .cell-id {
+  color: var(--accent);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+html[data-theme="operator"] .cell.prompt .cell-body,
+html[data-theme="operator"] .cell.prompt .cell-body p {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-main);
+}
+
+/* Thought Container */
+html[data-theme="operator"] .thought-block,
+html[data-theme="operator"] .cell-thinking {
+  margin: 0.9rem 0;
+  border: 1.5px dashed var(--accent) !important;
+  border-radius: 8px !important;
+  background: #fdfaf6 !important;
+  padding: 0.8rem 1rem !important;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+html[data-theme="operator"][data-mode="dark"] .thought-block,
+html[data-theme="operator"][data-mode="dark"] .cell-thinking {
+  background: #241d1a !important;
+}
+
+html[data-theme="operator"] .cell-thinking summary {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  font-weight: 700;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+html[data-theme="operator"] .cell-thinking summary::before {
+  content: "THOUGHT PASS: ";
+}
+
+/* Bash Terminal Box */
+html[data-theme="operator"] .cell.bash .cell-output,
+html[data-theme="operator"] .cell.bash pre {
+  background: #141413 !important;
+  color: #e6edf3 !important;
+  border-radius: 8px;
+  border: 1px solid #272730;
+  padding: 0.85rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+/* Operator Pill Buttons */
+html[data-theme="operator"] button,
+html[data-theme="operator"] a.button,
+html[data-theme="operator"] select {
+  border-radius: 999px !important;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  border: 1.5px solid var(--border-strong) !important;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  transition: all 120ms ease;
+}
+
+html[data-theme="operator"] button:hover:not(:disabled),
+html[data-theme="operator"] a.button:hover,
+html[data-theme="operator"] select:hover:not(:disabled) {
+  background: var(--bg-surface-elevated);
+  border-color: var(--text-main) !important;
+  color: var(--text-main);
+}
+
+html[data-theme="operator"] #run-all,
+html[data-theme="operator"] #tree-new,
+html[data-theme="operator"] .primary,
+html[data-theme="operator"] button[type="submit"] {
+  background: var(--text-main) !important;
+  border-color: var(--text-main) !important;
+  color: var(--bg-surface) !important;
+  font-weight: 600;
+}
+
+html[data-theme="operator"] #run-all:hover:not(:disabled),
+html[data-theme="operator"] #tree-new:hover:not(:disabled),
+html[data-theme="operator"] .primary:hover:not(:disabled),
+html[data-theme="operator"] button[type="submit"]:hover:not(:disabled) {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="operator"] #interrupt,
+html[data-theme="operator"] .danger {
+  color: #b91c1c !important;
+  border-color: var(--border-strong) !important;
+  background: var(--bg-surface) !important;
+}
+
+html[data-theme="operator"] #interrupt:hover:not(:disabled),
+html[data-theme="operator"] .danger:hover:not(:disabled) {
+  background: #fef2f2 !important;
+  border-color: #b91c1c !important;
+}
+
+
+/* ==========================================================================
+   CYBERNETIC OBSIDIAN THEME REFINEMENTS (from design-directions-magpie.html)
+   ========================================================================== */
+
+/* Full-bleed IDE Workbench Layout */
+html[data-theme="cybernetic"] body {
+  max-width: none !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  color: var(--text-main);
+  font-family: var(--font-body);
+}
+
+/* Fixed 48px Header */
+html[data-theme="cybernetic"] header {
+  width: 100% !important;
+  height: 48px !important;
+  min-height: 48px !important;
+  margin: 0 !important;
+  padding: 0 1rem !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  background: var(--banner-bg, var(--bg-surface));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 0 !important;
+  box-sizing: border-box;
+}
+
+/* Brand Logo */
+html[data-theme="cybernetic"] #home {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+html[data-theme="cybernetic"] #home::before {
+  content: "🐙";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--badge-bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--badge-text);
+  font-size: 0.85rem;
+  font-weight: 900;
+}
+
+html[data-theme="cybernetic"] #home::after {
+  content: "Obsidian" !important;
+  display: inline-block !important;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.12rem 0.45rem;
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  margin-left: 0.25rem;
+}
+
+html[data-theme="cybernetic"] .directory,
+html[data-theme="cybernetic"] #directory {
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  margin: 0 0 0 0.5rem;
+}
+
+/* Docked Left Sidebar & Gutter Grid Layout */
+html[data-theme="cybernetic"] .layout {
+  display: grid !important;
+  grid-template-columns: 240px 18px minmax(0, 1fr) !important;
+  column-gap: 0 !important;
+  row-gap: 0 !important;
+  flex: 1;
+  min-height: calc(100vh - 48px);
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  align-items: stretch !important;
+}
+
+html[data-theme="cybernetic"] .layout.folders-hidden {
+  grid-template-columns: 0px 18px minmax(0, 1fr) !important;
+}
+
+html[data-theme="cybernetic"] .sidebar {
+  grid-column: 1;
+  grid-row: 1;
+  position: sticky;
+  top: 0;
+  height: calc(100vh - 48px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  background: var(--bg-surface-elevated);
+  border-right: 1px solid var(--border-subtle) !important;
+  border-left: none !important;
+  border-top: none !important;
+  border-bottom: none !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="cybernetic"] .sidebar-header {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+}
+
+html[data-theme="cybernetic"] .tree-root {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin: 0;
+}
+
+html[data-theme="cybernetic"] .tree-root::before {
+  display: none !important;
+}
+
+html[data-theme="cybernetic"] .sidebar .tree {
+  list-style: none;
+  padding: 0.4rem 0.25rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+html[data-theme="cybernetic"] .sidebar button,
+html[data-theme="cybernetic"] .sidebar a {
+  border-radius: 6px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-height: unset !important;
+}
+
+html[data-theme="cybernetic"] .sidebar .tree-notebook a,
+html[data-theme="cybernetic"] .sidebar .tree-open,
+html[data-theme="cybernetic"] .sidebar .tree-file-name {
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  padding: 0.35rem 0.5rem;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: all 100ms ease;
+}
+
+html[data-theme="cybernetic"] .sidebar .tree-notebook a:hover,
+html[data-theme="cybernetic"] .sidebar .tree-open:hover,
+html[data-theme="cybernetic"] .sidebar summary:hover {
+  background: var(--bg-surface) !important;
+  color: var(--text-main);
+}
+
+html[data-theme="cybernetic"] .sidebar .tree-notebook a[aria-current="page"],
+html[data-theme="cybernetic"] .sidebar .tree-open[aria-current="page"] {
+  background: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+  font-weight: 600 !important;
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+html[data-theme="cybernetic"] .sidebar .tree-menu-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem !important;
+  height: 1.35rem !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-faint) !important;
+  font-size: 0.85rem !important;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: all 120ms ease;
+}
+
+html[data-theme="cybernetic"] .sidebar .tree-menu-button:hover {
+  opacity: 1;
+  background: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+}
+
+/* 18px Vertical Gutter Column Divider */
+html[data-theme="cybernetic"] .column-toggle {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  position: sticky !important;
+  top: 0 !important;
+  height: calc(100vh - 48px) !important;
+  width: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  border: none !important;
+  border-right: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-faint) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0.75rem !important;
+  cursor: pointer !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  z-index: 5;
+  transition: all 120ms ease;
+}
+
+html[data-theme="cybernetic"] .column-toggle:hover {
+  background: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+}
+
+/* Main Column & Subtabs */
+html[data-theme="cybernetic"] .layout > main {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: var(--bg-canvas) !important;
+}
+
+html[data-theme="cybernetic"] #session {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+html[data-theme="cybernetic"] #subtabs {
+  order: 1 !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  margin: 0 !important;
+  padding: 0 0.5rem !important;
+  display: flex !important;
+  align-items: center !important;
+  background: var(--bg-surface-elevated) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="cybernetic"] .subtab {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  height: 100% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0 0.85rem !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.78rem !important;
+  color: var(--text-faint) !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="cybernetic"] .subtab[aria-current="page"],
+html[data-theme="cybernetic"] .subtab-wrap[aria-current="page"] .subtab {
+  background: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+  border-top: 2px solid var(--text-main) !important;
+  font-weight: 600 !important;
+}
+
+html[data-theme="cybernetic"] .session-header {
+  order: 2 !important;
+  margin: 0 !important;
+  padding: 0.65rem 1.25rem !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 0.75rem !important;
+  border-radius: 0 !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  box-shadow: none !important;
+  background: var(--bg-surface) !important;
+}
+
+html[data-theme="cybernetic"] #title {
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+html[data-theme="cybernetic"] #notebook.path {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  margin: 0;
+}
+
+html[data-theme="cybernetic"] #session-status {
+  order: 3 !important;
+  padding: 0.25rem 1.25rem !important;
+  margin: 0 !important;
+}
+
+html[data-theme="cybernetic"] #file-view {
+  order: 4 !important;
+}
+
+html[data-theme="cybernetic"] #preview-view {
+  order: 5 !important;
+}
+
+html[data-theme="cybernetic"] #segments {
+  order: 6 !important;
+}
+
+html[data-theme="cybernetic"] #editor {
+  order: 7 !important;
+}
+
+html[data-theme="cybernetic"] #add-cells {
+  order: 8 !important;
+}
+
+html[data-theme="cybernetic"] #run-view {
+  order: 9 !important;
+}
+
+/* Centered Canvas for Notebook Content */
+html[data-theme="cybernetic"] #segments,
+html[data-theme="cybernetic"] #add-cells,
+html[data-theme="cybernetic"] #run-view,
+html[data-theme="cybernetic"] #editor,
+html[data-theme="cybernetic"] #preview-view,
+html[data-theme="cybernetic"] #list {
+  max-width: 960px !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-sizing: border-box;
+}
+
+html[data-theme="cybernetic"] #segments {
+  padding: 1.5rem 1.25rem 0 !important;
+}
+
+html[data-theme="cybernetic"] #add-cells {
+  display: flex !important;
+  justify-content: center !important;
+  gap: 0.75rem !important;
+  padding: 0.75rem !important;
+  border: 1.5px dashed var(--border-subtle) !important;
+  border-radius: 10px !important;
+  background: var(--bg-surface) !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 4rem !important;
+}
+
+html[data-theme="cybernetic"] #list {
+  padding: 2rem 1.5rem !important;
+}
+
+/* Cell Cards & Left Stripes */
+html[data-theme="cybernetic"] .cell {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+html[data-theme="cybernetic"] .cell.ok,
+html[data-theme="cybernetic"] .run-step.ok {
+  border-left: 3px solid var(--accent-green, #10b981) !important;
+}
+
+html[data-theme="cybernetic"] .cell.running,
+html[data-theme="cybernetic"] .run-step.running {
+  border-left: 3px solid var(--accent, #2563eb) !important;
+}
+
+html[data-theme="cybernetic"] .cell.stale,
+html[data-theme="cybernetic"] .run-step.stale {
+  border-left: 3px solid var(--accent-purple, #7c3aed) !important;
+}
+
+html[data-theme="cybernetic"] .cell.interrupted,
+html[data-theme="cybernetic"] .run-step.interrupted {
+  border-left: 3px solid #f59e0b !important;
+}
+
+html[data-theme="cybernetic"] .cell.error,
+html[data-theme="cybernetic"] .cell.timeout,
+html[data-theme="cybernetic"] .run-step.error,
+html[data-theme="cybernetic"] .run-step.timeout {
+  border-left: 3px solid #ef4444 !important;
+}
+
+html[data-theme="cybernetic"][data-mode="dark"] .cell.ok {
+  box-shadow: inset 2px 0 8px rgba(16, 185, 129, 0.2);
+}
+
+html[data-theme="cybernetic"][data-mode="dark"] .cell.running {
+  box-shadow: inset 2px 0 8px rgba(56, 189, 248, 0.25);
+}
+
+html[data-theme="cybernetic"] .cell-header {
+  background: color-mix(in srgb, var(--bg-surface-elevated) 50%, var(--bg-surface));
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+html[data-theme="cybernetic"] .cell-id {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+html[data-theme="cybernetic"] .cell.prompt .cell-body,
+html[data-theme="cybernetic"] .cell.prompt .cell-body p {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-main);
+}
+
+/* Thought Container */
+html[data-theme="cybernetic"] .thought-block,
+html[data-theme="cybernetic"] .cell-thinking {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.6rem 0.85rem;
+  margin: 0.75rem 0;
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* Bash Terminal Box */
+html[data-theme="cybernetic"] .cell.bash .cell-output,
+html[data-theme="cybernetic"] .cell.bash pre {
+  background: #0e0e11 !important;
+  color: #f4f4f5 !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 0.85rem 1rem;
+}
+
+/* Cybernetic Pill Buttons */
+html[data-theme="cybernetic"] button,
+html[data-theme="cybernetic"] a.button,
+html[data-theme="cybernetic"] select {
+  border-radius: 999px !important;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 560;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-surface);
+  color: var(--text-main);
+  transition: all 120ms ease;
+  box-shadow: var(--shadow-sm);
+}
+
+html[data-theme="cybernetic"][data-mode="light"] #run-all,
+html[data-theme="cybernetic"][data-mode="light"] #tree-new,
+html[data-theme="cybernetic"][data-mode="light"] .primary,
+html[data-theme="cybernetic"][data-mode="light"] button[type="submit"] {
+  background: #111112 !important;
+  border-color: #111112 !important;
+  color: #fafafa !important;
+  font-weight: 600;
+}
+
+html[data-theme="cybernetic"][data-mode="dark"] #run-all,
+html[data-theme="cybernetic"][data-mode="dark"] #tree-new,
+html[data-theme="cybernetic"][data-mode="dark"] .primary,
+html[data-theme="cybernetic"][data-mode="dark"] button[type="submit"] {
+  background: #4f46e5 !important;
+  border-color: #6366f1 !important;
+  color: #ffffff !important;
+  font-weight: 700;
+}
+
+html[data-theme="cybernetic"] #interrupt,
+html[data-theme="cybernetic"] .danger {
+  color: #ef4444 !important;
+  border-color: var(--border-subtle) !important;
+  background: var(--bg-surface) !important;
+}
+
