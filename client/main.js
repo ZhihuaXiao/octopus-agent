@@ -2757,7 +2757,7 @@ function symbolIcon(marks, filled = false) {
  * screen reader.
  * @param {string} className
  * @param {string} title
- * @param {SVGSVGElement} icon
+ * @param {SVGSVGElement | string} icon
  */
 function symbolButton(className, title, icon) {
   const button = document.createElement("button");
@@ -2831,15 +2831,6 @@ function markdownIcon() {
 /** A capital T: Plain text format. */
 function plainIcon() {
   return symbolIcon(["M3 4.5h10", "M8 4.5v7.5", "M5.5 12h5"]);
-}
-
-/** A pencil: edit. */
-function editIcon() {
-  return symbolIcon([
-    "M9.4 2.2 13.8 6.6 5.6 14.8 1.8 14.2 2.4 10.4z",
-    "M8.6 3 11.2 5.6",
-    "M2.6 13.4 4.2 11.8",
-  ]);
 }
 
 /** A plus sign: add. */
@@ -2919,7 +2910,7 @@ function copyButton(text, symbol) {
  * @param {CellView} cell
  */
 function cellEditButton(cell) {
-  const button = symbolButton("cell-edit", `Edit ${cell.id}`, editIcon());
+  const button = symbolButton("cell-edit", `Edit ${cell.id}`, "✎");
   button.disabled = cell.status === "running";
   button.addEventListener("click", () => editCell(cell.id));
   return button;
