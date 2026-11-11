@@ -242,6 +242,11 @@ describe("the client shell", () => {
     expect(html).toContain('id="theme-terminal"');
     expect(html).toContain('id="theme-editorial"');
     expect(html).toContain('id="theme-bento"');
+    expect(html).toContain('id="theme-monochrome"');
+    expect(html).toContain('id="theme-warm-paper"');
+    expect(html).toContain('id="theme-operator"');
+    expect(html).toContain('id="theme-espresso"');
+    expect(html).toContain('id="theme-cybernetic"');
   });
 
   it("serves CSS with definitions for each UI theme", async () => {
@@ -252,6 +257,11 @@ describe("the client shell", () => {
     expect(css).toContain('html[data-theme="terminal"]');
     expect(css).toContain('html[data-theme="editorial"]');
     expect(css).toContain('html[data-theme="bento"]');
+    expect(css).toContain('html[data-theme="monochrome"]');
+    expect(css).toContain('html[data-theme="warm-paper"]');
+    expect(css).toContain('html[data-theme="operator"]');
+    expect(css).toContain('html[data-theme="espresso"]');
+    expect(css).toContain('html[data-theme="cybernetic"]');
   });
 
   it("refuses a request that names some other host", async () => {

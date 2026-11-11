@@ -9348,7 +9348,18 @@ async function disconnect() {
   }
 }
 
-const THEMES = /** @type {const} */ (["original", "minimalist", "terminal", "editorial", "bento"]);
+const THEMES = /** @type {const} */ ([
+  "original",
+  "minimalist",
+  "terminal",
+  "editorial",
+  "bento",
+  "monochrome",
+  "warm-paper",
+  "operator",
+  "espresso",
+  "cybernetic",
+]);
 /** @typedef {(typeof THEMES)[number]} UITheme */
 
 const THEME_STORAGE_KEY = "octo-ui-theme";
@@ -9360,7 +9371,12 @@ const MODE_STORAGE_KEY = "octo-ui-mode";
  * @returns {"dark" | "light"}
  */
 function defaultModeForTheme(theme) {
-  return theme === "minimalist" || theme === "terminal" ? "dark" : "light";
+  return theme === "minimalist" ||
+    theme === "terminal" ||
+    theme === "espresso" ||
+    theme === "cybernetic"
+    ? "dark"
+    : "light";
 }
 
 /**

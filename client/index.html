@@ -10,9 +10,21 @@
         try {
           const theme = localStorage.getItem("octo-ui-theme");
           const mode = localStorage.getItem("octo-ui-mode");
-          if (theme && ["minimalist", "terminal", "editorial", "bento"].includes(theme)) {
+          const validThemes = [
+            "minimalist",
+            "terminal",
+            "editorial",
+            "bento",
+            "monochrome",
+            "warm-paper",
+            "operator",
+            "espresso",
+            "cybernetic",
+          ];
+          if (theme && validThemes.includes(theme)) {
             document.documentElement.setAttribute("data-theme", theme);
-            const defaultMode = theme === "minimalist" || theme === "terminal" ? "dark" : "light";
+            const darkDefaults = ["minimalist", "terminal", "espresso", "cybernetic"];
+            const defaultMode = darkDefaults.includes(theme) ? "dark" : "light";
             document.documentElement.setAttribute(
               "data-mode",
               mode === "dark" || mode === "light" ? mode : defaultMode,
@@ -24,7 +36,7 @@
   </head>
   <body>
     <header>
-      <h1><a href="#" id="home">octo</a></h1>
+      <h1><a href="#" id="home">octo<span class="logo-notebook">notebook</span></a></h1>
       <p id="directory" class="directory"></p>
       <div id="header-actions" class="header-actions">
         <button id="tree-new" type="button" title="Make a new notebook in this directory">
@@ -108,6 +120,51 @@
               title="Bento Dev style (Modular Grid aesthetic)"
             >
               Bento
+            </button>
+            <button
+              id="theme-monochrome"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Modern Monochrome style (High contrast AI lab aesthetic)"
+            >
+              Modern Monochrome
+            </button>
+            <button
+              id="theme-warm-paper"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Warm Paper style (Craft & organic paper aesthetic)"
+            >
+              Warm Paper
+            </button>
+            <button
+              id="theme-operator"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Operator Studio style (Technical developer IDE workbench)"
+            >
+              Operator Studio
+            </button>
+            <button
+              id="theme-espresso"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Espresso Terminal style (Warm coffee & amber CLI workstation)"
+            >
+              Espresso Terminal
+            </button>
+            <button
+              id="theme-cybernetic"
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              title="Cybernetic Obsidian style (HUD-style telemetry & electric cyan)"
+            >
+              Cybernetic Obsidian
             </button>
             <div id="settings-mode-divider" class="settings-divider" role="separator"></div>
             <button

@@ -3664,7 +3664,7 @@ button.context-ring svg {
 }
 
 /* ==========================================================================
-   UI STYLES (PROTOTYPES 1-4 with DARK / LIGHT MODE)
+   UI STYLES (CUSTOM THEMES WITH DARK / LIGHT MODE)
    ========================================================================== */
 
 /* Dark / Light mode toggle button */
@@ -3693,32 +3693,27 @@ button.context-ring svg {
   display: none;
 }
 
-html[data-theme="minimalist"] #theme-mode-toggle,
-html[data-theme="terminal"] #theme-mode-toggle,
-html[data-theme="editorial"] #theme-mode-toggle,
-html[data-theme="bento"] #theme-mode-toggle {
+html[data-theme] #theme-mode-toggle {
   display: inline-flex;
 }
 
-html[data-theme="minimalist"] #settings-mode-divider,
-html[data-theme="terminal"] #settings-mode-divider,
-html[data-theme="editorial"] #settings-mode-divider,
-html[data-theme="bento"] #settings-mode-divider {
+html[data-theme] #settings-mode-divider {
   display: block;
 }
 
-html[data-theme="minimalist"] #menu-mode-toggle,
-html[data-theme="terminal"] #menu-mode-toggle,
-html[data-theme="editorial"] #menu-mode-toggle,
-html[data-theme="bento"] #menu-mode-toggle {
+html[data-theme] #menu-mode-toggle {
   display: flex;
 }
 
+.logo-notebook {
+  display: none;
+}
+
 /* --------------------------------------------------------------------------
-   DESIGN TOKENS (8 combinations from prototypes/index.html)
+   DESIGN TOKENS (DARK & LIGHT MODES FOR EACH THEME)
    -------------------------------------------------------------------------- */
 
-/* 1. Minimalist (Dark fallback & Dark mode) */
+/* 1. Minimalist (Linear / Zed aesthetic) */
 html[data-theme="minimalist"],
 html[data-theme="minimalist"][data-mode="dark"] {
   color-scheme: dark;
@@ -3753,7 +3748,6 @@ html[data-theme="minimalist"][data-mode="dark"] {
   --badge-text: #38bdf8;
 }
 
-/* 1. Minimalist (Light mode) */
 html[data-theme="minimalist"][data-mode="light"] {
   color-scheme: light;
   --bg-canvas: #f8fafc;
@@ -3787,7 +3781,7 @@ html[data-theme="minimalist"][data-mode="light"] {
   --badge-text: #0284c7;
 }
 
-/* 2. Terminal (Dark fallback & Dark mode) */
+/* 2. Terminal (CLI / IDE aesthetic) */
 html[data-theme="terminal"],
 html[data-theme="terminal"][data-mode="dark"] {
   color-scheme: dark;
@@ -3822,7 +3816,6 @@ html[data-theme="terminal"][data-mode="dark"] {
   --badge-text: #34d399;
 }
 
-/* 2. Terminal (Light mode) */
 html[data-theme="terminal"][data-mode="light"] {
   color-scheme: light;
   --bg-canvas: #f1f5f9;
@@ -3856,7 +3849,7 @@ html[data-theme="terminal"][data-mode="light"] {
   --badge-text: #065f46;
 }
 
-/* 3. Editorial (Dark mode) */
+/* 3. Editorial (Craft / Publication aesthetic) */
 html[data-theme="editorial"][data-mode="dark"] {
   color-scheme: dark;
   --bg-canvas: #181716;
@@ -3890,7 +3883,6 @@ html[data-theme="editorial"][data-mode="dark"] {
   --badge-text: #fbbf24;
 }
 
-/* 3. Editorial (Light fallback & Light mode) */
 html[data-theme="editorial"],
 html[data-theme="editorial"][data-mode="light"] {
   color-scheme: light;
@@ -3925,7 +3917,7 @@ html[data-theme="editorial"][data-mode="light"] {
   --badge-text: #92400e;
 }
 
-/* 4. Bento (Dark mode) */
+/* 4. Bento (Modular Grid aesthetic) */
 html[data-theme="bento"][data-mode="dark"] {
   color-scheme: dark;
   --bg-canvas: #09090b;
@@ -3959,7 +3951,6 @@ html[data-theme="bento"][data-mode="dark"] {
   --badge-text: #d8b4fe;
 }
 
-/* 4. Bento (Light fallback & Light mode) */
 html[data-theme="bento"],
 html[data-theme="bento"][data-mode="light"] {
   color-scheme: light;
@@ -3994,31 +3985,360 @@ html[data-theme="bento"][data-mode="light"] {
   --badge-text: #7e22ce;
 }
 
+/* 5. Modern Monochrome (from style-1-magpie.html) */
+html[data-theme="monochrome"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #09090b;
+  --bg-surface: #141416;
+  --bg-surface-elevated: #202024;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --banner-bg: #141416;
+  --tag-bg: #202024;
+  --tag-text: #60a5fa;
+  --text-main: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-faint: #71717a;
+  --border-subtle: #27272a;
+  --border-strong: #3f3f46;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-contrast: #ffffff;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  --font-heading: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.7);
+  --cell-border: 1px solid #27272a;
+  --cell-bg: #141416;
+  --cell-active-border: #3b82f6;
+  --badge-bg: rgba(59, 130, 246, 0.15);
+  --badge-text: #60a5fa;
+}
+
+html[data-theme="monochrome"],
+html[data-theme="monochrome"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #fafafa;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f1f1f2;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --banner-bg: #f1f1f2;
+  --tag-bg: #f1f1f2;
+  --tag-text: #111112;
+  --text-main: #111112;
+  --text-muted: #4a4a50;
+  --text-faint: #85858c;
+  --border-subtle: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --accent: #111112;
+  --accent-hover: #27272a;
+  --accent-contrast: #fafafa;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  --font-heading: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 40px -12px rgba(0, 0, 0, 0.08);
+  --shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.12);
+  --cell-border: 1px solid #e4e4e7;
+  --cell-bg: #ffffff;
+  --cell-active-border: #111112;
+  --badge-bg: #111112;
+  --badge-text: #fafafa;
+}
+
+/* 6. Warm Paper (from style-1-unknowns.html) */
+html[data-theme="warm-paper"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #191917;
+  --bg-surface: #22221f;
+  --bg-surface-elevated: #2b2b27;
+  --bg-hover: rgba(217, 119, 87, 0.08);
+  --banner-bg: #1f1f1c;
+  --tag-bg: #2e2b26;
+  --tag-text: #e89578;
+  --text-main: #faf9f5;
+  --text-muted: #c5c2b8;
+  --text-faint: #87867f;
+  --border-subtle: #383833;
+  --border-strong: #4a4a44;
+  --accent: #d97757;
+  --accent-hover: #b85c3e;
+  --accent-contrast: #ffffff;
+  --olive: #8fa770;
+  --purple-stale: #a855f7;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-heading: ui-serif, Georgia, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --radius-sm: 6px;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-popup: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --cell-border: 1.5px solid #383833;
+  --cell-bg: #22221f;
+  --cell-active-border: #d97757;
+  --badge-bg: #2e2b26;
+  --badge-text: #e89578;
+}
+
+html[data-theme="warm-paper"],
+html[data-theme="warm-paper"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #faf9f5;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f0eee6;
+  --bg-hover: rgba(217, 119, 87, 0.06);
+  --banner-bg: #f0eee6;
+  --tag-bg: #f0eee6;
+  --tag-text: #b85c3e;
+  --text-main: #141413;
+  --text-muted: #3d3d3a;
+  --text-faint: #87867f;
+  --border-subtle: #e6e3da;
+  --border-strong: #d1cfc5;
+  --accent: #d97757;
+  --accent-hover: #b85c3e;
+  --accent-contrast: #ffffff;
+  --olive: #788c5d;
+  --purple-stale: #7e22ce;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-heading: ui-serif, Georgia, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --radius-sm: 6px;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --shadow-card: 0 1px 3px rgba(20, 20, 19, 0.04), 0 8px 24px rgba(20, 20, 19, 0.06);
+  --shadow-popup: 0 12px 32px rgba(20, 20, 19, 0.1);
+  --cell-border: 1.5px solid #d1cfc5;
+  --cell-bg: #ffffff;
+  --cell-active-border: #d97757;
+  --badge-bg: #f0eee6;
+  --badge-text: #b85c3e;
+}
+
+/* 7. Operator Studio (from design-directions-magpie.html Dir 1) */
+html[data-theme="operator"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #0e0e11;
+  --bg-surface: #16161b;
+  --bg-surface-elevated: #202027;
+  --bg-hover: rgba(59, 130, 246, 0.08);
+  --banner-bg: #141419;
+  --tag-bg: #202027;
+  --tag-text: #60a5fa;
+  --text-main: #f4f4f6;
+  --text-muted: #9fa0aa;
+  --text-faint: #6b6c75;
+  --border-subtle: #272730;
+  --border-strong: #383845;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-contrast: #ffffff;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+  --font-heading: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-popup: 0 14px 36px rgba(0, 0, 0, 0.7);
+  --cell-border: 1px solid #272730;
+  --cell-bg: #16161b;
+  --cell-active-border: #3b82f6;
+  --badge-bg: rgba(59, 130, 246, 0.15);
+  --badge-text: #3b82f6;
+}
+
+html[data-theme="operator"],
+html[data-theme="operator"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #fafafa;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f1f1f2;
+  --bg-hover: rgba(37, 99, 235, 0.05);
+  --banner-bg: #f1f1f2;
+  --tag-bg: rgba(37, 99, 235, 0.08);
+  --tag-text: #2563eb;
+  --text-main: #111112;
+  --text-muted: #4a4a50;
+  --text-faint: #85858c;
+  --border-subtle: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-contrast: #ffffff;
+  --font-body: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+  --font-heading: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 8px 20px rgba(0, 0, 0, 0.04);
+  --shadow-popup: 0 12px 30px rgba(0, 0, 0, 0.09);
+  --cell-border: 1px solid #e4e4e7;
+  --cell-bg: #ffffff;
+  --cell-active-border: #2563eb;
+  --badge-bg: #111112;
+  --badge-text: #fafafa;
+}
+
+/* 8. Espresso Terminal (from design-directions-unknowns.html Dir 3: Dark Coffee Roast & Amber Phosphor) */
+html[data-theme="espresso"],
+html[data-theme="espresso"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #100e0c;
+  --bg-surface: #191613;
+  --bg-surface-elevated: #24201c;
+  --bg-hover: rgba(245, 158, 11, 0.1);
+  --banner-bg: #151310;
+  --tag-bg: rgba(245, 158, 11, 0.15);
+  --tag-text: #fbbf24;
+  --text-main: #f6f1e8;
+  --text-muted: #ab9f90;
+  --text-faint: #756a5d;
+  --border-subtle: #342d25;
+  --border-strong: #4f4438;
+  --accent: #f59e0b;
+  --accent-hover: #d97706;
+  --accent-glow: rgba(245, 158, 11, 0.25);
+  --accent-contrast: #100e0c;
+  --font-body: "Space Mono", "JetBrains Mono", monospace;
+  --font-heading: "Space Mono", monospace;
+  --font-mono: "Space Mono", monospace;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.65);
+  --shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.85);
+  --cell-border: 1px solid #342d25;
+  --cell-bg: #191613;
+  --cell-active-border: #f59e0b;
+  --badge-bg: rgba(245, 158, 11, 0.18);
+  --badge-text: #fbbf24;
+}
+
+html[data-theme="espresso"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #ede4d3;
+  --bg-surface: #faf6ee;
+  --bg-surface-elevated: #e2d6c1;
+  --bg-hover: rgba(180, 83, 9, 0.08);
+  --banner-bg: #e2d6c1;
+  --tag-bg: #e2d6c1;
+  --tag-text: #843810;
+  --text-main: #251811;
+  --text-muted: #6e594b;
+  --text-faint: #968170;
+  --border-subtle: #cbb9a3;
+  --border-strong: #aa957c;
+  --accent: #b45309;
+  --accent-hover: #78350f;
+  --accent-glow: rgba(180, 83, 9, 0.15);
+  --accent-contrast: #ffffff;
+  --font-body: "Space Mono", "JetBrains Mono", monospace;
+  --font-heading: "Space Mono", monospace;
+  --font-mono: "Space Mono", monospace;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --shadow-card: 0 1px 4px rgba(37, 24, 17, 0.08), 0 4px 12px rgba(37, 24, 17, 0.04);
+  --shadow-popup: 0 14px 32px rgba(37, 24, 17, 0.15);
+  --cell-border: 1px solid #cbb9a3;
+  --cell-bg: #faf6ee;
+  --cell-active-border: #b45309;
+  --badge-bg: #251811;
+  --badge-text: #faf6ee;
+}
+
+/* 9. Cybernetic Obsidian (from design-directions-magpie.html Dir 3) */
+html[data-theme="cybernetic"],
+html[data-theme="cybernetic"][data-mode="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #0e0e11;
+  --bg-surface: #16161a;
+  --bg-surface-elevated: #1f1f25;
+  --bg-hover: rgba(56, 189, 248, 0.1);
+  --banner-bg: #121216;
+  --tag-bg: rgba(56, 189, 248, 0.12);
+  --tag-text: #38bdf8;
+  --text-main: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-faint: #71717a;
+  --border-subtle: #26262b;
+  --border-strong: #3f3f46;
+  --accent: #38bdf8;
+  --accent-hover: #0284c7;
+  --accent-glow: rgba(56, 189, 248, 0.25);
+  --accent-contrast: #090a0f;
+  --font-body: "JetBrains Mono", monospace;
+  --font-heading: "JetBrains Mono", monospace;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-card: 0 0 0 1px #26262b, 0 4px 16px rgba(0, 0, 0, 0.7);
+  --shadow-popup: 0 0 0 1px #3f3f46, 0 16px 40px rgba(0, 0, 0, 0.85);
+  --cell-border: 1px solid #26262b;
+  --cell-bg: #16161a;
+  --cell-active-border: #38bdf8;
+  --badge-bg: rgba(56, 189, 248, 0.15);
+  --badge-text: #38bdf8;
+}
+
+html[data-theme="cybernetic"][data-mode="light"] {
+  color-scheme: light;
+  --bg-canvas: #f4f4f6;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #e4e4e7;
+  --bg-hover: rgba(2, 132, 199, 0.06);
+  --banner-bg: #e4e4e7;
+  --tag-bg: #e0f2fe;
+  --tag-text: #0284c7;
+  --text-main: #090a0f;
+  --text-muted: #52525b;
+  --text-faint: #71717a;
+  --border-subtle: #d4d4d8;
+  --border-strong: #a1a1aa;
+  --accent: #0284c7;
+  --accent-hover: #0369a1;
+  --accent-glow: rgba(2, 132, 199, 0.15);
+  --accent-contrast: #ffffff;
+  --font-body: "JetBrains Mono", monospace;
+  --font-heading: "JetBrains Mono", monospace;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-card: 0 0 0 1px #d4d4d8, 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-popup: 0 0 0 1px #a1a1aa, 0 12px 28px rgba(0, 0, 0, 0.12);
+  --cell-border: 1px solid #d4d4d8;
+  --cell-bg: #ffffff;
+  --cell-active-border: #0284c7;
+  --badge-bg: #e0f2fe;
+  --badge-text: #0284c7;
+}
+
 /* --------------------------------------------------------------------------
    THEME COMPONENT RULES (Applies only when data-theme is set)
    -------------------------------------------------------------------------- */
 
-html[data-theme="minimalist"] body,
-html[data-theme="terminal"] body,
-html[data-theme="editorial"] body,
-html[data-theme="bento"] body {
+html[data-theme] body {
   background-color: var(--bg-canvas);
   color: var(--text-main);
   font-family: var(--font-body);
 }
 
 /* Header */
-html[data-theme="minimalist"] header,
-html[data-theme="terminal"] header,
-html[data-theme="editorial"] header,
-html[data-theme="bento"] header {
+html[data-theme] header {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-html[data-theme="minimalist"] #home,
-html[data-theme="terminal"] #home,
-html[data-theme="editorial"] #home,
-html[data-theme="bento"] #home {
+html[data-theme] #home {
   font-family: var(--font-heading);
   color: var(--text-main);
   font-weight: 800;
@@ -4028,10 +4348,7 @@ html[data-theme="bento"] #home {
   gap: 0.5rem;
 }
 
-html[data-theme="minimalist"] #home::after,
-html[data-theme="terminal"] #home::after,
-html[data-theme="editorial"] #home::after,
-html[data-theme="bento"] #home::after {
+html[data-theme] #home::after {
   font-size: 0.65rem;
   font-weight: 600;
   padding: 0.1rem 0.4rem;
@@ -4043,6 +4360,7 @@ html[data-theme="bento"] #home::after {
   vertical-align: middle;
 }
 
+/* Brand logo badges */
 html[data-theme="minimalist"] #home::after {
   content: "Linear";
 }
@@ -4055,40 +4373,228 @@ html[data-theme="editorial"] #home::after {
 html[data-theme="bento"] #home::after {
   content: "Bento";
 }
+html[data-theme="monochrome"] #home::after {
+  content: "Monochrome";
+}
+html[data-theme="warm-paper"] #home::after {
+  content: "Paper";
+}
+html[data-theme="operator"] #home::after {
+  content: "Operator";
+}
+html[data-theme="espresso"] #home::after {
+  content: "Espresso";
+}
+html[data-theme="cybernetic"] #home::after {
+  content: "Obsidian";
+}
 
-html[data-theme="minimalist"] .directory,
-html[data-theme="minimalist"] .path,
-html[data-theme="terminal"] .directory,
-html[data-theme="terminal"] .path,
-html[data-theme="editorial"] .directory,
-html[data-theme="editorial"] .path,
-html[data-theme="bento"] .directory,
-html[data-theme="bento"] .path {
+/* Webpage layout container widths & fonts */
+html[data-theme="monochrome"] body,
+html[data-theme="warm-paper"] body,
+html[data-theme="operator"] body {
+  max-width: 1200px;
+  padding: 1.5rem 1.5rem 5rem;
+}
+
+html[data-theme="espresso"] body,
+html[data-theme="cybernetic"] body {
+  max-width: 1040px;
+  padding: 1.25rem 1.25rem 5rem;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+html[data-theme="operator"] body {
+  padding: 1.25rem 1.25rem 4rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+html[data-theme="monochrome"] .layout,
+html[data-theme="warm-paper"] .layout,
+html[data-theme="operator"] .layout,
+html[data-theme="espresso"] .layout,
+html[data-theme="cybernetic"] .layout {
+  grid-template-columns: 240px 1.25rem minmax(0, 1fr);
+  column-gap: 1.25rem;
+}
+
+html[data-theme="warm-paper"] #title,
+html[data-theme="warm-paper"] .prose h1,
+html[data-theme="warm-paper"] .prose h2,
+html[data-theme="warm-paper"] .prose h3,
+html[data-theme="warm-paper"] .preview-view h1,
+html[data-theme="warm-paper"] .preview-view h2,
+html[data-theme="warm-paper"] .preview-view h3 {
+  font-family: var(--font-heading);
+}
+
+html[data-theme="warm-paper"] .thought-block {
+  border: 1.5px dashed var(--accent);
+  border-radius: 8px;
+  background: #fdfaf6;
+}
+
+/* Header styling */
+html[data-theme="operator"] header,
+html[data-theme="espresso"] header,
+html[data-theme="cybernetic"] header {
+  height: 48px;
+  padding-bottom: 0;
+  margin-bottom: 1.25rem;
+}
+
+html[data-theme="monochrome"] header {
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+html[data-theme="warm-paper"] header {
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
+  border-bottom-width: 1.5px;
+}
+
+/* Sidebar card styles */
+html[data-theme="monochrome"] .sidebar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: var(--shadow-card);
+}
+
+html[data-theme="warm-paper"] .sidebar {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+html[data-theme="operator"] .sidebar {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 0.85rem;
+}
+
+html[data-theme="espresso"] .sidebar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.85rem;
+}
+
+html[data-theme="cybernetic"] .sidebar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.85rem;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.08);
+}
+
+/* Card container shapes & radii */
+html[data-theme="monochrome"] .cell,
+html[data-theme="monochrome"] .session-header,
+html[data-theme="monochrome"] .run-step,
+html[data-theme="monochrome"] .prose,
+html[data-theme="monochrome"] .preview-view {
+  border-radius: 12px;
+}
+
+html[data-theme="warm-paper"] .cell,
+html[data-theme="warm-paper"] .session-header,
+html[data-theme="warm-paper"] .run-step,
+html[data-theme="warm-paper"] .prose,
+html[data-theme="warm-paper"] .preview-view {
+  border-radius: 14px;
+  border-width: 1.5px;
+}
+
+html[data-theme="operator"] .cell,
+html[data-theme="operator"] .session-header,
+html[data-theme="operator"] .run-step,
+html[data-theme="operator"] .prose,
+html[data-theme="operator"] .preview-view {
+  border-radius: 10px;
+}
+
+html[data-theme="espresso"] .cell,
+html[data-theme="espresso"] .session-header,
+html[data-theme="espresso"] .run-step,
+html[data-theme="espresso"] .prose,
+html[data-theme="espresso"] .preview-view {
+  border-radius: 8px;
+}
+
+html[data-theme="cybernetic"] .cell,
+html[data-theme="cybernetic"] .session-header,
+html[data-theme="cybernetic"] .run-step,
+html[data-theme="cybernetic"] .prose,
+html[data-theme="cybernetic"] .preview-view {
+  border-radius: 8px;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.08);
+}
+
+/* Pill-shaped buttons for the 5 prototype styles */
+html[data-theme="monochrome"] button,
+html[data-theme="monochrome"] a.button,
+html[data-theme="warm-paper"] button,
+html[data-theme="warm-paper"] a.button,
+html[data-theme="operator"] button,
+html[data-theme="operator"] a.button,
+html[data-theme="espresso"] button,
+html[data-theme="espresso"] a.button,
+html[data-theme="cybernetic"] button,
+html[data-theme="cybernetic"] a.button {
+  border-radius: 999px !important;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.04));
+}
+
+html[data-theme="monochrome"] button.symbol-button,
+html[data-theme="warm-paper"] button.symbol-button,
+html[data-theme="operator"] button.symbol-button,
+html[data-theme="espresso"] button.symbol-button,
+html[data-theme="cybernetic"] button.symbol-button {
+  border-radius: 999px !important;
+}
+
+html[data-theme="monochrome"] .subtab,
+html[data-theme="warm-paper"] .subtab,
+html[data-theme="operator"] .subtab,
+html[data-theme="espresso"] .subtab,
+html[data-theme="cybernetic"] .subtab {
+  border-radius: 999px !important;
+  padding: 0.25rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 560;
+}
+
+html[data-theme="monochrome"] .subtabs,
+html[data-theme="warm-paper"] .subtabs,
+html[data-theme="operator"] .subtabs,
+html[data-theme="espresso"] .subtabs,
+html[data-theme="cybernetic"] .subtabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+html[data-theme] .directory,
+html[data-theme] .path {
   color: var(--text-faint);
   font-family: var(--font-mono);
 }
 
 /* Standard Buttons & Controls */
-html[data-theme="minimalist"] button,
-html[data-theme="minimalist"] a.button,
-html[data-theme="minimalist"] select,
-html[data-theme="minimalist"] input,
-html[data-theme="minimalist"] textarea,
-html[data-theme="terminal"] button,
-html[data-theme="terminal"] a.button,
-html[data-theme="terminal"] select,
-html[data-theme="terminal"] input,
-html[data-theme="terminal"] textarea,
-html[data-theme="editorial"] button,
-html[data-theme="editorial"] a.button,
-html[data-theme="editorial"] select,
-html[data-theme="editorial"] input,
-html[data-theme="editorial"] textarea,
-html[data-theme="bento"] button,
-html[data-theme="bento"] a.button,
-html[data-theme="bento"] select,
-html[data-theme="bento"] input,
-html[data-theme="bento"] textarea {
+html[data-theme] button,
+html[data-theme] a.button,
+html[data-theme] select,
+html[data-theme] input,
+html[data-theme] textarea {
   font-family: var(--font-body);
   font-size: 0.82rem;
   padding: 0.35rem 0.85rem;
@@ -4099,34 +4605,16 @@ html[data-theme="bento"] textarea {
   transition: all 0.15s ease;
 }
 
-html[data-theme="minimalist"] button:hover:not(:disabled),
-html[data-theme="minimalist"] a.button:hover,
-html[data-theme="minimalist"] select:hover:not(:disabled),
-html[data-theme="terminal"] button:hover:not(:disabled),
-html[data-theme="terminal"] a.button:hover,
-html[data-theme="terminal"] select:hover:not(:disabled),
-html[data-theme="editorial"] button:hover:not(:disabled),
-html[data-theme="editorial"] a.button:hover,
-html[data-theme="editorial"] select:hover:not(:disabled),
-html[data-theme="bento"] button:hover:not(:disabled),
-html[data-theme="bento"] a.button:hover,
-html[data-theme="bento"] select:hover:not(:disabled) {
+html[data-theme] button:hover:not(:disabled),
+html[data-theme] a.button:hover,
+html[data-theme] select:hover:not(:disabled) {
   background: var(--bg-surface-elevated);
   border-color: var(--border-strong);
 }
 
-html[data-theme="minimalist"] input:focus,
-html[data-theme="minimalist"] textarea:focus,
-html[data-theme="minimalist"] select:focus,
-html[data-theme="terminal"] input:focus,
-html[data-theme="terminal"] textarea:focus,
-html[data-theme="terminal"] select:focus,
-html[data-theme="editorial"] input:focus,
-html[data-theme="editorial"] textarea:focus,
-html[data-theme="editorial"] select:focus,
-html[data-theme="bento"] input:focus,
-html[data-theme="bento"] textarea:focus,
-html[data-theme="bento"] select:focus {
+html[data-theme] input:focus,
+html[data-theme] textarea:focus,
+html[data-theme] select:focus {
   border-color: var(--accent);
   outline: none;
 }
@@ -4158,79 +4646,37 @@ html[data-theme] #disconnect-button::before {
 }
 
 /* Primary buttons */
-html[data-theme="minimalist"] #tree-new,
-html[data-theme="minimalist"] #run-all,
-html[data-theme="minimalist"] .primary,
-html[data-theme="minimalist"] button[type="submit"],
-html[data-theme="minimalist"] .cell-inline-actions button.cell-run,
-html[data-theme="minimalist"] .cell-inline-actions button.cell-save,
-html[data-theme="terminal"] #tree-new,
-html[data-theme="terminal"] #run-all,
-html[data-theme="terminal"] .primary,
-html[data-theme="terminal"] button[type="submit"],
-html[data-theme="terminal"] .cell-inline-actions button.cell-run,
-html[data-theme="terminal"] .cell-inline-actions button.cell-save,
-html[data-theme="editorial"] #tree-new,
-html[data-theme="editorial"] #run-all,
-html[data-theme="editorial"] .primary,
-html[data-theme="editorial"] button[type="submit"],
-html[data-theme="editorial"] .cell-inline-actions button.cell-run,
-html[data-theme="editorial"] .cell-inline-actions button.cell-save,
-html[data-theme="bento"] #tree-new,
-html[data-theme="bento"] #run-all,
-html[data-theme="bento"] .primary,
-html[data-theme="bento"] button[type="submit"],
-html[data-theme="bento"] .cell-inline-actions button.cell-run,
-html[data-theme="bento"] .cell-inline-actions button.cell-save {
+html[data-theme] #tree-new,
+html[data-theme] #run-all,
+html[data-theme] .primary,
+html[data-theme] button[type="submit"],
+html[data-theme] .cell-inline-actions button.cell-run,
+html[data-theme] .cell-inline-actions button.cell-save {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-contrast);
   font-weight: 600;
 }
 
-html[data-theme="minimalist"] #tree-new:hover:not(:disabled),
-html[data-theme="minimalist"] #run-all:hover:not(:disabled),
-html[data-theme="minimalist"] .primary:hover:not(:disabled),
-html[data-theme="minimalist"] button[type="submit"]:hover:not(:disabled),
-html[data-theme="terminal"] #tree-new:hover:not(:disabled),
-html[data-theme="terminal"] #run-all:hover:not(:disabled),
-html[data-theme="terminal"] .primary:hover:not(:disabled),
-html[data-theme="terminal"] button[type="submit"]:hover:not(:disabled),
-html[data-theme="editorial"] #tree-new:hover:not(:disabled),
-html[data-theme="editorial"] #run-all:hover:not(:disabled),
-html[data-theme="editorial"] .primary:hover:not(:disabled),
-html[data-theme="editorial"] button[type="submit"]:hover:not(:disabled),
-html[data-theme="bento"] #tree-new:hover:not(:disabled),
-html[data-theme="bento"] #run-all:hover:not(:disabled),
-html[data-theme="bento"] .primary:hover:not(:disabled),
-html[data-theme="bento"] button[type="submit"]:hover:not(:disabled) {
+html[data-theme] #tree-new:hover:not(:disabled),
+html[data-theme] #run-all:hover:not(:disabled),
+html[data-theme] .primary:hover:not(:disabled),
+html[data-theme] button[type="submit"]:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
   color: var(--accent-contrast);
 }
 
 /* Danger buttons */
-html[data-theme="minimalist"] #interrupt,
-html[data-theme="minimalist"] .danger,
-html[data-theme="terminal"] #interrupt,
-html[data-theme="terminal"] .danger,
-html[data-theme="editorial"] #interrupt,
-html[data-theme="editorial"] .danger,
-html[data-theme="bento"] #interrupt,
-html[data-theme="bento"] .danger {
+html[data-theme] #interrupt,
+html[data-theme] .danger {
   color: #ef4444;
   border-color: var(--border-subtle);
   background: transparent;
 }
 
-html[data-theme="minimalist"] #interrupt:hover:not(:disabled),
-html[data-theme="minimalist"] .danger:hover:not(:disabled),
-html[data-theme="terminal"] #interrupt:hover:not(:disabled),
-html[data-theme="terminal"] .danger:hover:not(:disabled),
-html[data-theme="editorial"] #interrupt:hover:not(:disabled),
-html[data-theme="editorial"] .danger:hover:not(:disabled),
-html[data-theme="bento"] #interrupt:hover:not(:disabled),
-html[data-theme="bento"] .danger:hover:not(:disabled) {
+html[data-theme] #interrupt:hover:not(:disabled),
+html[data-theme] .danger:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.12);
   border-color: #ef4444;
   color: #ef4444;
@@ -4238,13 +4684,9 @@ html[data-theme="bento"] .danger:hover:not(:disabled) {
 
 /* ==========================================================================
    CELL ACTION BUTTONS (Symbol buttons: fold, run, edit, add, delete, etc.)
-   Fixes the disappearing cell buttons across Terminal, Editorial, and Bento
    ========================================================================== */
 
-html[data-theme="minimalist"] button.symbol-button,
-html[data-theme="terminal"] button.symbol-button,
-html[data-theme="editorial"] button.symbol-button,
-html[data-theme="bento"] button.symbol-button {
+html[data-theme] button.symbol-button {
   width: 1.6rem !important;
   height: 1.6rem !important;
   min-width: 1.6rem !important;
@@ -4265,19 +4707,13 @@ html[data-theme="bento"] button.symbol-button {
   cursor: pointer;
 }
 
-html[data-theme="minimalist"] button.symbol-button:hover:not(:disabled),
-html[data-theme="terminal"] button.symbol-button:hover:not(:disabled),
-html[data-theme="editorial"] button.symbol-button:hover:not(:disabled),
-html[data-theme="bento"] button.symbol-button:hover:not(:disabled) {
+html[data-theme] button.symbol-button:hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--border-strong);
   color: var(--text-main);
 }
 
-html[data-theme="minimalist"] button.symbol-button svg,
-html[data-theme="terminal"] button.symbol-button svg,
-html[data-theme="editorial"] button.symbol-button svg,
-html[data-theme="bento"] button.symbol-button svg {
+html[data-theme] button.symbol-button svg {
   width: 0.95rem !important;
   height: 0.95rem !important;
   min-width: 0.95rem !important;
@@ -4286,83 +4722,53 @@ html[data-theme="bento"] button.symbol-button svg {
   pointer-events: none;
 }
 
-html[data-theme="minimalist"] button.symbol-button path,
-html[data-theme="terminal"] button.symbol-button path,
-html[data-theme="editorial"] button.symbol-button path,
-html[data-theme="bento"] button.symbol-button path {
+html[data-theme] button.symbol-button path {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.4;
 }
 
-html[data-theme="minimalist"] button.symbol-button path.symbol-fill,
-html[data-theme="terminal"] button.symbol-button path.symbol-fill,
-html[data-theme="editorial"] button.symbol-button path.symbol-fill,
-html[data-theme="bento"] button.symbol-button path.symbol-fill {
+html[data-theme] button.symbol-button path.symbol-fill {
   fill: currentColor;
   stroke: none;
 }
 
 /* Run icon button */
-html[data-theme="minimalist"] button.symbol-button.cell-run,
-html[data-theme="terminal"] button.symbol-button.cell-run,
-html[data-theme="editorial"] button.symbol-button.cell-run,
-html[data-theme="bento"] button.symbol-button.cell-run {
+html[data-theme] button.symbol-button.cell-run {
   color: var(--accent);
   background: var(--tag-bg);
   border-color: var(--accent);
 }
 
-html[data-theme="minimalist"] button.symbol-button.cell-run:hover:not(:disabled),
-html[data-theme="terminal"] button.symbol-button.cell-run:hover:not(:disabled),
-html[data-theme="editorial"] button.symbol-button.cell-run:hover:not(:disabled),
-html[data-theme="bento"] button.symbol-button.cell-run:hover:not(:disabled) {
+html[data-theme] button.symbol-button.cell-run:hover:not(:disabled) {
   background: var(--accent);
   color: var(--accent-contrast);
 }
 
 /* Delete / remove / stop buttons */
-html[data-theme="minimalist"] button.symbol-button.cell-stop:hover:not(:disabled),
-html[data-theme="minimalist"] button.symbol-button.cell-remove:hover:not(:disabled),
-html[data-theme="minimalist"] button.symbol-button.cell-delete:hover:not(:disabled),
-html[data-theme="terminal"] button.symbol-button.cell-stop:hover:not(:disabled),
-html[data-theme="terminal"] button.symbol-button.cell-remove:hover:not(:disabled),
-html[data-theme="terminal"] button.symbol-button.cell-delete:hover:not(:disabled),
-html[data-theme="editorial"] button.symbol-button.cell-stop:hover:not(:disabled),
-html[data-theme="editorial"] button.symbol-button.cell-remove:hover:not(:disabled),
-html[data-theme="editorial"] button.symbol-button.cell-delete:hover:not(:disabled),
-html[data-theme="bento"] button.symbol-button.cell-stop:hover:not(:disabled),
-html[data-theme="bento"] button.symbol-button.cell-remove:hover:not(:disabled),
-html[data-theme="bento"] button.symbol-button.cell-delete:hover:not(:disabled) {
+html[data-theme] button.symbol-button.cell-stop:hover:not(:disabled),
+html[data-theme] button.symbol-button.cell-remove:hover:not(:disabled),
+html[data-theme] button.symbol-button.cell-delete:hover:not(:disabled) {
   color: #ef4444;
   background: rgba(239, 68, 68, 0.15);
   border-color: rgba(239, 68, 68, 0.4);
 }
 
 /* Format switch button */
-html[data-theme="minimalist"] button.symbol-button.cell-format[aria-pressed="true"],
-html[data-theme="terminal"] button.symbol-button.cell-format[aria-pressed="true"],
-html[data-theme="editorial"] button.symbol-button.cell-format[aria-pressed="true"],
-html[data-theme="bento"] button.symbol-button.cell-format[aria-pressed="true"] {
+html[data-theme] button.symbol-button.cell-format[aria-pressed="true"] {
   color: var(--accent);
   background: var(--tag-bg);
   border-color: var(--accent);
 }
 
 /* Chevron fold button */
-html[data-theme="minimalist"] button.symbol-button.fold,
-html[data-theme="terminal"] button.symbol-button.fold,
-html[data-theme="editorial"] button.symbol-button.fold,
-html[data-theme="bento"] button.symbol-button.fold {
+html[data-theme] button.symbol-button.fold {
   background: transparent;
   border-color: transparent;
   color: var(--text-muted);
 }
 
-html[data-theme="minimalist"] button.symbol-button.fold:hover:not(:disabled),
-html[data-theme="terminal"] button.symbol-button.fold:hover:not(:disabled),
-html[data-theme="editorial"] button.symbol-button.fold:hover:not(:disabled),
-html[data-theme="bento"] button.symbol-button.fold:hover:not(:disabled) {
+html[data-theme] button.symbol-button.fold:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-main);
 }
@@ -4375,10 +4781,7 @@ button.symbol-button.cell-edit {
 }
 
 /* Sidebar & Tree */
-html[data-theme="minimalist"] .sidebar,
-html[data-theme="terminal"] .sidebar,
-html[data-theme="editorial"] .sidebar,
-html[data-theme="bento"] .sidebar {
+html[data-theme] .sidebar {
   border-right-color: var(--border-subtle);
 }
 
@@ -4468,10 +4871,7 @@ html[data-theme] .notebooks .octo-mark::after {
   margin-left: 0.35rem;
 }
 
-html[data-theme="minimalist"] .tree-root,
-html[data-theme="terminal"] .tree-root,
-html[data-theme="editorial"] .tree-root,
-html[data-theme="bento"] .tree-root {
+html[data-theme] .tree-root {
   color: var(--text-faint);
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -4480,67 +4880,40 @@ html[data-theme="bento"] .tree-root {
   letter-spacing: 0.05em;
 }
 
-html[data-theme="minimalist"] .tree-notebook a,
-html[data-theme="minimalist"] .tree-open,
-html[data-theme="terminal"] .tree-notebook a,
-html[data-theme="terminal"] .tree-open,
-html[data-theme="editorial"] .tree-notebook a,
-html[data-theme="editorial"] .tree-open,
-html[data-theme="bento"] .tree-notebook a,
-html[data-theme="bento"] .tree-open {
+html[data-theme] .tree-notebook a,
+html[data-theme] .tree-open {
   color: var(--text-muted);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
 }
 
-html[data-theme="minimalist"] .tree-notebook a:hover,
-html[data-theme="minimalist"] .tree-open:hover,
-html[data-theme="terminal"] .tree-notebook a:hover,
-html[data-theme="terminal"] .tree-open:hover,
-html[data-theme="editorial"] .tree-notebook a:hover,
-html[data-theme="editorial"] .tree-open:hover,
-html[data-theme="bento"] .tree-notebook a:hover,
-html[data-theme="bento"] .tree-open:hover {
+html[data-theme] .tree-notebook a:hover,
+html[data-theme] .tree-open:hover {
   background: var(--bg-hover);
   color: var(--text-main);
 }
 
-html[data-theme="minimalist"] .tree-notebook a[aria-current="page"],
-html[data-theme="minimalist"] .tree-open[aria-current="page"],
-html[data-theme="terminal"] .tree-notebook a[aria-current="page"],
-html[data-theme="terminal"] .tree-open[aria-current="page"],
-html[data-theme="editorial"] .tree-notebook a[aria-current="page"],
-html[data-theme="editorial"] .tree-open[aria-current="page"],
-html[data-theme="bento"] .tree-notebook a[aria-current="page"],
-html[data-theme="bento"] .tree-open[aria-current="page"] {
+html[data-theme] .tree-notebook a[aria-current="page"],
+html[data-theme] .tree-open[aria-current="page"] {
   background: var(--tag-bg);
   color: var(--tag-text);
   font-weight: 600;
 }
 
-html[data-theme="minimalist"] .column-toggle,
-html[data-theme="terminal"] .column-toggle,
-html[data-theme="editorial"] .column-toggle,
-html[data-theme="bento"] .column-toggle {
+html[data-theme] .column-toggle {
   background: var(--bg-surface-elevated);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
   border-radius: var(--radius-sm);
 }
 
-html[data-theme="minimalist"] .column-toggle:hover,
-html[data-theme="terminal"] .column-toggle:hover,
-html[data-theme="editorial"] .column-toggle:hover,
-html[data-theme="bento"] .column-toggle:hover {
+html[data-theme] .column-toggle:hover {
   border-color: var(--border-strong);
   color: var(--text-main);
 }
 
 /* Session Header */
-html[data-theme="minimalist"] .session-header,
-html[data-theme="terminal"] .session-header,
-html[data-theme="editorial"] .session-header,
-html[data-theme="bento"] .session-header {
+html[data-theme] .session-header {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -4549,37 +4922,25 @@ html[data-theme="bento"] .session-header {
   box-shadow: var(--shadow-card);
 }
 
-html[data-theme="minimalist"] #title,
-html[data-theme="terminal"] #title,
-html[data-theme="editorial"] #title,
-html[data-theme="bento"] #title {
+html[data-theme] #title {
   color: var(--text-main);
   font-family: var(--font-heading);
   font-size: 1.25rem;
   font-weight: 700;
 }
 
-html[data-theme="minimalist"] #notebook.path,
-html[data-theme="terminal"] #notebook.path,
-html[data-theme="editorial"] #notebook.path,
-html[data-theme="bento"] #notebook.path {
+html[data-theme] #notebook.path {
   color: var(--text-faint);
   font-family: var(--font-mono);
   font-size: 0.78rem;
 }
 
 /* Subtabs */
-html[data-theme="minimalist"] .subtabs,
-html[data-theme="terminal"] .subtabs,
-html[data-theme="editorial"] .subtabs,
-html[data-theme="bento"] .subtabs {
+html[data-theme] .subtabs {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-html[data-theme="minimalist"] .subtab,
-html[data-theme="terminal"] .subtab,
-html[data-theme="editorial"] .subtab,
-html[data-theme="bento"] .subtab {
+html[data-theme] .subtab {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
@@ -4587,14 +4948,8 @@ html[data-theme="bento"] .subtab {
   font-family: var(--font-body);
 }
 
-html[data-theme="minimalist"] .subtab[aria-current="page"],
-html[data-theme="minimalist"] .subtab-wrap[aria-current="page"] .subtab,
-html[data-theme="terminal"] .subtab[aria-current="page"],
-html[data-theme="terminal"] .subtab-wrap[aria-current="page"] .subtab,
-html[data-theme="editorial"] .subtab[aria-current="page"],
-html[data-theme="editorial"] .subtab-wrap[aria-current="page"] .subtab,
-html[data-theme="bento"] .subtab[aria-current="page"],
-html[data-theme="bento"] .subtab-wrap[aria-current="page"] .subtab {
+html[data-theme] .subtab[aria-current="page"],
+html[data-theme] .subtab-wrap[aria-current="page"] .subtab {
   background: var(--bg-surface-elevated);
   color: var(--accent);
   border-bottom-color: var(--bg-surface-elevated);
@@ -4602,14 +4957,8 @@ html[data-theme="bento"] .subtab-wrap[aria-current="page"] .subtab {
 }
 
 /* Prose block */
-html[data-theme="minimalist"] .prose,
-html[data-theme="minimalist"] .preview-view,
-html[data-theme="terminal"] .prose,
-html[data-theme="terminal"] .preview-view,
-html[data-theme="editorial"] .prose,
-html[data-theme="editorial"] .preview-view,
-html[data-theme="bento"] .prose,
-html[data-theme="bento"] .preview-view {
+html[data-theme] .prose,
+html[data-theme] .preview-view {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -4618,39 +4967,18 @@ html[data-theme="bento"] .preview-view {
   box-shadow: var(--shadow-card);
 }
 
-html[data-theme="minimalist"] .prose h1,
-html[data-theme="minimalist"] .prose h2,
-html[data-theme="minimalist"] .prose h3,
-html[data-theme="minimalist"] .preview-view h1,
-html[data-theme="minimalist"] .preview-view h2,
-html[data-theme="minimalist"] .preview-view h3,
-html[data-theme="terminal"] .prose h1,
-html[data-theme="terminal"] .prose h2,
-html[data-theme="terminal"] .prose h3,
-html[data-theme="terminal"] .preview-view h1,
-html[data-theme="terminal"] .preview-view h2,
-html[data-theme="terminal"] .preview-view h3,
-html[data-theme="editorial"] .prose h1,
-html[data-theme="editorial"] .prose h2,
-html[data-theme="editorial"] .prose h3,
-html[data-theme="editorial"] .preview-view h1,
-html[data-theme="editorial"] .preview-view h2,
-html[data-theme="editorial"] .preview-view h3,
-html[data-theme="bento"] .prose h1,
-html[data-theme="bento"] .prose h2,
-html[data-theme="bento"] .prose h3,
-html[data-theme="bento"] .preview-view h1,
-html[data-theme="bento"] .preview-view h2,
-html[data-theme="bento"] .preview-view h3 {
+html[data-theme] .prose h1,
+html[data-theme] .prose h2,
+html[data-theme] .prose h3,
+html[data-theme] .preview-view h1,
+html[data-theme] .preview-view h2,
+html[data-theme] .preview-view h3 {
   color: var(--text-main);
   font-family: var(--font-heading);
 }
 
 /* Cells */
-html[data-theme="minimalist"] .cell,
-html[data-theme="terminal"] .cell,
-html[data-theme="editorial"] .cell,
-html[data-theme="bento"] .cell {
+html[data-theme] .cell {
   background: var(--cell-bg);
   border: var(--cell-border);
   border-left-width: 4px !important;
@@ -4666,10 +4994,7 @@ html[data-theme="bento"] .cell {
     box-shadow 0.15s ease;
 }
 
-html[data-theme="minimalist"] .cell:hover,
-html[data-theme="terminal"] .cell:hover,
-html[data-theme="editorial"] .cell:hover,
-html[data-theme="bento"] .cell:hover {
+html[data-theme] .cell:hover {
   border-color: var(--border-strong);
 }
 
@@ -4723,10 +5048,7 @@ html[data-theme] .editor .draft-segment {
   padding: 0.85rem 1.15rem;
 }
 
-html[data-theme="minimalist"] .cell-header,
-html[data-theme="terminal"] .cell-header,
-html[data-theme="editorial"] .cell-header,
-html[data-theme="bento"] .cell-header {
+html[data-theme] .cell-header {
   background: var(--bg-surface-elevated);
   border-bottom: 1px solid var(--border-subtle);
   padding: 0.5rem 0.85rem;
@@ -4736,20 +5058,14 @@ html[data-theme="bento"] .cell-header {
   gap: 0.5rem;
 }
 
-html[data-theme="minimalist"] .cell-id,
-html[data-theme="terminal"] .cell-id,
-html[data-theme="editorial"] .cell-id,
-html[data-theme="bento"] .cell-id {
+html[data-theme] .cell-id {
   font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 700;
   color: var(--accent);
 }
 
-html[data-theme="minimalist"] .cell-type,
-html[data-theme="terminal"] .cell-type,
-html[data-theme="editorial"] .cell-type,
-html[data-theme="bento"] .cell-type {
+html[data-theme] .cell-type {
   font-family: var(--font-mono);
   font-size: 0.7rem;
   font-weight: 600;
@@ -4760,10 +5076,7 @@ html[data-theme="bento"] .cell-type {
   color: var(--tag-text);
 }
 
-html[data-theme="minimalist"] .cell-attribute,
-html[data-theme="terminal"] .cell-attribute,
-html[data-theme="editorial"] .cell-attribute,
-html[data-theme="bento"] .cell-attribute {
+html[data-theme] .cell-attribute {
   font-family: var(--font-mono);
   font-size: 0.76rem;
   font-weight: 500;
@@ -4776,57 +5089,29 @@ html[data-theme="bento"] .cell-attribute {
   line-height: 1.3;
 }
 
-html[data-theme="minimalist"] .cell-status,
-html[data-theme="terminal"] .cell-status,
-html[data-theme="editorial"] .cell-status,
-html[data-theme="bento"] .cell-status {
+html[data-theme] .cell-status {
   font-size: 0.72rem;
   font-weight: 600;
 }
 
-html[data-theme="minimalist"] .cell.ok .cell-status,
-html[data-theme="terminal"] .cell.ok .cell-status,
-html[data-theme="editorial"] .cell.ok .cell-status,
-html[data-theme="bento"] .cell.ok .cell-status {
+html[data-theme] .cell.ok .cell-status {
   color: #10b981;
 }
-
-html[data-theme="minimalist"] .cell.running .cell-status,
-html[data-theme="terminal"] .cell.running .cell-status,
-html[data-theme="editorial"] .cell.running .cell-status,
-html[data-theme="bento"] .cell.running .cell-status {
+html[data-theme] .cell.running .cell-status {
   color: var(--accent);
 }
-
-html[data-theme="minimalist"] .cell.stale .cell-status,
-html[data-theme="terminal"] .cell.stale .cell-status,
-html[data-theme="editorial"] .cell.stale .cell-status,
-html[data-theme="bento"] .cell.stale .cell-status {
+html[data-theme] .cell.stale .cell-status {
   color: #8b5cf6;
 }
-
-html[data-theme="minimalist"] .cell.error .cell-status,
-html[data-theme="minimalist"] .cell.timeout .cell-status,
-html[data-theme="terminal"] .cell.error .cell-status,
-html[data-theme="terminal"] .cell.timeout .cell-status,
-html[data-theme="editorial"] .cell.error .cell-status,
-html[data-theme="editorial"] .cell.timeout .cell-status,
-html[data-theme="bento"] .cell.error .cell-status,
-html[data-theme="bento"] .cell.timeout .cell-status {
+html[data-theme] .cell.error .cell-status,
+html[data-theme] .cell.timeout .cell-status {
   color: #ef4444;
 }
-
-html[data-theme="minimalist"] .cell.interrupted .cell-status,
-html[data-theme="terminal"] .cell.interrupted .cell-status,
-html[data-theme="editorial"] .cell.interrupted .cell-status,
-html[data-theme="bento"] .cell.interrupted .cell-status {
+html[data-theme] .cell.interrupted .cell-status {
   color: #f59e0b;
 }
 
-html[data-theme="minimalist"] .cell-body,
-html[data-theme="terminal"] .cell-body,
-html[data-theme="editorial"] .cell-body,
-html[data-theme="bento"] .cell-body {
+html[data-theme] .cell-body {
   background: var(--cell-bg);
   padding: 1rem 1.25rem;
   margin: 0;
@@ -4840,30 +5125,23 @@ html[data-theme="editorial"] .cell.prompt .cell-body {
   font-size: 1.05rem;
 }
 
-html[data-theme="minimalist"] .cell.bash .cell-body,
-html[data-theme="terminal"] .cell.bash .cell-body,
-html[data-theme="editorial"] .cell.bash .cell-body,
-html[data-theme="bento"] .cell.bash .cell-body {
+html[data-theme] .cell.bash .cell-body {
   font-family: var(--font-mono);
   font-size: 0.88rem;
 }
 
-html[data-theme="terminal"] .cell.bash .cell-body::before {
+html[data-theme="terminal"] .cell.bash .cell-body::before,
+html[data-theme="espresso"] .cell.bash .cell-body::before,
+html[data-theme="cybernetic"] .cell.bash .cell-body::before {
   content: "$ ";
   color: var(--accent);
 }
 
-html[data-theme="minimalist"] .cell-stream,
-html[data-theme="terminal"] .cell-stream,
-html[data-theme="editorial"] .cell-stream,
-html[data-theme="bento"] .cell-stream {
+html[data-theme] .cell-stream {
   padding: 0 1.25rem 1rem;
 }
 
-html[data-theme="minimalist"] .cell-thinking pre,
-html[data-theme="terminal"] .cell-thinking pre,
-html[data-theme="editorial"] .cell-thinking pre,
-html[data-theme="bento"] .cell-thinking pre {
+html[data-theme] .cell-thinking pre {
   margin: 0.8rem 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -4875,10 +5153,7 @@ html[data-theme="bento"] .cell-thinking pre {
   font-style: italic;
 }
 
-html[data-theme="minimalist"] .tool-call,
-html[data-theme="terminal"] .tool-call,
-html[data-theme="editorial"] .tool-call,
-html[data-theme="bento"] .tool-call {
+html[data-theme] .tool-call {
   background: var(--bg-surface-elevated);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -4891,44 +5166,26 @@ html[data-theme="bento"] .tool-call {
   padding: 0.45rem 0.75rem;
 }
 
-html[data-theme="minimalist"] .cell-output,
-html[data-theme="terminal"] .cell-output,
-html[data-theme="editorial"] .cell-output,
-html[data-theme="bento"] .cell-output {
+html[data-theme] .cell-output {
   border-top: 1px solid var(--border-subtle);
   color: var(--text-main);
   font-family: var(--font-mono);
 }
 
-html[data-theme="minimalist"] pre,
-html[data-theme="minimalist"] code,
-html[data-theme="terminal"] pre,
-html[data-theme="terminal"] code,
-html[data-theme="editorial"] pre,
-html[data-theme="editorial"] code,
-html[data-theme="bento"] pre,
-html[data-theme="bento"] code {
+html[data-theme] pre,
+html[data-theme] code {
   font-family: var(--font-mono);
 }
 
-html[data-theme="minimalist"] .cell pre,
-html[data-theme="minimalist"] .cell code,
-html[data-theme="terminal"] .cell pre,
-html[data-theme="terminal"] .cell code,
-html[data-theme="editorial"] .cell pre,
-html[data-theme="editorial"] .cell code,
-html[data-theme="bento"] .cell pre,
-html[data-theme="bento"] .cell code {
+html[data-theme] .cell pre,
+html[data-theme] .cell code {
   background: var(--bg-surface-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--accent);
 }
 
-html[data-theme="minimalist"] .artifacts,
-html[data-theme="terminal"] .artifacts,
-html[data-theme="editorial"] .artifacts,
-html[data-theme="bento"] .artifacts {
+html[data-theme] .artifacts {
   background: var(--bg-surface-elevated);
   border-top: 1px solid var(--border-subtle);
   padding: 0.5rem 1.25rem;
@@ -4936,10 +5193,7 @@ html[data-theme="bento"] .artifacts {
   font-size: 0.75rem;
 }
 
-html[data-theme="minimalist"] .artifact,
-html[data-theme="terminal"] .artifact,
-html[data-theme="editorial"] .artifact,
-html[data-theme="bento"] .artifact {
+html[data-theme] .artifact {
   color: var(--accent);
   background: var(--tag-bg);
   border: 1px solid var(--border-subtle);
@@ -4947,10 +5201,7 @@ html[data-theme="bento"] .artifact {
 }
 
 /* Add cells bar */
-html[data-theme="minimalist"] .add-cells,
-html[data-theme="terminal"] .add-cells,
-html[data-theme="editorial"] .add-cells,
-html[data-theme="bento"] .add-cells {
+html[data-theme] .add-cells {
   border: 1.5px dashed var(--border-subtle);
   border-radius: var(--radius-md);
   padding: 0.85rem;
@@ -4959,48 +5210,30 @@ html[data-theme="bento"] .add-cells {
 }
 
 /* Notebooks List & Chats */
-html[data-theme="minimalist"] .notebooks li,
-html[data-theme="terminal"] .notebooks li,
-html[data-theme="editorial"] .notebooks li,
-html[data-theme="bento"] .notebooks li {
+html[data-theme] .notebooks li {
   border-bottom-color: var(--border-subtle);
 }
 
-html[data-theme="minimalist"] .notebooks a:hover .title,
-html[data-theme="terminal"] .notebooks a:hover .title,
-html[data-theme="editorial"] .notebooks a:hover .title,
-html[data-theme="bento"] .notebooks a:hover .title {
+html[data-theme] .notebooks a:hover .title {
   color: var(--accent);
 }
 
-html[data-theme="minimalist"] .notebooks .path,
-html[data-theme="terminal"] .notebooks .path,
-html[data-theme="editorial"] .notebooks .path,
-html[data-theme="bento"] .notebooks .path {
+html[data-theme] .notebooks .path {
   color: var(--text-faint);
   font-family: var(--font-mono);
 }
 
-html[data-theme="minimalist"] .chats-section h2,
-html[data-theme="terminal"] .chats-section h2,
-html[data-theme="editorial"] .chats-section h2,
-html[data-theme="bento"] .chats-section h2 {
+html[data-theme] .chats-section h2 {
   color: var(--text-main);
   font-family: var(--font-heading);
 }
 
-html[data-theme="minimalist"] .hint,
-html[data-theme="terminal"] .hint,
-html[data-theme="editorial"] .hint,
-html[data-theme="bento"] .hint {
+html[data-theme] .hint {
   color: var(--text-muted);
 }
 
 /* Run view steps - Distinct left color bar matching original UI functionality */
-html[data-theme="minimalist"] .run-step,
-html[data-theme="terminal"] .run-step,
-html[data-theme="editorial"] .run-step,
-html[data-theme="bento"] .run-step {
+html[data-theme] .run-step {
   background: var(--cell-bg, var(--bg-surface));
   border: var(--cell-border, 1px solid var(--border-subtle));
   border-left-width: 4px !important;
@@ -5016,10 +5249,7 @@ html[data-theme="bento"] .run-step {
     box-shadow 0.15s ease;
 }
 
-html[data-theme="minimalist"] .run-step:hover,
-html[data-theme="terminal"] .run-step:hover,
-html[data-theme="editorial"] .run-step:hover,
-html[data-theme="bento"] .run-step:hover {
+html[data-theme] .run-step:hover {
   border-color: var(--border-strong);
 }
 
@@ -5117,10 +5347,7 @@ html[data-theme] .run-outcome.stopped {
 }
 
 /* Tooltip */
-html[data-theme="minimalist"] .app-tooltip,
-html[data-theme="terminal"] .app-tooltip,
-html[data-theme="editorial"] .app-tooltip,
-html[data-theme="bento"] .app-tooltip {
+html[data-theme] .app-tooltip {
   background: var(--bg-surface-elevated);
   color: var(--text-main);
   border: 1px solid var(--border-strong);
@@ -5128,14 +5355,8 @@ html[data-theme="bento"] .app-tooltip {
 }
 
 /* Dialogs & Popovers */
-html[data-theme="minimalist"] dialog,
-html[data-theme="minimalist"] .models,
-html[data-theme="terminal"] dialog,
-html[data-theme="terminal"] .models,
-html[data-theme="editorial"] dialog,
-html[data-theme="editorial"] .models,
-html[data-theme="bento"] dialog,
-html[data-theme="bento"] .models {
+html[data-theme] dialog,
+html[data-theme] .models {
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   color: var(--text-main);
@@ -5143,34 +5364,16 @@ html[data-theme="bento"] .models {
   box-shadow: var(--shadow-popup);
 }
 
-html[data-theme="minimalist"] dialog::backdrop,
-html[data-theme="terminal"] dialog::backdrop,
-html[data-theme="editorial"] dialog::backdrop,
-html[data-theme="bento"] dialog::backdrop {
+html[data-theme] dialog::backdrop {
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
 }
 
-html[data-theme="minimalist"] .settings-list,
-html[data-theme="minimalist"] .export-list,
-html[data-theme="minimalist"] .view-list,
-html[data-theme="minimalist"] .tree-menu,
-html[data-theme="minimalist"] .cell-add-list,
-html[data-theme="terminal"] .settings-list,
-html[data-theme="terminal"] .export-list,
-html[data-theme="terminal"] .view-list,
-html[data-theme="terminal"] .tree-menu,
-html[data-theme="terminal"] .cell-add-list,
-html[data-theme="editorial"] .settings-list,
-html[data-theme="editorial"] .export-list,
-html[data-theme="editorial"] .view-list,
-html[data-theme="editorial"] .tree-menu,
-html[data-theme="editorial"] .cell-add-list,
-html[data-theme="bento"] .settings-list,
-html[data-theme="bento"] .export-list,
-html[data-theme="bento"] .view-list,
-html[data-theme="bento"] .tree-menu,
-html[data-theme="bento"] .cell-add-list {
+html[data-theme] .settings-list,
+html[data-theme] .export-list,
+html[data-theme] .view-list,
+html[data-theme] .tree-menu,
+html[data-theme] .cell-add-list {
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   color: var(--text-main);
@@ -5178,26 +5381,672 @@ html[data-theme="bento"] .cell-add-list {
   box-shadow: var(--shadow-popup);
 }
 
-html[data-theme="minimalist"] .settings-list button:hover,
-html[data-theme="minimalist"] .export-list button:hover,
-html[data-theme="minimalist"] .view-list a:hover,
-html[data-theme="minimalist"] .tree-menu button:hover,
-html[data-theme="minimalist"] .cell-add-list button:hover,
-html[data-theme="terminal"] .settings-list button:hover,
-html[data-theme="terminal"] .export-list button:hover,
-html[data-theme="terminal"] .view-list a:hover,
-html[data-theme="terminal"] .tree-menu button:hover,
-html[data-theme="terminal"] .cell-add-list button:hover,
-html[data-theme="editorial"] .settings-list button:hover,
-html[data-theme="editorial"] .export-list button:hover,
-html[data-theme="editorial"] .view-list a:hover,
-html[data-theme="editorial"] .tree-menu button:hover,
-html[data-theme="editorial"] .cell-add-list button:hover,
-html[data-theme="bento"] .settings-list button:hover,
-html[data-theme="bento"] .export-list button:hover,
-html[data-theme="bento"] .view-list a:hover,
-html[data-theme="bento"] .tree-menu button:hover,
-html[data-theme="bento"] .cell-add-list button:hover {
+html[data-theme] .settings-list button:hover,
+html[data-theme] .export-list button:hover,
+html[data-theme] .view-list a:hover,
+html[data-theme] .tree-menu button:hover,
+html[data-theme] .cell-add-list button:hover {
   background: var(--bg-hover);
   color: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   WARM PAPER THEME REFINEMENTS (Faithful to style-1-unknowns.html)
+   -------------------------------------------------------------------------- */
+
+/* Brand Logo: octo notebook [Paper] */
+html[data-theme="warm-paper"] #home {
+  font-family: var(--font-heading);
+  font-size: 1.45rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+html[data-theme="warm-paper"] #home .logo-notebook {
+  display: inline;
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--accent);
+  margin-left: 0.2rem;
+}
+
+html[data-theme="warm-paper"] #home::after {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  background: var(--bg-surface-elevated);
+  color: var(--tag-text);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  vertical-align: middle;
+  margin-left: 0.45rem;
+}
+
+/* Header & Directory */
+html[data-theme="warm-paper"] header {
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1.5px solid var(--border-strong);
+}
+
+html[data-theme="warm-paper"] .directory,
+html[data-theme="warm-paper"] #directory {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+/* Sidebar & Notebook tree */
+html[data-theme="warm-paper"] .sidebar {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+html[data-theme="warm-paper"] .tree-root {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+html[data-theme="warm-paper"] .tree-root::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 1.5px;
+  background: var(--accent);
+}
+
+/* Remove elliptic button shapes from all files and buttons in the sidebar */
+html[data-theme="warm-paper"] .sidebar button,
+html[data-theme="warm-paper"] .sidebar a,
+html[data-theme="warm-paper"] .sidebar .tree-menu-button,
+html[data-theme="warm-paper"] .sidebar .tree-open,
+html[data-theme="warm-paper"] .sidebar .tree-notebook a {
+  border-radius: 6px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-height: unset !important;
+}
+
+/* File and Notebook rows matching prototype */
+html[data-theme="warm-paper"] .sidebar .tree-notebook a,
+html[data-theme="warm-paper"] .sidebar .tree-open,
+html[data-theme="warm-paper"] .sidebar .tree-file-name {
+  color: var(--text-muted) !important;
+  font-size: 0.86rem !important;
+  padding: 0.4rem 0.6rem !important;
+  display: flex !important;
+  align-items: center;
+  border-radius: 6px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+html[data-theme="warm-paper"] .sidebar .tree-notebook a:hover,
+html[data-theme="warm-paper"] .sidebar .tree-open:hover,
+html[data-theme="warm-paper"] .sidebar summary:hover {
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main) !important;
+}
+
+html[data-theme="warm-paper"] .sidebar .tree-notebook a[aria-current="page"],
+html[data-theme="warm-paper"] .sidebar .tree-open[aria-current="page"] {
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main) !important;
+  font-weight: 600 !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 6px !important;
+}
+
+html[data-theme="warm-paper"] .octo-mark::after,
+html[data-theme="warm-paper"] .notebooks .octo-mark::after {
+  color: var(--accent) !important;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+/* Directory menu button (...) on each file/folder: always visible, clean text icon without elliptic button shape */
+html[data-theme="warm-paper"] .sidebar .tree-menu-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem !important;
+  height: 1.35rem !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-faint) !important;
+  font-size: 0.95rem !important;
+  line-height: 1 !important;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+html[data-theme="warm-paper"] .sidebar .tree-menu-button:hover,
+html[data-theme="warm-paper"] .sidebar .tree-menu-button:focus,
+html[data-theme="warm-paper"] .sidebar .tree-menu-button[aria-expanded="true"] {
+  opacity: 1;
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-main) !important;
+}
+
+html[data-theme="warm-paper"] .column-toggle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50% !important;
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  padding: 0;
+  min-width: 22px;
+}
+
+html[data-theme="warm-paper"] .column-toggle:hover {
+  border-color: var(--text-main);
+  color: var(--text-main);
+  background: var(--bg-surface-elevated);
+}
+
+/* Session Header Toolbar */
+html[data-theme="warm-paper"] .session-header {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 0.85rem 1.15rem;
+  margin-bottom: 1.25rem;
+}
+
+html[data-theme="warm-paper"] #title {
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
+}
+
+html[data-theme="warm-paper"] #notebook.path {
+  font-size: 0.76rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* Primary, Danger & Secondary Buttons */
+html[data-theme="warm-paper"] button,
+html[data-theme="warm-paper"] a.button,
+html[data-theme="warm-paper"] select {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: 999px !important;
+  border: 1.5px solid var(--border-strong) !important;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+html[data-theme="warm-paper"] button:hover:not(:disabled),
+html[data-theme="warm-paper"] a.button:hover,
+html[data-theme="warm-paper"] select:hover:not(:disabled) {
+  background: var(--bg-surface-elevated);
+  border-color: var(--text-main) !important;
+  color: var(--text-main);
+}
+
+html[data-theme="warm-paper"] #run-all,
+html[data-theme="warm-paper"] #tree-new,
+html[data-theme="warm-paper"] .primary,
+html[data-theme="warm-paper"] button[type="submit"] {
+  background: var(--text-main) !important;
+  border-color: var(--text-main) !important;
+  color: var(--bg-surface) !important;
+  font-weight: 600;
+  border-radius: 999px !important;
+  border: 1.5px solid var(--text-main) !important;
+}
+
+html[data-theme="warm-paper"] #run-all:hover:not(:disabled),
+html[data-theme="warm-paper"] #tree-new:hover:not(:disabled),
+html[data-theme="warm-paper"] .primary:hover:not(:disabled),
+html[data-theme="warm-paper"] button[type="submit"]:hover:not(:disabled) {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="warm-paper"] #interrupt,
+html[data-theme="warm-paper"] .danger {
+  background: var(--bg-surface) !important;
+  color: #b91c1c !important;
+  border: 1.5px solid var(--border-strong) !important;
+  border-radius: 999px !important;
+}
+
+html[data-theme="warm-paper"] #interrupt:hover:not(:disabled),
+html[data-theme="warm-paper"] .danger:hover:not(:disabled) {
+  background: #fef2f2 !important;
+  border-color: #b91c1c !important;
+}
+
+/* Prose Blocks */
+html[data-theme="warm-paper"] .prose,
+html[data-theme="warm-paper"] .preview-view {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 1.1rem 1.35rem;
+  margin-bottom: 1.25rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+html[data-theme="warm-paper"] .prose h1,
+html[data-theme="warm-paper"] .prose h2,
+html[data-theme="warm-paper"] .prose h3,
+html[data-theme="warm-paper"] .preview-view h1,
+html[data-theme="warm-paper"] .preview-view h2,
+html[data-theme="warm-paper"] .preview-view h3 {
+  color: var(--text-main);
+  font-family: var(--font-heading);
+  font-weight: 500;
+}
+
+/* Cell Cards */
+html[data-theme="warm-paper"] .cell {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 14px;
+  overflow: hidden;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+html[data-theme="warm-paper"] .cell:hover {
+  border-color: var(--text-main);
+  box-shadow: 0 8px 24px rgba(20, 20, 19, 0.08);
+}
+
+/* Cell Status Left Border Stripes */
+html[data-theme="warm-paper"] .cell.ok,
+html[data-theme="warm-paper"] .run-step.ok {
+  border-left: 4px solid var(--olive, #788c5d) !important;
+}
+
+html[data-theme="warm-paper"] .cell.running,
+html[data-theme="warm-paper"] .run-step.running {
+  border-left: 4px solid var(--accent, #d97757) !important;
+}
+
+html[data-theme="warm-paper"] .cell.stale,
+html[data-theme="warm-paper"] .run-step.stale {
+  border-left: 4px solid var(--purple-stale, #7e22ce) !important;
+}
+
+html[data-theme="warm-paper"] .cell.interrupted,
+html[data-theme="warm-paper"] .run-step.interrupted {
+  border-left: 4px solid var(--accent, #d97757) !important;
+}
+
+html[data-theme="warm-paper"] .cell.error,
+html[data-theme="warm-paper"] .cell.timeout,
+html[data-theme="warm-paper"] .run-step.error,
+html[data-theme="warm-paper"] .run-step.timeout {
+  border-left: 4px solid #b91c1c !important;
+}
+
+/* Cell Header & Meta */
+html[data-theme="warm-paper"] .cell-header {
+  background: var(--bg-surface-elevated);
+  border-bottom: 1.5px solid var(--border-subtle);
+  padding: 0.6rem 1rem;
+  font-size: 0.78rem;
+  gap: 0.5rem;
+}
+
+html[data-theme="warm-paper"] .cell-id {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+html[data-theme="warm-paper"] .cell-id::before {
+  content: "#";
+}
+
+html[data-theme="warm-paper"] .cell-type {
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+html[data-theme="warm-paper"] .cell-attribute {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: var(--text-faint) !important;
+  opacity: 1 !important;
+  background: var(--bg-surface);
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  line-height: 1.3;
+}
+
+/* Cell Status Badges with Tinted Pill Background */
+html[data-theme="warm-paper"] .cell-status,
+html[data-theme="warm-paper"] .run-step-state {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+html[data-theme="warm-paper"] .cell.ok .cell-status,
+html[data-theme="warm-paper"] .run-step.ok .run-step-state {
+  background: rgba(120, 140, 93, 0.15);
+  color: var(--olive, #788c5d);
+}
+
+html[data-theme="warm-paper"] .cell.ok .cell-status::before,
+html[data-theme="warm-paper"] .run-step.ok .run-step-state::before {
+  content: "●";
+  font-size: 0.55rem;
+}
+
+html[data-theme="warm-paper"] .cell.running .cell-status,
+html[data-theme="warm-paper"] .run-step.running .run-step-state {
+  background: rgba(217, 119, 87, 0.15);
+  color: var(--accent-hover, #b85c3e);
+}
+
+html[data-theme="warm-paper"] .cell.running .cell-status::before,
+html[data-theme="warm-paper"] .run-step.running .run-step-state::before {
+  content: "●";
+  font-size: 0.55rem;
+}
+
+html[data-theme="warm-paper"] .cell.stale .cell-status,
+html[data-theme="warm-paper"] .run-step.stale .run-step-state {
+  background: rgba(126, 34, 206, 0.12);
+  color: var(--purple-stale, #7e22ce);
+}
+
+html[data-theme="warm-paper"] .cell.stale .cell-status::before,
+html[data-theme="warm-paper"] .run-step.stale .run-step-state::before {
+  content: "▲";
+  font-size: 0.55rem;
+}
+
+html[data-theme="warm-paper"] .cell.interrupted .cell-status,
+html[data-theme="warm-paper"] .run-step.interrupted .run-step-state {
+  background: rgba(217, 119, 87, 0.15);
+  color: var(--accent, #d97757);
+}
+
+html[data-theme="warm-paper"] .cell.error .cell-status,
+html[data-theme="warm-paper"] .cell.timeout .cell-status,
+html[data-theme="warm-paper"] .run-step.error .run-step-state,
+html[data-theme="warm-paper"] .run-step.timeout .run-step-state {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+html[data-theme="warm-paper"] .cell-duration {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  margin-left: 0.2rem;
+}
+
+html[data-theme="warm-paper"] .cell-header button,
+html[data-theme="warm-paper"] .cell-header .symbol-button {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong) !important;
+  color: var(--text-muted);
+  border-radius: 999px !important;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  transition: all 120ms ease;
+}
+
+html[data-theme="warm-paper"] .cell-header button:hover:not(:disabled),
+html[data-theme="warm-paper"] .cell-header .symbol-button:hover:not(:disabled) {
+  background: var(--bg-surface-elevated);
+  border-color: var(--text-main) !important;
+  color: var(--text-main);
+}
+
+/* Prompt Cell Typography (Editorial Serif) */
+html[data-theme="warm-paper"] .cell.prompt .cell-body,
+html[data-theme="warm-paper"] .cell.prompt .cell-body p {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-main);
+}
+
+html[data-theme="warm-paper"] .cell.prompt .cell-body pre {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+html[data-theme="warm-paper"] .cell.bash .cell-body {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  color: var(--text-main);
+  padding: 1.25rem 1.4rem;
+}
+
+/* Thought Pass / Thinking Block */
+html[data-theme="warm-paper"] .thought-block,
+html[data-theme="warm-paper"] .cell-thinking {
+  margin: 0.9rem 0;
+  border: 1.5px dashed var(--accent) !important;
+  border-radius: 8px !important;
+  background: #fdfaf6 !important;
+  padding: 0.8rem 1rem !important;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+html[data-theme="warm-paper"][data-mode="dark"] .thought-block,
+html[data-theme="warm-paper"][data-mode="dark"] .cell-thinking {
+  background: #241d1a !important;
+}
+
+html[data-theme="warm-paper"] .cell-thinking summary {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  font-weight: 700;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+html[data-theme="warm-paper"] .cell-thinking summary::before {
+  content: "THOUGHT PASS: ";
+}
+
+html[data-theme="warm-paper"] .cell-thinking pre,
+html[data-theme="warm-paper"] .cell-thinking .round-thinking {
+  margin: 0.4rem 0 0;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--text-muted) !important;
+  white-space: pre-wrap;
+}
+
+/* Tool Call Block */
+html[data-theme="warm-paper"] .tool-call {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  margin: 0.9rem 0;
+  border-radius: 6px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--olive, #788c5d) !important;
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  color: var(--text-main);
+}
+
+html[data-theme="warm-paper"] .tool-call summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+html[data-theme="warm-paper"] .tool-call summary::before {
+  content: "⚡ Tool Call: ";
+  font-weight: 700;
+  color: var(--olive, #788c5d);
+  margin-right: 0.25rem;
+}
+
+html[data-theme="warm-paper"] .tool-call pre {
+  background: transparent !important;
+  border: none !important;
+  padding: 0.3rem 0;
+  margin: 0;
+  color: var(--text-main) !important;
+}
+
+/* Cell Output & Pre/Code Elements */
+html[data-theme="warm-paper"] .cell-output {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1.5px solid var(--border-subtle);
+  font-size: 0.92rem;
+  color: var(--text-muted);
+}
+
+html[data-theme="warm-paper"] pre,
+html[data-theme="warm-paper"] code {
+  font-family: var(--font-mono);
+}
+
+html[data-theme="warm-paper"] .cell pre,
+html[data-theme="warm-paper"] .cell code {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-main) !important;
+}
+
+/* Artifacts Bar */
+html[data-theme="warm-paper"] .artifacts {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.6rem 1.4rem;
+  background: var(--bg-surface-elevated);
+  border-top: 1.5px solid var(--border-subtle);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+html[data-theme="warm-paper"] .artifact {
+  color: var(--text-main) !important;
+  cursor: pointer;
+  padding: 0.2rem 0.55rem;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 6px;
+  transition: border-color 120ms ease;
+}
+
+html[data-theme="warm-paper"] .artifact:hover {
+  border-color: var(--text-main) !important;
+}
+
+/* Add Cells Bar */
+html[data-theme="warm-paper"] .add-cells {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 12px;
+  margin-top: 1.5rem;
+  background: var(--bg-surface);
+}
+
+/* Dialogs & Menus */
+html[data-theme="warm-paper"] dialog,
+html[data-theme="warm-paper"] .models {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-popup);
+  color: var(--text-main);
+  padding: 1.5rem;
+}
+
+html[data-theme="warm-paper"] dialog::backdrop {
+  background: rgba(20, 20, 19, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+html[data-theme="warm-paper"] .settings-list,
+html[data-theme="warm-paper"] .export-list,
+html[data-theme="warm-paper"] .view-list,
+html[data-theme="warm-paper"] .tree-menu,
+html[data-theme="warm-paper"] .cell-add-list {
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-popup);
 }
