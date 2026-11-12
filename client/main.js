@@ -1558,6 +1558,10 @@ let view = "author";
 /** @type {string[]} */
 let textTabs = [];
 
+/** Open subtabs remembered per notebook path. */
+/** @type {Map<string, string[]>} */
+const notebookTextTabs = new Map();
+
 /** The subtab on show: "notebook", or the path of a text file. */
 /** @type {string} */
 let openPane = "notebook";
@@ -4667,12 +4671,11 @@ function reviewsOf() {
   return watching?.state.reviews ?? [];
 }
 
-/** Opens a subtab for each file still under review, without closing one the reader opened. */
-function rememberReviews() {
-  for (const review of reviewsOf()) {
-    if (!textTabs.includes(review.path)) textTabs.push(review.path);
-  }
-}
+/**
+ * Reviews are tracked in watching.state.reviews, displayed as count in the notebook tab
+ * (e.g. Notebook (9)) and highlighted in the sidebar, rather than force-opening all reviewed files into subtabs.
+ */
+function rememberReviews() {}
 
 /**
  * @param {string} path
@@ -4733,6 +4736,9 @@ function renderSubtabs() {
 function openText(path) {
   if (editFileOnOpen !== undefined && editFileOnOpen !== path) editFileOnOpen = undefined;
   if (!textTabs.includes(path)) textTabs.push(path);
+  if (watching !== undefined) {
+    notebookTextTabs.set(watching.state.notebook, textTabs);
+  }
   openPane = path;
   if (watching === undefined) {
     element("list").hidden = true;
@@ -4769,6 +4775,9 @@ function openText(path) {
 function closeText(path) {
   const index = textTabs.indexOf(path);
   textTabs = textTabs.filter((tab) => tab !== path);
+  if (watching !== undefined) {
+    notebookTextTabs.set(watching.state.notebook, textTabs);
+  }
   fileDrafts.delete(path);
   if (openPane === path) {
     const neighbor = textTabs[Math.min(Math.max(index, 0), textTabs.length - 1)];
@@ -5150,6 +5159,8 @@ async function showFile(path) {
   element("file-wrap").hidden = true;
   element("file-save").hidden = true;
   element("file-cancel-edit").hidden = true;
+  element("file-preview-markdown").hidden = true;
+  element("file-preview-html").hidden = true;
   const review = reviewsOf().find((item) => item.path === path);
   element("file-kind").textContent =
     review === undefined ? textLabel(path) : review.kind === "created" ? "New file" : "Modified";
@@ -5878,7 +5889,11 @@ function apply(event) {
       // The files this Run created or changed are there to be accepted or
       // rejected, once the Run is over and the Notebook is what was on show.
       const firstReview = state.reviews?.[0];
-      if (openPane === "notebook" && firstReview !== undefined) openPane = firstReview.path;
+      if (openPane === "notebook" && firstReview !== undefined) {
+        openText(firstReview.path);
+        void refreshTree();
+        return;
+      }
       renderSession();
       void refreshTree();
       return;
@@ -7928,7 +7943,13 @@ let asked = "";
 /** @param {string} notebook */
 async function showSession(notebook) {
   stopRunningTimer();
-  if (watching?.state.notebook !== notebook) openPane = "notebook";
+  if (watching !== undefined) {
+    notebookTextTabs.set(watching.state.notebook, textTabs);
+  }
+  if (watching?.state.notebook !== notebook) {
+    openPane = "notebook";
+    textTabs = notebookTextTabs.get(notebook) ?? [];
+  }
   const editing = editOnOpen === notebook && view === "author";
   editOnOpen = undefined;
   draft = undefined;
@@ -8106,6 +8127,11 @@ function route() {
   );
   if (asked === "") {
     stopRunningTimer();
+    if (watching !== undefined) {
+      notebookTextTabs.set(watching.state.notebook, textTabs);
+    }
+    textTabs = [];
+    openPane = "notebook";
     watching?.socket.close();
     watching = undefined;
     pendingNewCell = undefined;
