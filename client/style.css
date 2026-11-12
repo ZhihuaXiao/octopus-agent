@@ -328,7 +328,22 @@ body {
 }
 
 /* What the page hides stays hidden, whatever display a rule below gives it when shown. */
-[hidden] {
+[hidden],
+html[data-theme] [hidden],
+html[data-theme] #workspace[hidden],
+html[data-theme] .layout[hidden],
+html[data-theme] #list[hidden],
+html[data-theme] #session[hidden],
+html[data-theme] #add-cells[hidden],
+html[data-theme] #file-view[hidden],
+html[data-theme] #segments[hidden],
+html[data-theme] #editor[hidden],
+html[data-theme] #preview-view[hidden],
+html[data-theme] #run-view[hidden],
+html[data-theme] #connect[hidden],
+html[data-theme] #modes[hidden],
+html[data-theme] #models[hidden],
+html[data-theme] #header-actions[hidden] {
   display: none !important;
 }
 
@@ -4553,26 +4568,20 @@ html[data-theme="espresso"] .preview-view {
   border-radius: 8px;
 }
 
-/* Pill-shaped buttons for the 5 prototype styles */
+/* Pill-shaped buttons for the prototype styles */
 html[data-theme="monochrome"] button,
 html[data-theme="monochrome"] a.button,
 html[data-theme="warm-paper"] button,
 html[data-theme="warm-paper"] a.button,
-html[data-theme="operator"] button,
-html[data-theme="operator"] a.button,
 html[data-theme="espresso"] button,
-html[data-theme="espresso"] a.button,
-html[data-theme="cybernetic"] button,
-html[data-theme="cybernetic"] a.button {
+html[data-theme="espresso"] a.button {
   border-radius: 999px !important;
   box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.04));
 }
 
 html[data-theme="monochrome"] button.symbol-button,
 html[data-theme="warm-paper"] button.symbol-button,
-html[data-theme="operator"] button.symbol-button,
-html[data-theme="espresso"] button.symbol-button,
-html[data-theme="cybernetic"] button.symbol-button {
+html[data-theme="espresso"] button.symbol-button {
   border-radius: 999px !important;
 }
 
@@ -6155,22 +6164,34 @@ html[data-theme="operator"] #directory {
   margin: 0 0 0 0.5rem;
 }
 
-/* Docked Left Sidebar & Gutter Grid Layout */
-html[data-theme="operator"] .layout {
-  display: grid !important;
-  grid-template-columns: 240px 18px minmax(0, 1fr) !important;
-  column-gap: 0 !important;
-  row-gap: 0 !important;
-  flex: 1;
-  min-height: calc(100vh - 48px);
-  width: 100% !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  align-items: stretch !important;
+/* Connect Dialog */
+html[data-theme="operator"] .connect {
+  max-width: 480px;
+  width: 90%;
+  margin: 3.5rem auto;
+  padding: 1.5rem;
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
 }
 
-html[data-theme="operator"] .layout.folders-hidden {
-  grid-template-columns: 0px 18px minmax(0, 1fr) !important;
+/* Docked Left Sidebar & Gutter Grid Layout */
+html[data-theme="operator"] .layout:not([hidden]) {
+  display: grid;
+  grid-template-columns: 240px 18px minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: 0;
+  flex: 1;
+  min-height: calc(100vh - 48px);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  align-items: stretch;
+}
+
+html[data-theme="operator"] .layout.folders-hidden:not([hidden]) {
+  grid-template-columns: 0px 18px minmax(0, 1fr);
 }
 
 html[data-theme="operator"] .sidebar {
@@ -6325,17 +6346,16 @@ html[data-theme="operator"] .layout > main {
   grid-row: 1 !important;
   min-width: 0 !important;
   width: 100% !important;
-  display: flex !important;
-  flex-direction: column !important;
   background: var(--bg-canvas) !important;
 }
 
-html[data-theme="operator"] #session {
-  display: flex !important;
-  flex-direction: column !important;
-  width: 100% !important;
-  padding: 0 !important;
-  margin: 0 !important;
+html[data-theme="operator"] .layout > main:not([hidden]),
+html[data-theme="operator"] #session:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  margin: 0;
 }
 
 html[data-theme="operator"] #subtabs {
@@ -6445,6 +6465,7 @@ html[data-theme="operator"] #add-cells,
 html[data-theme="operator"] #run-view,
 html[data-theme="operator"] #editor,
 html[data-theme="operator"] #preview-view,
+html[data-theme="operator"] #file-view,
 html[data-theme="operator"] #list {
   max-width: 960px !important;
   width: 100% !important;
@@ -6453,20 +6474,21 @@ html[data-theme="operator"] #list {
   box-sizing: border-box;
 }
 
-html[data-theme="operator"] #segments {
+html[data-theme="operator"] #segments,
+html[data-theme="operator"] #file-view {
   padding: 1.5rem 1.25rem 0 !important;
 }
 
-html[data-theme="operator"] #add-cells {
-  display: flex !important;
-  justify-content: center !important;
-  gap: 0.75rem !important;
-  padding: 0.75rem !important;
-  border: 1.5px dashed var(--border-strong) !important;
-  border-radius: 10px !important;
-  background: var(--bg-surface) !important;
-  margin-top: 1.5rem !important;
-  margin-bottom: 4rem !important;
+html[data-theme="operator"] #add-cells:not([hidden]) {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  margin-top: 1.5rem;
+  margin-bottom: 4rem;
 }
 
 html[data-theme="operator"] #list {
@@ -6725,22 +6747,34 @@ html[data-theme="cybernetic"] #directory {
   margin: 0 0 0 0.5rem;
 }
 
-/* Docked Left Sidebar & Gutter Grid Layout */
-html[data-theme="cybernetic"] .layout {
-  display: grid !important;
-  grid-template-columns: 240px 18px minmax(0, 1fr) !important;
-  column-gap: 0 !important;
-  row-gap: 0 !important;
-  flex: 1;
-  min-height: calc(100vh - 48px);
-  width: 100% !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  align-items: stretch !important;
+/* Connect Dialog */
+html[data-theme="cybernetic"] .connect {
+  max-width: 480px;
+  width: 90%;
+  margin: 3.5rem auto;
+  padding: 1.5rem;
+  background: var(--bg-surface);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
 }
 
-html[data-theme="cybernetic"] .layout.folders-hidden {
-  grid-template-columns: 0px 18px minmax(0, 1fr) !important;
+/* Docked Left Sidebar & Gutter Grid Layout */
+html[data-theme="cybernetic"] .layout:not([hidden]) {
+  display: grid;
+  grid-template-columns: 240px 18px minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: 0;
+  flex: 1;
+  min-height: calc(100vh - 48px);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  align-items: stretch;
+}
+
+html[data-theme="cybernetic"] .layout.folders-hidden:not([hidden]) {
+  grid-template-columns: 0px 18px minmax(0, 1fr);
 }
 
 html[data-theme="cybernetic"] .sidebar {
@@ -6896,17 +6930,16 @@ html[data-theme="cybernetic"] .layout > main {
   grid-row: 1 !important;
   min-width: 0 !important;
   width: 100% !important;
-  display: flex !important;
-  flex-direction: column !important;
   background: var(--bg-canvas) !important;
 }
 
-html[data-theme="cybernetic"] #session {
-  display: flex !important;
-  flex-direction: column !important;
-  width: 100% !important;
-  padding: 0 !important;
-  margin: 0 !important;
+html[data-theme="cybernetic"] .layout > main:not([hidden]),
+html[data-theme="cybernetic"] #session:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  margin: 0;
 }
 
 html[data-theme="cybernetic"] #subtabs {
@@ -7015,6 +7048,7 @@ html[data-theme="cybernetic"] #add-cells,
 html[data-theme="cybernetic"] #run-view,
 html[data-theme="cybernetic"] #editor,
 html[data-theme="cybernetic"] #preview-view,
+html[data-theme="cybernetic"] #file-view,
 html[data-theme="cybernetic"] #list {
   max-width: 960px !important;
   width: 100% !important;
@@ -7023,20 +7057,21 @@ html[data-theme="cybernetic"] #list {
   box-sizing: border-box;
 }
 
-html[data-theme="cybernetic"] #segments {
+html[data-theme="cybernetic"] #segments,
+html[data-theme="cybernetic"] #file-view {
   padding: 1.5rem 1.25rem 0 !important;
 }
 
-html[data-theme="cybernetic"] #add-cells {
-  display: flex !important;
-  justify-content: center !important;
-  gap: 0.75rem !important;
-  padding: 0.75rem !important;
-  border: 1.5px dashed var(--border-subtle) !important;
-  border-radius: 10px !important;
-  background: var(--bg-surface) !important;
-  margin-top: 1.5rem !important;
-  margin-bottom: 4rem !important;
+html[data-theme="cybernetic"] #add-cells:not([hidden]) {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1.5px dashed var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  margin-top: 1.5rem;
+  margin-bottom: 4rem;
 }
 
 html[data-theme="cybernetic"] #list {

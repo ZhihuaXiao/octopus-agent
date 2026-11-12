@@ -4672,12 +4672,6 @@ function reviewsOf() {
 }
 
 /**
- * Reviews are tracked in watching.state.reviews, displayed as count in the notebook tab
- * (e.g. Notebook (9)) and highlighted in the sidebar, rather than force-opening all reviewed files into subtabs.
- */
-function rememberReviews() {}
-
-/**
  * @param {string} path
  * @returns {string}
  */
@@ -5420,7 +5414,6 @@ function updateRunningDurations() {
 
 function renderSession() {
   if (watching === undefined) return;
-  rememberReviews();
   const { state } = watching;
   showHeading(state.title, state.notebook);
   const authoring = view === "author";
