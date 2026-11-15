@@ -1,6 +1,6 @@
 {
   "name": "@zhihuaxiao/octopus-agent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A notebook environment for agents, built on pi",
   "license": "MIT",
   "type": "module",
