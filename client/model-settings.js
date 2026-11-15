@@ -48,12 +48,16 @@ export function localEndpoint(baseUrl) {
   }
 }
 
-/** @param {{ provider: string, id: string }} model @param {ModelPage | undefined} page */
+/**
+ * Model visibility is opt-in, independent of stored credentials. Explicit
+ * preferences win over legacy custom model selections; unset models stay off.
+ * @param {{ provider: string, id: string }} model @param {ModelPage | undefined} page
+ */
 export function modelEnabled(model, page) {
   const preference = page?.modelEnabled?.[`${model.provider}/${model.id}`];
   if (typeof preference === "boolean") return preference;
   const custom = page?.providers.find((provider) => provider.id === model.provider);
-  return custom?.models.find((entry) => entry.id === model.id)?.enabled !== false;
+  return custom?.models.find((entry) => entry.id === model.id)?.enabled === true;
 }
 
 /** @param {{ provider: string, id: string }} model @param {ModelPage | undefined} page */

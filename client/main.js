@@ -8218,8 +8218,8 @@ function modelSortPriority(model, page) {
 }
 
 /**
- * Whether `model` is on in the model lists. The page's own preference wins;
- * a custom provider's stored `enabled` is the older answer.
+ * Whether `model` is explicitly selected for the model lists. The page's own
+ * preference wins over legacy custom selections; unset models stay off.
  * @param {ModelChoice} model
  * @param {ModelPage | undefined} page
  */
@@ -8863,7 +8863,7 @@ async function submitDrawerNewModel() {
       /** @type {HTMLInputElement} */ (element("drawer-new-model-tokens")).value,
       DEFAULT_CONTEXT_WINDOW,
     );
-    provider.models.push({ id, contextWindow: tokens, enabled: true });
+    provider.models.push({ id, contextWindow: tokens, enabled: false });
     if (await saveModelProviders(edits, `Added ${id}.`)) {
       idInput.value = "";
       element("drawer-add-model-row").hidden = true;
@@ -8924,7 +8924,7 @@ async function saveNewProvider() {
         {
           id: value("add-prov-model"),
           contextWindow: contextTokens(value("add-prov-tokens"), DEFAULT_CONTEXT_WINDOW),
-          enabled: true,
+          enabled: false,
         },
       ],
       ...(value("add-prov-key") ? { apiKey: value("add-prov-key") } : {}),
@@ -8994,8 +8994,8 @@ let modelCurrent;
 let notebookModels;
 
 /**
- * Models the user can already call: a provider with a stored key, or a custom
- * provider they added.
+ * Models explicitly enabled in Settings → Models whose provider has a stored
+ * key, or whose custom provider was added.
  * @param {ModelPage} page
  * @returns {ModelChoice[]}
  */
@@ -9084,8 +9084,8 @@ function renderNotebookModelChoices(models, query) {
         "li",
         "models-none",
         needle === ""
-          ? "No model with a stored key or a custom provider."
-          : "No matching configured model.",
+          ? "No models enabled. Select models in Settings → Models after configuring a provider."
+          : "No matching enabled model.",
       ),
     );
   }

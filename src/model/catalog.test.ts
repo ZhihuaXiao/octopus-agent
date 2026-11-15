@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { modelEnabled, type ModelPage } from "../../client/model-settings.js";
 import { createModelCatalog, type ModelCatalog, type ModelProbeRuntime } from "./catalog.js";
 
 describe("ModelCatalog", () => {
@@ -63,6 +64,51 @@ describe("ModelCatalog", () => {
     const afterRemove = JSON.parse(await readFile(authFile, "utf8"));
     expect(afterRemove.anthropic).toBeUndefined();
   });
+
+  it.each(["built-in", "custom"] as const)(
+    "keeps %s models unselected after saving a key and preserves explicit selections on replacement",
+    async (kind) => {
+      const customProvider = {
+        id: "test-provider",
+        baseUrl: "https://example.com/v1",
+        api: "openai-completions" as const,
+        models: [{ id: "selected" }, { id: "unselected" }],
+      };
+      const provider = kind === "custom" ? customProvider.id : "anthropic";
+      if (kind === "custom") {
+        expect((await catalog.saveProviders([customProvider])).ok).toBe(true);
+      }
+      const saveCredential = (apiKey: string) =>
+        kind === "custom"
+          ? catalog.saveProviders([{ ...customProvider, apiKey }])
+          : catalog.saveKey(provider, apiKey);
+
+      expect((await saveCredential("test-key")).ok).toBe(true);
+      const saved = await catalog.page();
+      expect(saved.ok).toBe(true);
+      if (!saved.ok) return;
+      // Mirror the serialized model page consumed by the client.
+      const savedPage = JSON.parse(JSON.stringify(saved.value)) as ModelPage;
+      expect(savedPage.keyed).toContain(provider);
+      const models = savedPage.models.filter((model) => model.provider === provider);
+      expect(models.length).toBeGreaterThanOrEqual(2);
+      for (const model of models) {
+        expect(modelEnabled(model, savedPage)).toBe(false);
+      }
+
+      const selected = models[0]!;
+      expect((await catalog.setEnabled(provider, selected.id, true)).ok).toBe(true);
+      expect((await saveCredential("replacement-key")).ok).toBe(true);
+      const reloaded = await catalog.page();
+      expect(reloaded.ok).toBe(true);
+      if (!reloaded.ok) return;
+      const reloadedPage = JSON.parse(JSON.stringify(reloaded.value)) as ModelPage;
+      expect(modelEnabled(selected, reloadedPage)).toBe(true);
+      for (const model of models.slice(1)) {
+        expect(modelEnabled(model, reloadedPage)).toBe(false);
+      }
+    },
+  );
 
   it("probes model availability using an injected runtime adapter", async () => {
     // Add custom provider

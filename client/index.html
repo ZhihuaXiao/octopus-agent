@@ -630,7 +630,8 @@
         <div class="providers-section-title">
           <h3>Model Providers</h3>
           <p class="hint">
-            One credential per provider. Probe a model to check whether it answers.
+            One credential per provider. Saving a credential does not select models; enable them in
+            Configure Models. Probe a model to check whether it answers.
           </p>
         </div>
         <div class="providers-section-actions">
@@ -735,8 +736,9 @@
                 </button>
               </div>
               <p class="hint">
-                Enabled models appear in notebook and cell pickers. Disabling a model does not
-                change a saved default or override.
+                Models start unselected. Enable the models you want in notebook and cell pickers.
+                Saving an API key does not select them. Disabling a model does not change a saved
+                default or override.
               </p>
               <div id="drawer-add-model-row" class="key-config-box" hidden>
                 <label class="form-label"
@@ -933,9 +935,9 @@
       </div>
       <div id="notebook-model-body">
         <p class="hint">
-          Models whose provider has a stored API key, and models from custom providers you added.
-          The one you pick is written into this notebook. A cell that names its own model still uses
-          that.
+          Models you enabled in Settings → Models whose provider has a stored API key, and enabled
+          models from custom providers you added. The one you pick is written into this notebook. A
+          cell that names its own model still uses that.
           <strong>Use the default</strong> clears it. <strong>Test</strong> asks that model for one
           token and does not change the notebook. The line that appears stays short; click it to
           read the full answer.

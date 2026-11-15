@@ -89,7 +89,43 @@ describe("provider hub catalog", () => {
         { ...page, modelEnabled: { "Azure/vendor/model:latest": false } },
       ),
     ).toBe(false);
-    expect(modelEnabled({ provider: "anthropic", id: "built-in" }, page)).toBe(true);
+    expect(modelEnabled({ provider: "anthropic", id: "built-in" }, page)).toBe(false);
+  });
+
+  it("leaves models unselected until explicitly enabled, regardless of credentials", () => {
+    for (const model of page.models) {
+      expect(modelEnabled(model, undefined)).toBe(false);
+      expect(modelEnabled(model, page)).toBe(false);
+    }
+    const withKeys: ModelPage = {
+      ...page,
+      keyed: [...providerIds(page)],
+      providers: page.providers.map((provider) => ({ ...provider, apiKeySet: true })),
+    };
+    for (const model of withKeys.models) {
+      expect(providerKeyed(withKeys, model.provider)).toBe(true);
+      expect(modelEnabled(model, withKeys)).toBe(false);
+    }
+    const selected: ModelPage = { ...withKeys, modelEnabled: { "anthropic/built-in": true } };
+    expect(modelEnabled(selected.models[0]!, selected)).toBe(true);
+    for (const model of selected.models.slice(1)) {
+      expect(modelEnabled(model, selected)).toBe(false);
+    }
+  });
+
+  it("preserves explicit legacy selections unless visibility preferences override them", () => {
+    const model = { provider: "Azure", id: "vendor/model:latest" };
+    const legacy: ModelPage = {
+      ...page,
+      providers: page.providers.map((provider) => ({
+        ...provider,
+        models: provider.models.map((entry) => ({ ...entry, enabled: true })),
+      })),
+    };
+    expect(modelEnabled(model, legacy)).toBe(true);
+    expect(
+      modelEnabled(model, { ...legacy, modelEnabled: { "Azure/vendor/model:latest": false } }),
+    ).toBe(false);
   });
 
   it.each(["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8000/v1"])(
