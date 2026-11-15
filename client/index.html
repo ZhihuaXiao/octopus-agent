@@ -570,72 +570,326 @@
         </fieldset>
       </form>
     </section>
-    <section id="models" class="models" hidden>
-      <form id="models-form">
-        <div class="models-heading">
+    <section id="models" class="models models-hub" hidden>
+      <div class="models-heading">
+        <div>
           <h2>Models</h2>
+          <p class="models-subtitle">
+            Manage providers, credentials, and the default model for your runs.
+          </p>
+        </div>
+        <button
+          id="models-close"
+          class="panel-close"
+          type="button"
+          aria-label="Close Models settings"
+          title="Close Models settings"
+        >
+          ×
+        </button>
+      </div>
+
+      <section class="default-hero" aria-label="Default model">
+        <div class="default-info">
+          <div class="default-label"><span aria-hidden="true">★</span> System Default Model</div>
+          <div class="default-name" id="hero-model-name">No default model set yet.</div>
+          <div class="default-meta">
+            <span>Provider: <strong id="hero-provider-name">—</strong></span>
+            <span id="hero-key-status" class="status-pill unconfigured"
+              >○ No stored credential</span
+            >
+            <label
+              >Thinking:
+              <select
+                id="hero-thinking-select"
+                class="hero-thinking-select"
+                aria-label="Default thinking level"
+                disabled
+              ></select
+            ></label>
+          </div>
+          <p id="hero-default-hint" class="hint">
+            Used when a notebook, cell, or mode does not name its own model.
+          </p>
+          <div id="hero-probe-status" class="provider-probe-status" aria-live="polite"></div>
+        </div>
+        <div class="default-controls">
           <button
-            id="models-close"
-            class="panel-close"
+            id="hero-test-btn"
+            class="btn btn-primary"
             type="button"
-            aria-label="Close"
-            title="Close"
+            title="Ask the default model for one token"
+            disabled
           >
-            ×
+            ⚡ Test Default
           </button>
         </div>
-        <p class="hint">
-          Pi's model settings for this user. Search for a model and set it as the default.
-          <strong>Show configured</strong> lists only models whose provider already has a stored
-          key, and models from custom providers you added. <strong>Show all</strong> brings the full
-          list back. <strong>Test</strong>, beside a configured model, asks it for one token. The
-          line that appears stays short; click it to read the full answer.
-          <strong>Set Default</strong> makes that model the one new Runs use. A model whose provider
-          has a key also has a switch, which includes or leaves it out of the model lists. Use the
-          button beside each model to set, change, or reset its provider's API key. A notebook or a
-          cell that names its own model still uses that.
-        </p>
-        <fieldset>
-          <legend>Default</legend>
-          <p id="models-chosen" class="models-chosen">No default model set yet.</p>
-          <div class="models-search-row">
-            <label
-              >Search
-              <input id="models-search" type="search" placeholder="anthropic, gpt, llama…" />
-            </label>
-            <button id="models-configured" type="button" aria-pressed="false">
-              Show configured
+      </section>
+
+      <div class="providers-section-header">
+        <div class="providers-section-title">
+          <h3>Model Providers</h3>
+          <p class="hint">
+            One credential per provider. Probe a model to check whether it answers.
+          </p>
+        </div>
+        <div class="providers-section-actions">
+          <div class="models-search-box">
+            <input
+              id="models-search"
+              type="search"
+              placeholder="Search provider or model…"
+              aria-label="Search providers and models"
+            />
+          </div>
+          <button id="models-add-custom-btn" class="btn btn-primary" type="button">
+            + Add Custom Provider
+          </button>
+        </div>
+      </div>
+      <div id="models-provider-grid" class="provider-grid"></div>
+      <p id="models-status" class="status" aria-live="polite"></p>
+
+      <dialog id="provider-drawer-overlay" class="drawer-overlay" aria-labelledby="drawer-title">
+        <div id="provider-drawer" class="drawer">
+          <div class="drawer-header">
+            <h2 id="drawer-title">Provider Models</h2>
+            <button
+              id="drawer-close"
+              class="panel-close"
+              type="button"
+              aria-label="Close provider drawer"
+            >
+              ×
             </button>
           </div>
-          <ul id="models-matches" class="models-matches"></ul>
-        </fieldset>
-        <fieldset>
-          <legend>Custom providers</legend>
-          <p class="hint">
-            Click a name, such as Oracle1, to show its settings. Each model has a context window. It
-            starts at 200,000 tokens; change the number to give that model another size. For an
-            OpenAI-compatible proxy, choose openai-completions and a base URL that ends at /v1. Pi
-            adds /chat/completions itself. The Google API wants the version root, such as …/v1beta,
-            not a chat completions path.
-          </p>
-          <div id="models-providers"></div>
-          <button
-            id="models-add"
-            type="button"
-            title="Add a blank custom provider card. Fill in its name, base URL, API, key, and models, then save the providers"
-          >
-            Add provider
-          </button>
-          <button
-            id="models-save-providers"
-            type="button"
-            title="Save every custom provider card, including its models and stored key, to pi's models.json"
-          >
-            Save providers
-          </button>
-        </fieldset>
-        <p id="models-status" class="status"></p>
-      </form>
+          <div class="drawer-body">
+            <p id="drawer-status" class="status" aria-live="polite"></p>
+            <div class="key-config-box">
+              <div class="key-config-head">
+                <label for="drawer-key-input">Provider Credential</label>
+                <span id="drawer-cred-pill" class="status-pill unconfigured"
+                  >○ No stored credential</span
+                >
+              </div>
+              <div class="input-group">
+                <input
+                  id="drawer-key-input"
+                  class="input-text"
+                  type="password"
+                  autocomplete="off"
+                  placeholder="API key or $ENV_VAR"
+                />
+                <button id="drawer-save-key-btn" class="btn btn-primary btn-sm" type="button">
+                  Save Key
+                </button>
+                <button
+                  id="drawer-clear-key-btn"
+                  class="btn btn-danger btn-sm"
+                  type="button"
+                  hidden
+                >
+                  Reset
+                </button>
+              </div>
+              <div id="drawer-key-reset-confirm" class="model-remove-confirm" hidden>
+                <span>Remove the stored API key for all models?</span>
+                <button id="drawer-confirm-reset-key" class="btn btn-danger btn-sm" type="button">
+                  Confirm
+                </button>
+                <button id="drawer-cancel-reset-key" class="btn btn-sm" type="button">
+                  Cancel
+                </button>
+              </div>
+              <p class="hint" id="drawer-cred-hint">
+                Credentials apply to all models from this provider.
+              </p>
+            </div>
+
+            <div id="drawer-url-box" class="key-config-box" hidden>
+              <label class="form-label" for="drawer-url-input">Endpoint Base URL</label>
+              <input
+                id="drawer-url-input"
+                class="input-text"
+                type="url"
+                placeholder="http://localhost:11434/v1"
+              />
+              <label class="form-label" for="drawer-api-select">API Protocol</label>
+              <div class="input-group">
+                <select id="drawer-api-select" class="input-text"></select>
+                <button id="drawer-save-url-btn" class="btn btn-sm" type="button">
+                  Save Endpoint
+                </button>
+              </div>
+              <p class="hint">
+                Use the service base URL. For OpenAI-compatible chat servers this usually ends at
+                <code>/v1</code>, without <code>/chat/completions</code>.
+              </p>
+            </div>
+
+            <div class="drawer-models-section">
+              <div class="drawer-models-header">
+                <h3>Models</h3>
+                <button id="drawer-add-model-btn" class="btn btn-sm btn-ghost" type="button">
+                  + Add Model
+                </button>
+              </div>
+              <p class="hint">
+                Enabled models appear in notebook and cell pickers. Disabling a model does not
+                change a saved default or override.
+              </p>
+              <div id="drawer-add-model-row" class="key-config-box" hidden>
+                <label class="form-label"
+                  >Model ID
+                  <input
+                    id="drawer-new-model-id"
+                    class="input-text"
+                    type="text"
+                    placeholder="e.g. llama3.3:70b"
+                /></label>
+                <label class="form-label"
+                  >Context Window (tokens)
+                  <input
+                    id="drawer-new-model-tokens"
+                    class="input-text"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value="200000"
+                /></label>
+                <div class="input-group">
+                  <button id="drawer-submit-new-model" class="btn btn-primary btn-sm" type="button">
+                    Add Model
+                  </button>
+                  <button id="drawer-cancel-new-model" class="btn btn-sm btn-ghost" type="button">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <div id="drawer-models-list" class="drawer-models-list"></div>
+            </div>
+
+            <div id="drawer-provider-actions" class="drawer-provider-actions" hidden>
+              <button id="drawer-remove-provider-btn" class="btn btn-danger btn-sm" type="button">
+                Remove Custom Provider
+              </button>
+              <div id="drawer-remove-confirm" class="model-remove-confirm" hidden>
+                <span
+                  >Remove custom configuration and its models? Stored credentials and defaults are
+                  kept.</span
+                >
+                <button id="drawer-confirm-remove-btn" class="btn btn-danger btn-sm" type="button">
+                  Confirm
+                </button>
+                <button id="drawer-cancel-remove-btn" class="btn btn-sm btn-ghost" type="button">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="add-provider-dialog" class="dialog-overlay" aria-labelledby="add-prov-title">
+        <form id="add-provider-form" class="dialog-box">
+          <div class="dialog-box-header">
+            <h3 id="add-prov-title">Add Custom Provider</h3>
+            <button
+              id="add-provider-close"
+              class="panel-close"
+              type="button"
+              aria-label="Close add provider dialog"
+            >
+              ×
+            </button>
+          </div>
+          <div class="dialog-box-body">
+            <div class="form-label">
+              <span>Quick Presets</span>
+              <div class="preset-chips">
+                <button type="button" class="preset-chip" data-preset="ollama">Ollama</button>
+                <button type="button" class="preset-chip" data-preset="lmstudio">LM Studio</button>
+                <button type="button" class="preset-chip" data-preset="openrouter">
+                  OpenRouter
+                </button>
+                <button type="button" class="preset-chip" data-preset="groq">Groq</button>
+              </div>
+              <span class="field-hint"
+                >Presets fill the endpoint and protocol. Enter an exact model ID available on that
+                server.</span
+              >
+            </div>
+            <label class="form-label"
+              >Provider Identifier
+              <input
+                id="add-prov-id"
+                class="input-text"
+                type="text"
+                placeholder="e.g. ollama, vllm, local-llm"
+                pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
+                required
+              />
+              <span class="field-hint"
+                >Use a unique ID. A built-in ID overrides that provider's endpoint for its catalog
+                models.</span
+              >
+            </label>
+            <label class="form-label"
+              >Base URL
+              <input
+                id="add-prov-url"
+                class="input-text"
+                type="url"
+                placeholder="http://localhost:11434/v1"
+                required
+              />
+              <span class="field-hint">Service base URL, not a full /chat/completions URL.</span>
+            </label>
+            <label class="form-label"
+              >API Protocol
+              <select id="add-prov-api" class="input-text"></select
+            ></label>
+            <label class="form-label"
+              >Initial Model ID
+              <input
+                id="add-prov-model"
+                class="input-text"
+                type="text"
+                placeholder="Exact model ID, e.g. llama3.3:70b"
+                required
+            /></label>
+            <label class="form-label"
+              >Context Window (tokens)
+              <input
+                id="add-prov-tokens"
+                class="input-text"
+                type="number"
+                min="1"
+                step="1"
+                value="200000"
+                required
+            /></label>
+            <label class="form-label"
+              >API Key (optional for servers without authentication)
+              <input
+                id="add-prov-key"
+                class="input-text"
+                type="password"
+                autocomplete="off"
+                placeholder="API key or $ENV_VAR"
+            /></label>
+            <p id="add-provider-status" class="status" aria-live="polite"></p>
+          </div>
+          <div class="dialog-box-footer">
+            <button id="add-provider-cancel" class="btn btn-sm btn-ghost" type="button">
+              Cancel
+            </button>
+            <button id="add-provider-submit" class="btn btn-primary btn-sm" type="submit">
+              Create Provider
+            </button>
+          </div>
+        </form>
+      </dialog>
     </section>
     <dialog id="cell-rounds-dialog">
       <div class="rounds-heading">

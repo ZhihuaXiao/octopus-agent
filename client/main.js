@@ -9,6 +9,17 @@ import {
   showProbeReport,
 } from "./model-probe.js";
 import { initTooltips, updateTooltip } from "./tooltip.js";
+import {
+  configuredChoice,
+  contextTokens,
+  localEndpoint,
+  modelEnabled,
+  modelsForProvider,
+  providerEdits,
+  providerIds,
+  providerKeyed,
+  validateProvider,
+} from "./model-settings.js";
 
 initTooltips();
 
@@ -271,6 +282,8 @@ function askToConnect(method) {
   element("workspace").hidden = true;
   element("modes").hidden = true;
   element("models").hidden = true;
+  closeProviderDrawer();
+  closeAddProviderDialog();
   element("header-actions").hidden = true;
   if (watching !== undefined) {
     const toClose = watching.socket;
@@ -8139,51 +8152,18 @@ function route() {
 }
 
 /**
- * Pi's model settings, in a dialog: the default a Run uses when nothing names
- * a model, and the custom providers in pi's `models.json`.
- * @typedef {{ provider: string, id: string, name: string }} ModelChoice
- * @typedef {{ id: string, contextWindow?: number, enabled?: boolean }} CustomModel
- * @typedef {{
- *   id: string,
- *   baseUrl: string,
- *   api: string,
- *   apiKeySet: boolean,
- *   apiKeyFromCommand: boolean,
- *   apiKey?: string,
- *   models: CustomModel[],
- *   open?: boolean,
- *   addingModel?: boolean,
- *   isNew?: boolean,
- * }} CustomProvider
- * @typedef {{
- *   defaultProvider?: string,
- *   defaultModel?: string,
- *   defaultThinking?: string,
- *   thinkingLevels: string[],
- *   apis: string[],
- *   models: ModelChoice[],
- *   keyed: string[],
- *   modelEnabled?: Record<string, boolean>,
- *   providers: CustomProvider[],
- * }} ModelPage
+ * Pi's model settings: provider credentials and models, and the default a Run
+ * uses when no notebook, cell, or mode names its own model.
+ * @typedef {import("./model-settings.js").ModelChoice} ModelChoice
+ * @typedef {import("./model-settings.js").ModelPage} ModelPage
  */
-
-/** The providers being edited, including ones added and not yet saved. */
-/** @type {CustomProvider[]} */
-let providerDraft = [];
 
 /** @type {ModelPage | undefined} */
 let modelPage;
 
-/** The model the dialog will save, once one has been picked. */
+/** The system default last loaded from pi's settings. */
 /** @type {{ provider: string, id: string } | undefined} */
 let chosenModel;
-
-/**
- * When set, the list is only models the user can already call: a provider
- * with a stored API key, or a custom provider they added.
- */
-let configuredOnly = false;
 
 /** @param {ModelChoice} model @param {string} needle */
 function rank(model, needle) {
@@ -8202,31 +8182,12 @@ const modelLabel = (model) =>
     : `${model.provider}/${model.id}`;
 
 /**
- * Whether `model` is one the user can already call: its provider has a stored
- * key, or it is a custom provider they added.
- * @param {ModelChoice} model
- * @param {ModelPage} page
- */
-function isConfiguredChoice(model, page) {
-  if (page.keyed?.includes(model.provider) === true) return true;
-  return page.providers.some((provider) => provider.id !== "" && provider.id === model.provider);
-}
-
-/**
  * Whether `model` belongs to any provider (original or custom) that has an API key configured.
  * @param {ModelChoice} model
  * @param {ModelPage | undefined} page
  */
 function isModelWithApiKey(model, page) {
-  if (page?.keyed?.includes(model.provider) === true) return true;
-  const custom =
-    providerDraft.find((p) => p.id === model.provider) ??
-    page?.providers?.find((p) => p.id === model.provider);
-  if (custom) {
-    if (custom.apiKeySet === true) return true;
-    if (typeof custom.apiKey === "string" && custom.apiKey.trim() !== "") return true;
-  }
-  return false;
+  return providerKeyed(page, model.provider);
 }
 
 /**
@@ -8235,8 +8196,7 @@ function isModelWithApiKey(model, page) {
  * @param {ModelPage | undefined} page
  */
 function isCustomModel(model, page) {
-  if (providerDraft.some((p) => p.id !== "" && p.id === model.provider)) return true;
-  return page?.providers?.some((p) => p.id !== "" && p.id === model.provider) === true;
+  return page?.providers.some((provider) => provider.id === model.provider) === true;
 }
 
 /**
@@ -8264,84 +8224,30 @@ function modelSortPriority(model, page) {
  * @param {ModelPage | undefined} page
  */
 function isModelToggleEnabled(model, page) {
-  const saved = page?.modelEnabled?.[`${model.provider}/${model.id}`];
-  if (typeof saved === "boolean") return saved;
-  const draftProvider = providerDraft.find((p) => p.id === model.provider);
-  if (draftProvider) {
-    const draftModel = draftProvider.models?.find((m) => m.id === model.id);
-    if (draftModel) return draftModel.enabled !== false;
-  }
-  const provider = page?.providers?.find((p) => p.id === model.provider);
-  if (!provider) return true;
-  const customModel = provider.models?.find((m) => m.id === model.id);
-  if (!customModel) return true;
-  return customModel.enabled !== false;
+  return modelEnabled(model, page);
 }
 
 /**
- * One row: in the notebook picker dialog, choosing the model calls `onChoose`.
- * On the Models page, clicking the model does not select it; only Set Default
- * sets the default model. A configured model also has Test, and, when its
- * provider has a key, an enable switch and a way to remove that key.
+ * A notebook model choice, with a model-specific diagnostic probe.
  * @param {ModelChoice} model
  * @param {ModelPage | undefined} page
  * @param {{ current: boolean, onChoose?: () => void }} choice
  */
 function modelChoiceItem(model, page, choice) {
-  const item = document.createElement("li");
+  const item = make("li", "model-row");
   const label = modelLabel(model);
-  const isModelsTab = page !== undefined && page === modelPage;
-
-  let labelEl;
-  if (choice.onChoose !== undefined) {
-    const button = make("button", "", label);
-    button.type = "button";
-    if (choice.current) button.setAttribute("aria-current", "true");
-    button.addEventListener("click", choice.onChoose);
-    labelEl = button;
-  } else {
-    const nameSpan = make("span", "model-name", label);
-    if (choice.current) nameSpan.setAttribute("aria-current", "true");
-    labelEl = nameSpan;
-  }
-  item.append(labelEl);
-
-  if (isModelsTab) {
-    item.className = "model-row";
-    labelEl.title = label;
-    const actions = make("div", "model-row-actions");
-    const status = make("span", "model-test-status", "");
-    status.setAttribute("aria-live", "polite");
-
-    if (isConfiguredChoice(model, page)) {
-      const test = make("button", "model-test", "Test");
-      test.type = "button";
-      test.title = "Ask this model for one token, to see whether it answers";
-      test.addEventListener("click", () => void testConfiguredModel(model, test, status));
-      actions.append(test);
-
-      if (isModelWithApiKey(model, page)) {
-        actions.append(modelToggleSwitch(model, page));
-      }
-    }
-
-    const setDefault = make("button", "model-set-default", "Set Default");
-    setDefault.type = "button";
-    setDefault.title = "Make this the default model for new Runs";
-    setDefault.addEventListener("click", () => void setModelDefaultFromList(model, setDefault));
-    actions.append(setDefault);
-
-    actions.append(modelApiKeyAction(model, page));
-
-    item.append(actions, status);
-  } else if (page !== undefined && isConfiguredChoice(model, page)) {
-    item.className = "model-row";
-    labelEl.title = label;
+  const button = make("button", "", label);
+  button.type = "button";
+  button.title = label;
+  if (choice.current) button.setAttribute("aria-current", "true");
+  if (choice.onChoose) button.addEventListener("click", choice.onChoose);
+  item.append(button);
+  if (page && configuredChoice(model, page)) {
     const actions = make("div", "model-row-actions");
     const test = make("button", "model-test", "Test");
     test.type = "button";
     test.title = "Ask this model for one token, to see whether it answers";
-    const status = make("span", "model-test-status", "");
+    const status = make("span", "model-test-status");
     status.setAttribute("aria-live", "polite");
     test.addEventListener("click", () => void testConfiguredModel(model, test, status));
     actions.append(test);
@@ -8367,6 +8273,7 @@ function modelToggleSwitch(model, page) {
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = enabled;
+  checkbox.setAttribute("aria-label", `Show ${model.provider}/${model.id} in model pickers`);
   checkbox.addEventListener("change", () => {
     // The page's data is refreshed by the save; read the state before that.
     const wanted = checkbox.checked;
@@ -8389,159 +8296,13 @@ function modelToggleSwitch(model, page) {
  * @param {HTMLInputElement} checkbox
  */
 async function setModelEnabled(model, enabled, checkbox) {
-  checkbox.disabled = true;
-  const status = element("models-status");
-  status.textContent = "";
-  try {
-    await post("/api/models/enabled", { provider: model.provider, model: model.id, enabled });
-    const page = await fetchModels();
-    renderModelPage(page);
-    cellModels = configuredModelsOf(page).map((entry) => `${entry.provider}/${entry.id}`);
-    fillModelSelects();
-    status.textContent = `${enabled ? "Enabled" : "Disabled"} ${modelLabel(model)}.`;
-  } catch (cause) {
+  if (
+    !(await saveModelSettings(
+      () => post("/api/models/enabled", { provider: model.provider, model: model.id, enabled }),
+      `${enabled ? "Enabled" : "Disabled"} ${model.provider}/${model.id}.`,
+    ))
+  )
     checkbox.checked = !enabled;
-    checkbox.disabled = false;
-    status.textContent = `Could not ${enabled ? "enable" : "disable"} ${modelLabel(model)}: ${describe(cause)}`;
-  }
-}
-
-/**
- * Makes `model` the default model for new Runs.
- * @param {ModelChoice} model
- * @param {HTMLButtonElement} button
- */
-async function setModelDefaultFromList(model, button) {
-  button.disabled = true;
-  const status = element("models-status");
-  status.textContent = "";
-  try {
-    await post("/api/models/default", {
-      provider: model.provider,
-      model: model.id,
-    });
-    renderModelPage(await fetchModels());
-    status.textContent = `Set ${modelLabel(model)} as the default.`;
-  } catch (cause) {
-    button.disabled = false;
-    status.textContent = `Could not set the default: ${describe(cause)}`;
-  }
-}
-
-/**
- * Button to set or change/reset the API key for `model.provider`.
- * @param {ModelChoice} model
- * @param {ModelPage} page
- */
-function modelApiKeyAction(model, page) {
-  const container = make("span", "model-key-action-container");
-  const hasKey = isModelWithApiKey(model, page);
-
-  const mainBtn = make(
-    "button",
-    hasKey ? "model-change-key" : "model-set-key",
-    hasKey ? "Change / Reset API key" : "Set API key",
-  );
-  mainBtn.type = "button";
-  mainBtn.title = hasKey
-    ? `Change or reset the stored API key for ${model.provider}`
-    : `Set an API key for ${model.provider}`;
-
-  const form = make("span", "model-key-inline-form");
-  form.hidden = true;
-
-  const input = document.createElement("input");
-  input.type = "password";
-  input.className = "model-key-input";
-  input.placeholder = hasKey ? "New API key" : "API key";
-  input.autocomplete = "off";
-
-  const saveBtn = make("button", "model-key-save", "Save");
-  saveBtn.type = "button";
-  saveBtn.title = `Save API key for ${model.provider}`;
-
-  const cancelBtn = make("button", "model-key-cancel", "Cancel");
-  cancelBtn.type = "button";
-  cancelBtn.title = "Cancel";
-
-  mainBtn.addEventListener("click", () => {
-    mainBtn.hidden = true;
-    form.hidden = false;
-    input.value = "";
-    input.focus();
-  });
-
-  cancelBtn.addEventListener("click", () => {
-    form.hidden = true;
-    mainBtn.hidden = false;
-  });
-
-  saveBtn.addEventListener("click", async () => {
-    const val = input.value.trim();
-    if (val === "") {
-      input.focus();
-      return;
-    }
-    saveBtn.disabled = true;
-    cancelBtn.disabled = true;
-    const status = element("models-status");
-    status.textContent = "";
-    try {
-      await post("/api/models/key", { provider: model.provider, apiKey: val });
-      const updatedPage = await fetchModels();
-      renderModelPage(updatedPage);
-      cellModels = configuredModelsOf(updatedPage).map((entry) => `${entry.provider}/${entry.id}`);
-      fillModelSelects();
-      status.textContent = `Saved API key for ${model.provider}.`;
-    } catch (cause) {
-      saveBtn.disabled = false;
-      cancelBtn.disabled = false;
-      status.textContent = `Could not save API key: ${describe(cause)}`;
-    }
-  });
-
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      saveBtn.click();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      cancelBtn.click();
-    }
-  });
-
-  form.append(input, saveBtn);
-
-  if (hasKey) {
-    const resetBtn = make("button", "model-key-reset", "Reset");
-    resetBtn.type = "button";
-    resetBtn.title = `Remove and reset the stored API key for ${model.provider}`;
-    resetBtn.addEventListener("click", async () => {
-      resetBtn.disabled = true;
-      cancelBtn.disabled = true;
-      const status = element("models-status");
-      status.textContent = "";
-      try {
-        await post("/api/models/key", { provider: model.provider, clearApiKey: true });
-        const updatedPage = await fetchModels();
-        renderModelPage(updatedPage);
-        cellModels = configuredModelsOf(updatedPage).map(
-          (entry) => `${entry.provider}/${entry.id}`,
-        );
-        fillModelSelects();
-        status.textContent = `Reset API key for ${model.provider}.`;
-      } catch (cause) {
-        resetBtn.disabled = false;
-        cancelBtn.disabled = false;
-        status.textContent = `Could not reset API key: ${describe(cause)}`;
-      }
-    });
-    form.append(resetBtn);
-  }
-
-  form.append(cancelBtn);
-  container.append(mainBtn, form);
-  return container;
 }
 
 /**
@@ -8553,12 +8314,20 @@ async function testConfiguredModel(model, button, status) {
   button.disabled = true;
   closeProbePopup(modelTestPopup());
   showProbePending(status);
+  const started = performance.now();
   try {
     /** @type {{ available: boolean, problem?: string, inputTokens: number, outputTokens: number }} */
     const result = await (
       await post("/api/models/test", { provider: model.provider, model: model.id })
     ).json();
-    showModelProbe(status, probeReport(result));
+    const report = probeReport(result);
+    const elapsed = `${Math.round(performance.now() - started)} ms`;
+    report.brief += ` · ${elapsed}`;
+    report.details.unshift(
+      { label: "Model", value: `${model.provider}/${model.id}` },
+      { label: "Round trip", value: elapsed },
+    );
+    showModelProbe(status, report);
   } catch (cause) {
     showModelProbe(
       status,
@@ -8571,382 +8340,649 @@ async function testConfiguredModel(model, button, status) {
 
 /** @param {HTMLElement} status @param {import("./model-probe.js").ProbeReport} report */
 function showModelProbe(status, report) {
-  showProbeReport(status, report, (anchor) => openProbePopup(modelTestPopup(), anchor, report));
+  showProbeReport(status, report, (anchor) => {
+    const popup = modelTestPopup();
+    closeProbePopup(popup);
+    // A popover outside a native modal is inert; keep its controls in the dialog.
+    (anchor.closest("dialog") ?? document.body).append(popup);
+    openProbePopup(popup, anchor, report);
+  });
 }
 
 function modelTestPopup() {
   return element("model-test-popup");
 }
 
-function chosenText() {
-  const chosen = element("models-chosen");
-  if (chosenModel === undefined) {
-    chosen.textContent = "No default model set yet.";
+/** The provider currently open in the drawer. */
+/** @type {string | null} */
+let currentDrawerProviderId = null;
+let modelSettingsSaving = false;
+
+/** @type {Record<string, { name: string, icon: string, desc: string, protocol?: string }>} */
+const KNOWN_PROVIDERS = {
+  anthropic: {
+    name: "Anthropic",
+    icon: "A",
+    desc: "Claude models",
+    protocol: "anthropic-messages",
+  },
+  openai: { name: "OpenAI", icon: "O", desc: "GPT and reasoning models" },
+  google: {
+    name: "Google Gemini",
+    icon: "G",
+    desc: "Gemini models",
+    protocol: "google-generative-ai",
+  },
+  ollama: {
+    name: "Ollama",
+    icon: "🦙",
+    desc: "Local model server",
+    protocol: "openai-completions",
+  },
+  lmstudio: {
+    name: "LM Studio",
+    icon: "L",
+    desc: "Local model server",
+    protocol: "openai-completions",
+  },
+  openrouter: { name: "OpenRouter", icon: "R", desc: "Multi-provider model router" },
+  groq: { name: "Groq", icon: "G", desc: "Groq Cloud models", protocol: "openai-completions" },
+};
+
+/** @param {string} id */
+function providerDisplayName(id) {
+  return KNOWN_PROVIDERS[id]?.name ?? id;
+}
+
+function modelSettingsStatus() {
+  if (/** @type {HTMLDialogElement} */ (element("add-provider-dialog")).open)
+    return element("add-provider-status");
+  if (/** @type {HTMLDialogElement} */ (element("provider-drawer-overlay")).open)
+    return element("drawer-status");
+  return element("models-status");
+}
+
+/**
+ * Serialize immediate saves, without mutating the loaded page before success.
+ * A failed save leaves the form open and the persisted state intact.
+ * @param {() => Promise<unknown>} save
+ * @param {string} message
+ */
+async function saveModelSettings(save, message) {
+  if (modelSettingsSaving) return false;
+  modelSettingsSaving = true;
+  const status = modelSettingsStatus();
+  status.textContent = "Saving…";
+  const controls = [...element("models").querySelectorAll("button, input, select")].map(
+    (control) => /** @type {HTMLButtonElement | HTMLInputElement | HTMLSelectElement} */ (control),
+  );
+  const previouslyDisabled = controls.map((control) => control.disabled);
+  for (const control of controls) control.disabled = true;
+  let saved = false;
+  try {
+    await save();
+    try {
+      renderModelPage(await fetchModels());
+      saved = true;
+      status.textContent = message;
+    } catch (cause) {
+      status.textContent = `${message} Could not refresh the models: ${describe(cause)}. Reopen Models to reload.`;
+    }
+  } catch (cause) {
+    status.textContent = `Could not save: ${describe(cause)}`;
+  } finally {
+    controls.forEach((control, index) => {
+      control.disabled = previouslyDisabled[index] === true;
+    });
+    modelSettingsSaving = false;
+    if (modelPage) renderHeroBanner(modelPage);
+  }
+  return saved;
+}
+
+/** @param {ModelPage} page */
+function renderHeroBanner(page) {
+  chosenModel =
+    page.defaultProvider !== undefined && page.defaultModel !== undefined
+      ? { provider: page.defaultProvider, id: page.defaultModel }
+      : undefined;
+  element("hero-model-name").textContent = chosenModel
+    ? `${chosenModel.provider}/${chosenModel.id}`
+    : "No default model set yet.";
+  element("hero-provider-name").textContent = chosenModel
+    ? providerDisplayName(chosenModel.provider)
+    : "—";
+  const key = element("hero-key-status");
+  const stored = chosenModel && providerKeyed(page, chosenModel.provider);
+  const custom = page.providers.find((provider) => provider.id === chosenModel?.provider);
+  key.textContent = stored
+    ? "● Credential stored"
+    : custom
+      ? "○ Custom endpoint"
+      : "○ No stored credential";
+  key.className = `status-pill ${stored ? "configured" : "unconfigured"}`;
+  const available = page.models.some(
+    (model) => model.provider === chosenModel?.provider && model.id === chosenModel.id,
+  );
+  /** @type {HTMLButtonElement} */ (element("hero-test-btn")).disabled =
+    !available || !chosenModel || !configuredChoice(chosenModel, page);
+  const thinking = /** @type {HTMLSelectElement} */ (element("hero-thinking-select"));
+  thinking.replaceChildren(
+    ...page.thinkingLevels.map((level) => {
+      const option = make("option", "", level);
+      option.value = level;
+      return option;
+    }),
+  );
+  thinking.value = page.defaultThinking ?? "medium";
+  thinking.disabled = !available;
+  element("hero-default-hint").textContent =
+    chosenModel && !available
+      ? "This saved default is no longer in the catalog. Choose another model in a provider's drawer."
+      : "Used when a notebook, cell, or mode does not name its own model. Tests do not change the default.";
+}
+
+/** @param {string} [query] */
+function renderProviderGrid(query) {
+  if (!modelPage) return;
+  const page = modelPage;
+  const needle = (query ?? "").trim().toLowerCase();
+  const ids = providerIds(page).sort((a, b) => {
+    const priority = (/** @type {string} */ id) =>
+      id === page.defaultProvider
+        ? 0
+        : providerKeyed(page, id)
+          ? 1
+          : page.providers.some((p) => p.id === id)
+            ? 2
+            : 3;
+    return (
+      priority(a) - priority(b) || providerDisplayName(a).localeCompare(providerDisplayName(b))
+    );
+  });
+  const cards = [];
+  for (const id of ids) {
+    const name = providerDisplayName(id);
+    const models = modelsForProvider(page, id);
+    const custom = page.providers.find((provider) => provider.id === id);
+    if (
+      needle &&
+      !`${id} ${name}`.toLowerCase().includes(needle) &&
+      !models.some((model) => modelLabel(model).toLowerCase().includes(needle))
+    )
+      continue;
+    const stored = providerKeyed(page, id);
+    const local = custom && localEndpoint(custom.baseUrl);
+    const card = make(
+      "article",
+      `provider-card ${stored ? "configured-card" : local ? "local-card" : "unconfigured-card"}${id === page.defaultProvider ? " default-provider" : ""}`,
+    );
+    const head = make("div", "provider-head");
+    const brand = make("div", "provider-brand");
+    const icon = make(
+      "div",
+      "provider-icon",
+      KNOWN_PROVIDERS[id]?.icon ?? id[0]?.toUpperCase() ?? "P",
+    );
+    icon.setAttribute("aria-hidden", "true");
+    const titles = make("div", "provider-titles");
+    const desc = custom?.baseUrl ?? KNOWN_PROVIDERS[id]?.desc ?? id;
+    const description = make("p", "", desc);
+    description.title = desc;
+    titles.append(make("h3", "", name), description);
+    brand.append(icon, titles);
+    const pill = make(
+      "span",
+      `status-pill ${stored ? "configured" : local ? "local" : "unconfigured"}`,
+      stored
+        ? "● Credential stored"
+        : local
+          ? "○ Local endpoint"
+          : custom
+            ? "○ Custom endpoint"
+            : "○ Needs setup",
+    );
+    head.append(brand, pill);
+    const meta = make("div", "provider-meta");
+    const count = models.filter((model) => modelEnabled(model, page)).length;
+    for (const [label, value] of [
+      [
+        "Credentials",
+        custom?.apiKeyFromCommand
+          ? "Command-managed"
+          : stored
+            ? "Stored locally"
+            : "No stored credential",
+      ],
+      ["Models", `${count} of ${models.length} enabled`],
+      ["Protocol", custom?.api || KNOWN_PROVIDERS[id]?.protocol || "Built-in catalog"],
+    ]) {
+      const row = make("div", "meta-row");
+      row.append(make("span", "", label), make("span", "meta-value", value));
+      meta.append(row);
+    }
+    const actions = make("div", "provider-actions");
+    const configure = make(
+      "button",
+      "btn btn-sm btn-primary",
+      stored || custom ? "Configure Models" : "Set Up Provider",
+    );
+    configure.type = "button";
+    configure.setAttribute("aria-label", `${configure.textContent}: ${name}`);
+    configure.addEventListener("click", () => openProviderDrawer(id));
+    const test = make("button", "btn btn-sm btn-ghost", "Probe");
+    test.type = "button";
+    const model =
+      models.find((model) => id === chosenModel?.provider && model.id === chosenModel.id) ??
+      models[0];
+    test.disabled = !model || !configuredChoice(model, page);
+    test.title = model
+      ? `Test ${model.provider}/${model.id} with one token`
+      : "Add a model before testing";
+    const status = make("div", "provider-probe-status");
+    status.setAttribute("aria-live", "polite");
+    test.addEventListener("click", () => {
+      if (model) void testConfiguredModel(model, test, status);
+    });
+    actions.append(configure, test);
+    card.append(head, meta, actions, status);
+    cards.push(card);
+  }
+  element("models-provider-grid").replaceChildren(
+    ...(cards.length
+      ? cards
+      : [
+          make(
+            "p",
+            "models-none",
+            needle
+              ? "No matching providers or models."
+              : "No providers found. Add a custom provider to get started.",
+          ),
+        ]),
+  );
+}
+
+/** @param {string} id */
+function openProviderDrawer(id) {
+  if (!modelPage) return;
+  currentDrawerProviderId = id;
+  closeProbePopup(modelTestPopup());
+  element("drawer-title").textContent = `${providerDisplayName(id)} Models`;
+  element("drawer-status").textContent = "";
+  element("drawer-add-model-row").hidden = true;
+  renderDrawerContent(id, true);
+  const dialog = /** @type {HTMLDialogElement} */ (element("provider-drawer-overlay"));
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeProviderDrawer() {
+  /** @type {HTMLDialogElement} */ (element("provider-drawer-overlay")).close();
+  currentDrawerProviderId = null;
+  closeProbePopup(modelTestPopup());
+  /** @type {HTMLInputElement} */ (element("drawer-key-input")).value = "";
+  element("drawer-add-model-row").hidden = true;
+}
+
+/** @param {string} id @param {boolean} [resetFields] */
+function renderDrawerContent(id, resetFields = false) {
+  if (!modelPage) return;
+  const page = modelPage;
+  const custom = page.providers.find((provider) => provider.id === id);
+  const stored = providerKeyed(page, id);
+  const pill = element("drawer-cred-pill");
+  pill.textContent = custom?.apiKeyFromCommand
+    ? "● Command-managed"
+    : stored
+      ? "● Credential stored"
+      : "○ No stored credential";
+  pill.className = `status-pill ${stored ? "configured" : "unconfigured"}`;
+  const input = /** @type {HTMLInputElement} */ (element("drawer-key-input"));
+  if (resetFields) input.value = "";
+  input.placeholder = custom?.apiKeyFromCommand
+    ? "Enter a key to replace the configured key"
+    : stored
+      ? "New API key (blank keeps current credential)"
+      : "API key or $ENV_VAR";
+  element("drawer-clear-key-btn").hidden = !stored;
+  element("drawer-key-reset-confirm").hidden = true;
+  element("drawer-cred-hint").textContent = custom?.apiKeyFromCommand
+    ? "A command supplies this credential. Stored command configuration is preserved unless explicitly replaced."
+    : `Credentials apply to all models from this provider. ${custom ? "Custom keys are saved in models.json." : "Keys are saved in auth.json; OAuth credentials may already be present."}`;
+  element("drawer-url-box").hidden = !custom;
+  element("drawer-add-model-btn").hidden = !custom;
+  if (custom && resetFields) {
+    /** @type {HTMLInputElement} */ (element("drawer-url-input")).value = custom.baseUrl;
+    fillProtocolSelect("drawer-api-select", custom.api);
+  }
+  const list = element("drawer-models-list");
+  const rows = modelsForProvider(page, id).map((model) => {
+    const isDefault = chosenModel?.provider === id && chosenModel.id === model.id;
+    const customModel = custom?.models.find((entry) => entry.id === model.id);
+    const item = make("div", `model-item${isDefault ? " is-default" : ""}`);
+    const info = make("div", "model-item-info");
+    const title = make("span", "model-item-title", model.id);
+    title.title = modelLabel(model);
+    const meta = make(
+      "div",
+      "model-item-meta",
+      model.name !== model.id ? model.name : providerDisplayName(id),
+    );
+    if (isDefault) meta.append(make("span", "default-model-badge", "★ Default"));
+    info.append(title, meta);
+    const actions = make("div", "model-item-actions");
+    if (customModel && custom) {
+      const label = make("label", "model-context-label", "Context tokens");
+      const tokens = make("input", "model-item-tokens");
+      tokens.type = "number";
+      tokens.min = "1";
+      tokens.step = "1";
+      tokens.value = String(customModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+      tokens.setAttribute("aria-label", `Context window tokens for ${model.id}`);
+      tokens.addEventListener("change", async () => {
+        try {
+          const value = contextTokens(tokens.value, DEFAULT_CONTEXT_WINDOW);
+          const edits = providerEdits(page.providers);
+          const edit = edits
+            .find((provider) => provider.id === id)
+            ?.models.find((entry) => entry.id === model.id);
+          if (!edit) return;
+          edit.contextWindow = value;
+          if (!(await saveModelProviders(edits, `Saved context window for ${model.id}.`)))
+            tokens.value = String(customModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+        } catch (cause) {
+          tokens.value = String(customModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+          modelSettingsStatus().textContent = describe(cause);
+        }
+      });
+      label.append(tokens);
+      actions.append(label);
+    }
+    const defaultButton = make("button", "btn btn-sm", isDefault ? "★ Default" : "Set Default");
+    defaultButton.type = "button";
+    defaultButton.disabled = isDefault;
+    defaultButton.addEventListener(
+      "click",
+      () =>
+        void saveModelSettings(
+          () => post("/api/models/default", { provider: id, model: model.id }),
+          `Set ${model.provider}/${model.id} as the default.`,
+        ),
+    );
+    const test = make("button", "btn btn-sm btn-ghost", "Test");
+    test.type = "button";
+    test.disabled = !configuredChoice(model, page);
+    test.title = `Ask ${model.provider}/${model.id} for one token`;
+    const status = make("div", "drawer-probe-status");
+    status.setAttribute("aria-live", "polite");
+    test.addEventListener("click", () => void testConfiguredModel(model, test, status));
+    const toggle = modelToggleSwitch(model, page);
+    /** @type {HTMLInputElement} */ (toggle.querySelector("input")).disabled = !configuredChoice(
+      model,
+      page,
+    );
+    actions.append(defaultButton, test, toggle);
+    if (customModel && custom) {
+      const remove = make("button", "btn btn-sm btn-ghost", "×");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${model.id}`);
+      remove.disabled = custom.models.length === 1;
+      remove.title = remove.disabled
+        ? "A provider needs at least one model. Remove the provider instead."
+        : `Remove ${model.id}`;
+      const confirmation = make("span", "model-remove-confirm");
+      confirmation.hidden = true;
+      const confirm = make("button", "btn btn-sm btn-danger", "Confirm");
+      confirm.type = "button";
+      const cancel = make("button", "btn btn-sm", "Cancel");
+      cancel.type = "button";
+      remove.addEventListener("click", () => {
+        remove.hidden = true;
+        confirmation.hidden = false;
+      });
+      cancel.addEventListener("click", () => {
+        confirmation.hidden = true;
+        remove.hidden = false;
+      });
+      confirm.addEventListener("click", () => {
+        const edits = providerEdits(page.providers);
+        const provider = edits.find((entry) => entry.id === id);
+        if (!provider) return;
+        provider.models = provider.models.filter((entry) => entry.id !== model.id);
+        void saveModelProviders(
+          edits,
+          `Removed custom model ${model.id}. Saved defaults are unchanged.`,
+        );
+      });
+      confirmation.append(make("span", "", "Remove model?"), confirm, cancel);
+      actions.append(remove, confirmation);
+    }
+    item.append(info, actions, status);
+    return item;
+  });
+  list.replaceChildren(
+    ...(rows.length ? rows : [make("p", "models-none", "No models found for this provider.")]),
+  );
+  element("drawer-provider-actions").hidden = !custom;
+  element("drawer-remove-provider-btn").hidden = false;
+  element("drawer-remove-confirm").hidden = true;
+}
+
+/** @param {string} id @param {string} value */
+function fillProtocolSelect(id, value) {
+  const select = /** @type {HTMLSelectElement} */ (element(id));
+  select.replaceChildren(
+    ...(modelPage?.apis ?? []).map((api) => {
+      const option = make("option", "", api);
+      option.value = api;
+      return option;
+    }),
+  );
+  select.value = value;
+}
+
+async function saveDrawerKey() {
+  const id = currentDrawerProviderId;
+  if (!id || !modelPage) return;
+  const input = /** @type {HTMLInputElement} */ (element("drawer-key-input"));
+  const key = input.value.trim();
+  if (!key) {
+    input.focus();
     return;
   }
-  const keyed = modelPage?.keyed?.includes(chosenModel.provider) === true;
-  chosen.textContent = `${chosenModel.provider}/${chosenModel.id}${keyed ? " · a key is stored" : " · no key stored"}`;
-}
-
-/** Providers the user has a key for, plus custom providers they added. */
-function configuredProviderIds() {
-  const ids = new Set(modelPage?.keyed ?? []);
-  for (const provider of modelPage?.providers ?? []) {
-    if (provider.id !== "") ids.add(provider.id);
+  if (key.startsWith("!")) {
+    modelSettingsStatus().textContent = "A key cannot be a shell command from this page.";
+    return;
   }
-  return ids;
+  const edits = providerEdits(modelPage.providers);
+  const custom = edits.find((provider) => provider.id === id);
+  if (custom) custom.apiKey = key;
+  const message = `Saved API key for ${providerDisplayName(id)}.`;
+  const saved = custom
+    ? await saveModelProviders(edits, message)
+    : await saveModelSettings(
+        () => post("/api/models/key", { provider: id, apiKey: key }),
+        message,
+      );
+  if (saved) input.value = "";
 }
 
-function syncConfiguredButton() {
-  const button = /** @type {HTMLButtonElement} */ (element("models-configured"));
-  button.setAttribute("aria-pressed", configuredOnly ? "true" : "false");
-  button.textContent = configuredOnly ? "Show all" : "Show configured";
+async function clearDrawerKey() {
+  const id = currentDrawerProviderId;
+  if (!id) return;
+  if (
+    await saveModelSettings(
+      () => post("/api/models/key", { provider: id, clearApiKey: true }),
+      `Removed stored API key for ${providerDisplayName(id)}.`,
+    )
+  ) {
+    element("drawer-key-reset-confirm").hidden = true;
+    /** @type {HTMLInputElement} */ (element("drawer-key-input")).value = "";
+  }
 }
 
-/** @param {string} query */
-function renderMatches(query) {
-  closeProbePopup(modelTestPopup());
-  const list = element("models-matches");
-  const needle = query.trim().toLowerCase();
-  const allowed = configuredOnly ? configuredProviderIds() : undefined;
-  const models = (modelPage?.models ?? [])
-    .filter((model) => allowed === undefined || allowed.has(model.provider))
-    .filter((model) => needle === "" || modelLabel(model).toLowerCase().includes(needle))
-    .sort((a, b) => {
-      const pA = modelSortPriority(a, modelPage);
-      const pB = modelSortPriority(b, modelPage);
-      if (pA !== pB) return pA - pB;
-      const rankDiff = rank(a, needle) - rank(b, needle);
-      if (rankDiff !== 0) return rankDiff;
-      return modelLabel(a).localeCompare(modelLabel(b));
-    });
-  list.replaceChildren(
-    ...models.map((model) =>
-      modelChoiceItem(model, modelPage, {
-        current: chosenModel?.provider === model.provider && chosenModel.id === model.id,
-      }),
-    ),
-  );
-  if (models.length === 0) {
-    list.append(
-      make(
-        "li",
-        "models-none",
-        configuredOnly
-          ? needle === ""
-            ? "No model with a stored key or a custom provider."
-            : "No matching configured model."
-          : "No matching model.",
-      ),
+async function saveDrawerUrl() {
+  if (!modelPage || !currentDrawerProviderId) return;
+  const edits = providerEdits(modelPage.providers);
+  const provider = edits.find((entry) => entry.id === currentDrawerProviderId);
+  if (!provider) return;
+  provider.baseUrl = /** @type {HTMLInputElement} */ (element("drawer-url-input")).value.trim();
+  provider.api = /** @type {HTMLSelectElement} */ (element("drawer-api-select")).value;
+  await saveModelProviders(edits, `Saved endpoint for ${providerDisplayName(provider.id)}.`);
+}
+
+function toggleDrawerAddModel() {
+  const row = element("drawer-add-model-row");
+  row.hidden = !row.hidden;
+  if (!row.hidden) {
+    /** @type {HTMLInputElement} */ (element("drawer-new-model-id")).value = "";
+    /** @type {HTMLInputElement} */ (element("drawer-new-model-tokens")).value =
+      String(DEFAULT_CONTEXT_WINDOW);
+    element("drawer-new-model-id").focus();
+  }
+}
+
+async function submitDrawerNewModel() {
+  if (!modelPage || !currentDrawerProviderId) return;
+  const idInput = /** @type {HTMLInputElement} */ (element("drawer-new-model-id"));
+  const id = idInput.value.trim();
+  if (!id) {
+    idInput.focus();
+    modelSettingsStatus().textContent = "Enter a model ID.";
+    return;
+  }
+  const edits = providerEdits(modelPage.providers);
+  const provider = edits.find((entry) => entry.id === currentDrawerProviderId);
+  if (!provider) return;
+  if (modelsForProvider(modelPage, provider.id).some((model) => model.id === id)) {
+    modelSettingsStatus().textContent = "This model is already listed for this provider.";
+    return;
+  }
+  try {
+    const tokens = contextTokens(
+      /** @type {HTMLInputElement} */ (element("drawer-new-model-tokens")).value,
+      DEFAULT_CONTEXT_WINDOW,
     );
+    provider.models.push({ id, contextWindow: tokens, enabled: true });
+    if (await saveModelProviders(edits, `Added ${id}.`)) {
+      idInput.value = "";
+      element("drawer-add-model-row").hidden = true;
+    }
+  } catch (cause) {
+    modelSettingsStatus().textContent = describe(cause);
   }
+}
+
+async function removeDrawerProvider() {
+  const id = currentDrawerProviderId;
+  if (!modelPage || !id) return;
+  const message = `Removed custom configuration for ${providerDisplayName(id)}. Stored credentials and defaults are unchanged.`;
+  if (
+    await saveModelProviders(
+      providerEdits(modelPage.providers.filter((provider) => provider.id !== id)),
+      message,
+    )
+  ) {
+    closeProviderDrawer();
+    element("models-status").textContent = message;
+  }
+}
+
+function openAddProviderDialog() {
+  if (!modelPage) return;
+  for (const id of ["add-prov-id", "add-prov-url", "add-prov-model", "add-prov-key"]) {
+    /** @type {HTMLInputElement} */ (element(id)).value = "";
+  }
+  /** @type {HTMLInputElement} */ (element("add-prov-tokens")).value =
+    String(DEFAULT_CONTEXT_WINDOW);
+  fillProtocolSelect("add-prov-api", "openai-completions");
+  element("add-provider-status").textContent = "";
+  /** @type {HTMLDialogElement} */ (element("add-provider-dialog")).showModal();
+}
+
+function closeAddProviderDialog() {
+  /** @type {HTMLDialogElement} */ (element("add-provider-dialog")).close();
+  /** @type {HTMLInputElement} */ (element("add-prov-key")).value = "";
+}
+
+async function saveNewProvider() {
+  if (!modelPage) return;
+  const value = (/** @type {string} */ id) =>
+    /** @type {HTMLInputElement} */ (element(id)).value.trim();
+  try {
+    const id = value("add-prov-id");
+    if (modelPage.providers.some((provider) => provider.id === id)) {
+      throw new Error(
+        "This provider already exists. Edit it in Configure Models, or choose a different identifier.",
+      );
+    }
+    const provider = {
+      id,
+      baseUrl: value("add-prov-url"),
+      api: value("add-prov-api"),
+      models: [
+        {
+          id: value("add-prov-model"),
+          contextWindow: contextTokens(value("add-prov-tokens"), DEFAULT_CONTEXT_WINDOW),
+          enabled: true,
+        },
+      ],
+      ...(value("add-prov-key") ? { apiKey: value("add-prov-key") } : {}),
+    };
+    if (provider.apiKey?.startsWith("!"))
+      throw new Error("A key cannot be a shell command from this page.");
+    const message = `Created provider ${providerDisplayName(id)}.`;
+    if (await saveModelProviders([...providerEdits(modelPage.providers), provider], message)) {
+      closeAddProviderDialog();
+      element("models-status").textContent = message;
+      if (modelPage.providers.some((entry) => entry.id === id)) openProviderDrawer(id);
+    }
+  } catch (cause) {
+    modelSettingsStatus().textContent = describe(cause);
+  }
+}
+
+async function testDefaultModel() {
+  if (!chosenModel) return;
+  await testConfiguredModel(
+    { ...chosenModel, name: chosenModel.id },
+    /** @type {HTMLButtonElement} */ (element("hero-test-btn")),
+    element("hero-probe-status"),
+  );
+}
+
+async function changeDefaultThinking() {
+  if (!chosenModel) return;
+  const select = /** @type {HTMLSelectElement} */ (element("hero-thinking-select"));
+  const thinking = select.value;
+  const before = modelPage?.defaultThinking ?? "medium";
+  if (
+    !(await saveModelSettings(
+      () =>
+        post("/api/models/default", {
+          provider: chosenModel?.provider,
+          model: chosenModel?.id,
+          thinking,
+        }),
+      `Set default thinking level to ${thinking}.`,
+    ))
+  )
+    select.value = before;
 }
 
 /** @param {ModelPage} page */
 function renderModelPage(page) {
   modelPage = page;
-  const openIndices = new Set(
-    providerDraft.map((p, idx) => (p.open === true ? idx : -1)).filter((idx) => idx >= 0),
-  );
-  const openIds = new Set(providerDraft.filter((p) => p.open === true).map((p) => p.id));
-  providerDraft = page.providers.map((provider, idx) => ({
-    ...provider,
-    open: openIds.has(provider.id) || openIndices.has(idx),
-    models: provider.models.map((model) => ({
-      ...model,
-      enabled: model.enabled !== false,
-    })),
-  }));
-  if (page.defaultProvider !== undefined && page.defaultModel !== undefined) {
-    chosenModel = { provider: page.defaultProvider, id: page.defaultModel };
-  }
-  chosenText();
-  /** @type {HTMLInputElement} */ (element("models-search")).value = "";
-  renderMatches("");
-  syncConfiguredButton();
-  renderProviders();
-}
-
-/**
- * Renders the models list for a custom provider with:
- * - Clean list of models with toggle switches (Screenshot 2)
- * - Setting context window size & removing custom model
- * - "+ Add Custom Model" action which reveals an inline input form (Screenshot 3)
- * @param {CustomProvider} provider
- */
-function providerModels(provider) {
-  const block = document.createElement("div");
-  block.className = "custom-models-block";
-
-  const list = document.createElement("div");
-  list.className = "custom-models-list";
-
-  for (const [index, model] of provider.models.entries()) {
-    const row = make("div", "custom-model-row");
-
-    // Left: Model Name
-    const nameSpan = make("span", "custom-model-name", model.id);
-    nameSpan.title = model.id;
-
-    // Right: Controls (Context window, Toggle switch, Remove button)
-    const controls = make("div", "custom-model-controls");
-
-    // Context window size input
-    const tokensLabel = document.createElement("label");
-    tokensLabel.className = "custom-model-tokens-label";
-    tokensLabel.title = "Maximum context window (tokens)";
-
-    const tokens = document.createElement("input");
-    tokens.type = "number";
-    tokens.className = "custom-model-tokens-input";
-    tokens.min = "1";
-    tokens.step = "1000";
-    tokens.value = String(model.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-    tokens.placeholder = String(DEFAULT_CONTEXT_WINDOW);
-    tokens.title = "Maximum context window (tokens)";
-    tokens.addEventListener("input", () => {
-      const parsed = Number(tokens.value);
-      if (Number.isSafeInteger(parsed) && parsed > 0) model.contextWindow = parsed;
-    });
-    tokens.addEventListener("change", async () => {
-      const parsed = Number(tokens.value);
-      if (Number.isSafeInteger(parsed) && parsed > 0) {
-        model.contextWindow = parsed;
-        await saveModelProviders();
-        return;
-      }
-      tokens.value = String(model.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-    });
-    tokensLabel.append(tokens);
-
-    // Remove model button with Confirm and Cancel
-    const removeBtn = make("button", "custom-model-remove", "×");
-    removeBtn.type = "button";
-    removeBtn.title = "Remove model";
-    removeBtn.setAttribute("aria-label", `Remove ${model.id}`);
-
-    const modelConfirmGroup = make("span", "custom-model-confirm-group");
-    modelConfirmGroup.hidden = true;
-
-    const modelConfirmBtn = make("button", "custom-model-confirm-btn", "Confirm");
-    modelConfirmBtn.type = "button";
-    modelConfirmBtn.title = `Confirm removing ${model.id}`;
-
-    const modelCancelBtn = make("button", "custom-model-cancel-btn", "Cancel");
-    modelCancelBtn.type = "button";
-    modelCancelBtn.title = "Cancel";
-
-    removeBtn.addEventListener("click", () => {
-      removeBtn.hidden = true;
-      modelConfirmGroup.hidden = false;
-    });
-
-    modelCancelBtn.addEventListener("click", () => {
-      modelConfirmGroup.hidden = true;
-      removeBtn.hidden = false;
-    });
-
-    modelConfirmBtn.addEventListener("click", async () => {
-      provider.models.splice(index, 1);
-      renderProviders();
-      if (modelPage) {
-        cellModels = configuredModelsOf(modelPage).map((m) => `${m.provider}/${m.id}`);
-        fillModelSelects();
-      }
-      await saveModelProviders();
-    });
-
-    modelConfirmGroup.append(modelConfirmBtn, modelCancelBtn);
-
-    controls.append(tokensLabel, removeBtn, modelConfirmGroup);
-    row.append(nameSpan, controls);
-    list.append(row);
-  }
-
-  block.append(list);
-
-  if (provider.addingModel === true) {
-    const addRow = make("div", "add-custom-model-row");
-
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "add-custom-model-input";
-    input.placeholder = "Enter model name";
-
-    const addBtn = make("button", "add-custom-model-submit", "Add");
-    addBtn.type = "button";
-
-    const cancelBtn = make("button", "add-custom-model-cancel", "Cancel");
-    cancelBtn.type = "button";
-
-    const submitAdd = async () => {
-      const id = input.value.trim();
-      if (id !== "") {
-        provider.models.push({
-          id,
-          contextWindow: DEFAULT_CONTEXT_WINDOW,
-          enabled: true,
-        });
-        provider.addingModel = false;
-        renderProviders();
-        await saveModelProviders();
-      } else {
-        provider.addingModel = false;
-        renderProviders();
-      }
-    };
-
-    const cancelAdd = () => {
-      provider.addingModel = false;
-      renderProviders();
-    };
-
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submitAdd();
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        cancelAdd();
-      }
-    });
-
-    addBtn.addEventListener("click", submitAdd);
-    cancelBtn.addEventListener("click", cancelAdd);
-
-    addRow.append(input, addBtn, cancelBtn);
-    block.append(addRow);
-
-    setTimeout(() => input.focus(), 0);
-  } else {
-    const addTrigger = make("button", "add-custom-model-btn", "+ Add Custom Model");
-    addTrigger.type = "button";
-    addTrigger.addEventListener("click", () => {
-      provider.addingModel = true;
-      provider.open = true;
-      renderProviders();
-    });
-    block.append(addTrigger);
-  }
-
-  return block;
-}
-
-function renderProviders() {
-  const list = element("models-providers");
-  const apis = modelPage?.apis ?? [];
-  list.replaceChildren(
-    ...providerDraft.map((provider, at) => {
-      const card = document.createElement("details");
-      card.className = "provider";
-      card.open = provider.open === true;
-      card.addEventListener("toggle", () => {
-        provider.open = card.open;
-      });
-      const summary = document.createElement("summary");
-      const title = () => (provider.id === "" ? "New provider" : provider.id);
-      summary.textContent = title();
-
-      const name = document.createElement("input");
-      name.type = "text";
-      name.value = provider.id;
-      name.placeholder = "ollama";
-      name.addEventListener("input", () => {
-        provider.id = name.value.trim();
-        summary.textContent = title();
-      });
-
-      const baseUrl = document.createElement("input");
-      baseUrl.type = "text";
-      baseUrl.value = provider.baseUrl;
-      baseUrl.placeholder = "http://localhost:11434/v1";
-      baseUrl.addEventListener("input", () => (provider.baseUrl = baseUrl.value.trim()));
-
-      const api = document.createElement("select");
-      for (const choice of apis) {
-        const option = document.createElement("option");
-        option.value = choice;
-        option.textContent = choice;
-        option.selected = provider.api === choice;
-        api.append(option);
-      }
-      if (provider.api === "" && apis[0] !== undefined) provider.api = apis[0];
-      api.addEventListener("change", () => (provider.api = api.value));
-
-      const key = document.createElement("input");
-      key.type = "password";
-      key.autocomplete = "off";
-      key.placeholder = provider.apiKeyFromCommand
-        ? "A command supplies the current key; type a key to replace it"
-        : provider.apiKeySet
-          ? "Leave blank to keep the current key"
-          : "API key, or $ENV_VAR";
-      key.addEventListener("input", () => {
-        provider.apiKey = key.value;
-      });
-
-      const models = providerModels(provider);
-
-      const nameLabel = document.createElement("label");
-      nameLabel.append("Name", name);
-      const urlLabel = document.createElement("label");
-      urlLabel.append("Base URL", baseUrl);
-      const apiLabel = document.createElement("label");
-      apiLabel.append("API", api);
-      const keyLabel = document.createElement("label");
-      keyLabel.append("API key", key);
-      const modelsLabel = document.createElement("div");
-      modelsLabel.className = "provider-models";
-      modelsLabel.append(make("span", "provider-models-label", "Models"), models);
-
-      const actions = make("div", "provider-actions");
-      if (provider.isNew === true) {
-        const cancelNewBtn = make("button", "provider-cancel-btn", "Cancel");
-        cancelNewBtn.type = "button";
-        cancelNewBtn.title = "Cancel adding this new provider";
-        cancelNewBtn.addEventListener("click", () => {
-          providerDraft.splice(at, 1);
-          renderProviders();
-        });
-        actions.append(cancelNewBtn);
-      } else {
-        const removeBtn = make("button", "provider-remove-btn", "Remove");
-        removeBtn.type = "button";
-        removeBtn.title =
-          "Remove this custom provider and its models. You confirm first, and the change is saved right away";
-
-        const confirmContainer = make("span", "provider-remove-confirm-container");
-        confirmContainer.hidden = true;
-
-        const confirmMsg = make("span", "provider-remove-confirm-msg", "Remove provider?");
-        const confirmBtn = make("button", "provider-remove-confirm-btn", "Confirm");
-        confirmBtn.type = "button";
-        const cancelBtn = make("button", "provider-remove-cancel-btn", "Cancel");
-        cancelBtn.type = "button";
-
-        removeBtn.addEventListener("click", () => {
-          removeBtn.hidden = true;
-          confirmContainer.hidden = false;
-        });
-
-        cancelBtn.addEventListener("click", () => {
-          confirmContainer.hidden = true;
-          removeBtn.hidden = false;
-        });
-
-        confirmBtn.addEventListener("click", async () => {
-          providerDraft.splice(at, 1);
-          renderProviders();
-          await saveModelProviders();
-        });
-
-        confirmContainer.append(confirmMsg, confirmBtn, cancelBtn);
-        actions.append(removeBtn, confirmContainer);
-      }
-      card.append(summary, nameLabel, urlLabel, apiLabel, keyLabel, modelsLabel, actions);
-      return card;
-    }),
-  );
+  closeProbePopup(modelTestPopup());
+  renderHeroBanner(page);
+  renderProviderGrid(/** @type {HTMLInputElement} */ (element("models-search")).value);
+  if (
+    currentDrawerProviderId !== null &&
+    /** @type {HTMLDialogElement} */ (element("provider-drawer-overlay")).open
+  )
+    renderDrawerContent(currentDrawerProviderId);
+  cellModels = configuredModelsOf(page).map((model) => `${model.provider}/${model.id}`);
+  fillModelSelects();
 }
 
 /** The notebook the model dialog is choosing for, and the model it names now. */
@@ -9095,7 +9131,6 @@ async function fetchModels() {
 async function openModels() {
   closeSettingsMenu();
   sessionStorage.setItem("activeTab", "models");
-  configuredOnly = false;
   element("workspace").hidden = true;
   element("modes").hidden = true;
   element("models").hidden = false;
@@ -9117,6 +9152,8 @@ function showNotebook() {
   closeSettingsMenu();
   sessionStorage.setItem("activeTab", "notebook");
   closeProbePopup(modelTestPopup());
+  closeProviderDrawer();
+  closeAddProviderDialog();
   element("models").hidden = true;
   element("modes").hidden = true;
   element("workspace").hidden = false;
@@ -9128,6 +9165,8 @@ function showNotebook() {
 
 async function openModes() {
   closeSettingsMenu();
+  closeProviderDrawer();
+  closeAddProviderDialog();
   sessionStorage.setItem("activeTab", "modes");
   closeProbePopup(modelTestPopup());
   element("workspace").hidden = true;
@@ -9287,65 +9326,15 @@ async function deleteMode(name) {
   }
 }
 
-async function saveModelProviders() {
-  const status = element("models-status");
-  status.textContent = "";
+/** @param {import("./model-settings.js").ProviderEdit[]} providers @param {string} message */
+async function saveModelProviders(providers, message) {
   try {
-    await post("/api/models/providers", {
-      providers: providerDraft
-        .filter(
-          (provider) =>
-            provider.id.trim() !== "" ||
-            provider.baseUrl.trim() !== "" ||
-            provider.models.length > 0,
-        )
-        .map((provider) => ({
-          id: provider.id.trim(),
-          baseUrl: provider.baseUrl.trim(),
-          api: provider.api,
-          models: provider.models.flatMap((model) => {
-            const id = model.id.trim();
-            if (id === "") return [];
-            const tokens = model.contextWindow;
-            const enabled = model.enabled !== false;
-            return [
-              {
-                id,
-                enabled,
-                ...(tokens !== undefined && Number.isSafeInteger(tokens) && tokens > 0
-                  ? { contextWindow: tokens }
-                  : {}),
-              },
-            ];
-          }),
-          ...(provider.apiKey !== undefined && provider.apiKey !== ""
-            ? { apiKey: provider.apiKey }
-            : {}),
-        })),
-    });
-    status.textContent = "Saved the providers.";
-    const updatedPage = await fetchModels();
-    renderModelPage(updatedPage);
-    cellModels = configuredModelsOf(updatedPage).map((m) => `${m.provider}/${m.id}`);
-    fillModelSelects();
+    for (const provider of providers) validateProvider(provider, modelPage?.apis ?? []);
   } catch (cause) {
-    status.textContent = `Could not save the providers: ${describe(cause)}`;
+    modelSettingsStatus().textContent = describe(cause);
+    return false;
   }
-}
-
-function addProvider() {
-  const api = modelPage?.apis[0] ?? "openai-completions";
-  providerDraft.push({
-    id: "",
-    baseUrl: "",
-    api,
-    apiKeySet: false,
-    apiKeyFromCommand: false,
-    models: [],
-    open: true,
-    isNew: true,
-  });
-  renderProviders();
+  return saveModelSettings(() => post("/api/models/providers", { providers }), message);
 }
 
 /**
@@ -9598,16 +9587,99 @@ element("notebook-model-search").addEventListener("input", () => {
   );
 });
 element("models-search").addEventListener("input", () => {
-  renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
+  renderProviderGrid(/** @type {HTMLInputElement} */ (element("models-search")).value);
 });
-element("models-configured").addEventListener("click", () => {
-  configuredOnly = !configuredOnly;
-  syncConfiguredButton();
-  renderMatches(/** @type {HTMLInputElement} */ (element("models-search")).value);
+element("models-add-custom-btn").addEventListener("click", openAddProviderDialog);
+element("add-provider-close").addEventListener("click", closeAddProviderDialog);
+element("add-provider-cancel").addEventListener("click", closeAddProviderDialog);
+element("add-provider-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  void saveNewProvider();
 });
-element("models-save-providers").addEventListener("click", () => void saveModelProviders());
-element("models-add").addEventListener("click", addProvider);
-element("models-form").addEventListener("submit", (event) => event.preventDefault());
+
+/** @type {Record<string, string>} */
+const PROVIDER_PRESET_URLS = {
+  ollama: "http://localhost:11434/v1",
+  lmstudio: "http://localhost:1234/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+  groq: "https://api.groq.com/openai/v1",
+};
+for (const button of document.querySelectorAll(".preset-chip[data-preset]")) {
+  button.addEventListener("click", () => {
+    const preset = button.getAttribute("data-preset");
+    const url = preset && PROVIDER_PRESET_URLS[preset];
+    if (!preset || !url) return;
+    /** @type {HTMLInputElement} */ (element("add-prov-id")).value = preset;
+    /** @type {HTMLInputElement} */ (element("add-prov-url")).value = url;
+    /** @type {HTMLSelectElement} */ (element("add-prov-api")).value = "openai-completions";
+    // Installed models and their limits vary; presets must not invent them.
+    /** @type {HTMLInputElement} */ (element("add-prov-model")).value = "";
+    /** @type {HTMLInputElement} */ (element("add-prov-tokens")).value =
+      String(DEFAULT_CONTEXT_WINDOW);
+    element("add-prov-model").focus();
+  });
+}
+
+element("drawer-close").addEventListener("click", closeProviderDrawer);
+element("provider-drawer-overlay").addEventListener("click", (event) => {
+  if (event.target === element("provider-drawer-overlay")) {
+    closeProviderDrawer();
+  }
+});
+element("add-provider-dialog").addEventListener("click", (event) => {
+  if (event.target === element("add-provider-dialog")) {
+    closeAddProviderDialog();
+  }
+});
+
+element("drawer-save-key-btn").addEventListener("click", () => void saveDrawerKey());
+element("drawer-clear-key-btn").addEventListener("click", () => {
+  element("drawer-key-reset-confirm").hidden = false;
+});
+element("drawer-confirm-reset-key").addEventListener("click", () => void clearDrawerKey());
+element("drawer-cancel-reset-key").addEventListener("click", () => {
+  element("drawer-key-reset-confirm").hidden = true;
+});
+element("drawer-remove-provider-btn").addEventListener("click", () => {
+  element("drawer-remove-provider-btn").hidden = true;
+  element("drawer-remove-confirm").hidden = false;
+});
+element("drawer-cancel-remove-btn").addEventListener("click", () => {
+  element("drawer-remove-provider-btn").hidden = false;
+  element("drawer-remove-confirm").hidden = true;
+});
+element("drawer-confirm-remove-btn").addEventListener("click", () => void removeDrawerProvider());
+element("provider-drawer-overlay").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeProviderDrawer();
+});
+element("add-provider-dialog").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeAddProviderDialog();
+});
+element("drawer-key-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void saveDrawerKey();
+  }
+});
+for (const id of ["drawer-new-model-id", "drawer-new-model-tokens"]) {
+  element(id).addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submitDrawerNewModel();
+    }
+  });
+}
+element("drawer-save-url-btn").addEventListener("click", () => void saveDrawerUrl());
+element("drawer-add-model-btn").addEventListener("click", toggleDrawerAddModel);
+element("drawer-cancel-new-model").addEventListener("click", () => {
+  element("drawer-add-model-row").hidden = true;
+});
+element("drawer-submit-new-model").addEventListener("click", () => void submitDrawerNewModel());
+
+element("hero-test-btn").addEventListener("click", () => void testDefaultModel());
+element("hero-thinking-select").addEventListener("change", () => void changeDefaultThinking());
 
 element("fold-all").addEventListener("click", () => setAllFolded(allExpanded()));
 element("run-all").addEventListener("click", () => void startRun());
